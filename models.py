@@ -90,15 +90,15 @@ def add_pass_stat_cols(cls):
     cls.pass_tds = Column(Integer)
     cls.pass_ints = Column(Integer)
     
-    cls.pass_first_downs = Column(Integer)
-    cls.pass_first_down_perc = Column(Float)
-    cls.pass_IAY = Column(Integer)
-    cls.pass_CAY = Column(Integer)
-    cls.pass_drops = Column(Integer)
-    cls.pass_bad_throw = Column(Integer)
-    cls.pass_bad_throw_perc = Column(Float)
+    # cls.pass_first_downs = Column(Integer)
+    # cls.pass_first_down_perc = Column(Float)
+    # cls.pass_IAY = Column(Integer)
+    # cls.pass_CAY = Column(Integer)
+    # cls.pass_drops = Column(Integer)
+    # cls.pass_bad_throw = Column(Integer)
+    # cls.pass_bad_throw_perc = Column(Float)
 
-    cls.pass_pressure_perc = Column(Float)
+    # cls.pass_pressure_perc = Column(Float)
     cls.pass_sacks = Column(Integer)
     cls.pass_per_att = Column(Integer)
     cls.pass_adj_per_att = Column(Integer)
@@ -113,20 +113,6 @@ def add_rush_stat_cols(cls):
     cls.rush_yds = Column(Integer)
     cls.rush_per_att = Column(Float)
     cls.rush_tds = Column(Integer)  
-class RecStatMixin:
-    rec_first_downs = Column(Integer)
-    rec_ybc = Column(Integer)
-    rec_yac = Column(Integer)
-    rec_adot = Column(Float)
-    rec_brkTkl = Column(Integer)
-    rec_drop = Column(Integer)
-    rec_int = Column(Integer)
-    
-    rec_tgt = Column(Integer)
-    rec_rec = Column(Integer)
-    rec_yds = Column(Integer)
-    rec_per_rec = Column(Integer)
-    rec_tds = Column(Integer)
 
 def add_rec_stat_cols(cls):
     cls.rec_first_downs = Column(Integer)
@@ -146,6 +132,7 @@ def add_rec_stat_cols(cls):
 def add_game_stats(cls):
     cls.team = Column(String)
     cls.age = Column(Float)
+    cls.away_game = Column(Boolean)
 
     cls.bye = Column(Boolean, default=False)
     cls.inactive = Column(Boolean, default=False)
@@ -161,22 +148,27 @@ def add_game_stats(cls):
 
     cls.started = Column(Boolean)
     cls.playoff = Column(Boolean, default=False)
+
+    cls.fumbles = Column(Integer)
+    cls.snaps = Column(Integer)
+    cls.snap_perc = Column(Float)
     
-class Player(Base,):
+class Player(Base):
     __tablename__ = 'players'
     id = Column(Integer, primary_key=True)
+
     name = Column(String)
+    dob = Column(DateTime)
+    height_cm = Column(Integer)
+    weight_kg = Column(Integer)
+
     drafted_year = Column(DateTime)
-    age = Column(Float)
+    drafted_overall = Column(Integer)
+
     pos = Column(String)
-    pos_alt = Column(String)
+    college = Column(String)
 
-    # Misc
-    fumbles = Column(Integer)
-    snaps = Column(Integer)
-    snap_perc = Column(Float)
 
-    
 class QbPlayer(Player):
     __tablename__ = 'qb_player'
     id = Column(Integer, ForeignKey('players.id'), primary_key=True)
