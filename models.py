@@ -24,64 +24,6 @@ engine = create_engine(DB_URL, echo=True)
 #Create Models
 Base = declarative_base()
 
-class TeamGameStats(Base):
-    __tablename__='team_game_stats'
-    id = Column(Integer, primary_key=True)
-    
-    home = Column(Boolean)
-    total = Column(Float)
-    off_total = Column(Float)
-    off_pass = Column(Float)
-    off_rush = Column(Float)
-    off_exp_turn = Column(Float)
-    
-    def_tot = Column(Float)
-    def_pass = Column(Float)
-    def_rush = Column(Float)
-    def_exp_turn = Column(Float)
-        
-    first_downs = Column(Integer)
-    rush_att = Column(Integer)
-    rush_tds = Column(Integer)
-    rush_yds = Column(Integer)
-    
-    pass_att = Column(Integer)
-    pass_comp = Column(Integer)
-    pass_yds = Column(Integer)
-    pass_tds = Column(Integer)
-    pass_int = Column(Integer)
-    
-    sack_yds = Column(Integer)
-    total_yds = Column(Integer)
-    fumbles = Column(Integer)
-    fumbles_lost = Column(Integer)
-    turnovers = Column(Integer)
-    penalties = Column(Integer)
-    penalty_yds = Column(Integer)
-    
-    time_of_pos = Column(Interval)
-    
-    game = relationship("Game", back_populates="team_stats")
-
-class Game(Base):
-    __tablename__= 'game'
-    id = Column(Integer, primary_key=True)
-    
-    away_team = Column(String)
-    away_score = Column(Integer)
-    away_team_stats_id = Column(Integer, ForeignKey('team_game_stats.id'))
-    away_team_stats = relationship("TeamGameStats", back_populates="game")  
-    
-    home_team = Column(String)
-    home_score = Column(Integer)
-    home_team_stats_id = Column(Integer, ForeignKey('team_game_stats.id'))
-    home_team_stats = relationship("TeamGameStats", back_populates="game")  
-
-    roof = Column(String)
-    surface = Column(String)
-    Weather = Column(String)
-    
-    over_under = Column(Float)   
 
 def add_pass_stat_cols(cls):
     cls.pass_comp = Column(Integer)
@@ -131,16 +73,19 @@ def add_rec_stat_cols(cls):
 
 def add_game_stats(cls):
     cls.team = Column(String)
+    cls.opp = Column(String)
+
     cls.age = Column(Float)
     cls.away_game = Column(Boolean)
 
     cls.bye = Column(Boolean, default=False)
     cls.inactive = Column(Boolean, default=False)
     cls.dnp = Column(Boolean, default=False)
-    cls.player_suspended = Column(Boolean, default=False)
+    cls.suspended = Column(Boolean, default=False)
+    cls.ir = Column(Boolean, default=False)
     
-    cls.game_id = Column(Integer, ForeignKey('game.id'))
-    cls.game = relationship("Game", back_populates="game_stats")
+    # cls.game_id = Column(Integer, ForeignKey('game.id'))
+    # cls.game = relationship("Game", back_populates="game_stats")
 
     cls.year = Column(Integer)
     cls.week = Column(Integer)
@@ -156,57 +101,39 @@ def add_game_stats(cls):
 class Player(Base):
     __tablename__ = 'players'
     id = Column(Integer, primary_key=True)
+    pfr_id = Column(String, unique=True)
 
     name = Column(String)
     dob = Column(DateTime)
     height_cm = Column(Integer)
     weight_kg = Column(Integer)
 
-    drafted_year = Column(DateTime)
+    drafted_year = Column(Integer)
     drafted_overall = Column(Integer)
 
     pos = Column(String)
     college = Column(String)
 
-
-class QbPlayer(Player):
-    __tablename__ = 'qb_player'
-    id = Column(Integer, ForeignKey('players.id'), primary_key=True)
-    
-    __mapper_args__ = {
-        'polymorphic_identity': 'qb_player',
-        'inherit_condition': (id == Player.id),
-    }
-    
-    single_stats = relationship("QbGameStats", back_populates="qb_player")
+    qb_game_stats = relationship("QbGameStats", back_populates="player")
+    skill_game_stats = relationship("SkillGameStats", back_populates="player")
 
 class QbGameStats(Base):
     __tablename__ = 'qb_game_stats'
     id = Column(Integer, primary_key=True)
     
-    player = relationship("QbPlayer", back_populates="qb_game_stats")
+    player_id = Column(Integer, ForeignKey('players.id'))
+    player = relationship("Player", back_populates="qb_game_stats")
 
 add_pass_stat_cols(QbGameStats)
 add_rush_stat_cols(QbGameStats)
 add_game_stats(QbGameStats)
     
-class SkillPlayer(Player):
-    __tablename__ = 'skill_player'
-    id = Column(Integer, ForeignKey('players.id'), primary_key=True)
-
-    __mapper_args__ = {
-        'polymorphic_identity': 'skill_player',
-        'inherit_condition': (id == Player.id),
-    }
-
-    single_stats = relationship("SkillGameStats", back_populates="qb_player")
-
 class SkillGameStats(Base):
     __tablename__ = 'skill_game_stats'
     id = Column(Integer, primary_key=True)
     
-    player_id = Column(Integer, ForeignKey('skill_player.id'))
-    player = relationship("SkillPlayer", back_populates="skill_game_stats")
+    player_id = Column(Integer, ForeignKey('players.id'))
+    player = relationship("Player", back_populates="skill_game_stats")
 
 add_rec_stat_cols(SkillGameStats)
 add_rush_stat_cols(SkillGameStats)
