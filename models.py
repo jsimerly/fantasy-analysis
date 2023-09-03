@@ -102,6 +102,7 @@ class Player(Base):
     __tablename__ = 'players'
     id = Column(Integer, primary_key=True)
     pfr_id = Column(String, unique=True)
+    current_team = Column(String)
 
     name = Column(String)
     dob = Column(DateTime)
