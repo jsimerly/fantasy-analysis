@@ -17,6 +17,12 @@ class Player(Base):
     gsis_id = Column(String)
     gsis_it_id = Column(String)
     ktc_id = Column(String)
+    sleeper_id = Column(String)
+    rotoworld_id = Column(String)
+    rotowire_id = Column(String)
+    yahoo_id = Column(String)
+    espn_id = Column(String)
+    swish_id = Column(String)
 
     status = Column(String) ## Choice
     display_name = Column(String)
