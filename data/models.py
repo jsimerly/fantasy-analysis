@@ -13,7 +13,7 @@ Base = declarative_base()
 class Player(Base):
     __tablename__ = 'players'
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     gsis_id = Column(String)
     gsis_it_id = Column(String)
     ktc_id = Column(String)
