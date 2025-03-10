@@ -1,0 +1,1 @@
+This repo is a hodge podge of all of my data analysis, projections, fun facts for my dynasty fantasy football league. Currently the repo is a little bit behind my local, but I'll update it shortly (just don't tell my league mates about my models.)
