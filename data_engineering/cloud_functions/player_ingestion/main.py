@@ -4,6 +4,10 @@ from typing import Any
 
 import pandas as pd
 import nfl_data_py as nfl
+import functions_framework
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def fetch_player_ids() -> pd.DataFrame:
     try:
@@ -26,7 +30,8 @@ def save_df_to_gcs_bronze(df: pd.DataFrame, bucket_name: str, dest_blob_name: st
     except Exception as e:
         print(f"An error occurred while saving to GCS: {e}")
 
-def main(event: Any, context: Any): #The event is a Flask Request Obj and context is a special metadata, this is not important to type rn.*
+@functions_framework.http
+def main(request: Any = None): #The event is a Flask Request Obj and context is a special metadata, this is not important to type rn.*
     try:
         bucket_name = os.environ.get('GCS_BUCKET_NAME')
         
@@ -35,6 +40,7 @@ def main(event: Any, context: Any): #The event is a Flask Request Obj and contex
             return 'Deployment Error: Missing GCS_BUCKET_NAME', 500
 
         player_data = fetch_player_ids()
+        print(len(player_data))
 
         if not player_data.empty:
             current_date = datetime.now().strftime('%Y-%m-%d')
@@ -51,3 +57,6 @@ def main(event: Any, context: Any): #The event is a Flask Request Obj and contex
     except Exception as e:
         print(f"FATAL ERROR: {e}")
         return 'Internal Server Error', 500
+    
+if __name__ == "__main__":
+    main()
