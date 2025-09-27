@@ -26,7 +26,7 @@ def save_df_to_gcs_bronze(df: pd.DataFrame, bucket_name: str, dest_blob_name: st
     except Exception as e:
         print(f"An error occurred while saving to GCS: {e}")
 
-def main(event: Any, context: Any): #
+def main(event: Any, context: Any): #The event is a Flask Request Obj and context is a special metadata, this is not important to type rn.*
     try:
         bucket_name = os.environ.get('GCS_BUCKET_NAME')
         
