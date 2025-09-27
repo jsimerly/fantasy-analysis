@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+from typing import Any
 
 import pandas as pd
 import nfl_data_py as nfl
@@ -25,7 +26,7 @@ def save_df_to_gcs_bronze(df: pd.DataFrame, bucket_name: str, dest_blob_name: st
     except Exception as e:
         print(f"An error occurred while saving to GCS: {e}")
 
-def main(event, context):
+def main(event: Any, context: Any): #
     try:
         bucket_name = os.environ.get('GCS_BUCKET_NAME')
         

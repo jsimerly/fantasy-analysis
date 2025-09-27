@@ -1,5 +1,18 @@
-env
+Python virtual environments
+.venv/
+venv/
+
+Python cache files
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+Environment variables
 .env
-venv
-.venv
-alembic.ini
+
+Service account key files
+*.json
+
+VSCode settings folder
+.vscode/
