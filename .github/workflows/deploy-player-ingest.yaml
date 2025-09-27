@@ -6,6 +6,7 @@ on:
       - main 
     paths: 
       - 'data_engineering/cloud_functions/player_ingestion/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -38,6 +39,5 @@ jobs:
           entry_point: 'main'
           project_id: 'fantasy-football-473418'
           region: 'us-central1'
-          environment: 'GEN_2'
           env_vars: |
             GCS_BUCKET_NAME:nfl-data-bronze
