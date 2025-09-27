@@ -80,6 +80,7 @@ class GameStats(Base):
     passing_epa = Column(Float)
 
     rushing_tds = Column(Integer)
+    rushing_yards = Column(Integer)
     rushing_fumbles = Column(Integer)
     rushing_fumbles_lost = Column(Integer)
     rushing_first_downs = Column(Integer)
