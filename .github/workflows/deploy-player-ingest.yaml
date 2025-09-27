@@ -40,4 +40,4 @@ jobs:
           project_id: 'fantasy-football-473418'
           region: 'us-central1'
           environment_variables: |
-            GCS_BUCKET_NAME:nfl-data-bronze
+            GCS_BUCKET_NAME=nfl-data-bronze
