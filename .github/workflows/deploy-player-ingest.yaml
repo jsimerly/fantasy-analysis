@@ -30,7 +30,7 @@ jobs:
       # Step 3: Deploy the Cloud Function.
       - id: 'deploy'
         name: 'Deploy Cloud Function'
-        uses: 'google-github-actions/deploy-cloud-functions@v2'
+        uses: 'google-github-actions/deploy-cloud-functions@v4'
         with:
           name: 'nfl-player-ingest'
           runtime: 'python310'
@@ -38,5 +38,6 @@ jobs:
           entry_point: 'main'
           project_id: 'fantasy-football-473418'
           region: 'us-central1'
+          environment: 'GEN_2'
           env_vars: |
             GCS_BUCKET_NAME:nfl-data-bronze
