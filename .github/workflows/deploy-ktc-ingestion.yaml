@@ -1,0 +1,65 @@
+name: Deploy KTC Ingestion Jobs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "data_engineering/ktc_ingestion/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      # Step 1: Check out your repository's code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate to Google Cloud
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v2"
+        with:
+          workload_identity_provider: "projects/624985976737/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@fantasy-football-473418.iam.gserviceaccount.com"
+
+      # Step 3: Set up Cloud SDK
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v2"
+
+      # Step 4: Configure Docker to use gcloud as credential helper
+      - name: "Configure Docker"
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      # Step 5: Build and push Docker image
+      - name: "Build and Push Docker Image"
+        run: |
+          docker build -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:latest \
+            -f data_engineering/ktc_ingestion/Dockerfile \
+            data_engineering/ktc_ingestion
+          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:latest
+
+      # Step 6: Deploy all KTC Cloud Run Jobs
+      - name: "Deploy KTC Jobs"
+        run: |
+          for job in full-dynasty full-devy incremental-dynasty incremental-devy; do
+            gcloud run jobs deploy ktc-${job} \
+              --image=us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:latest \
+              --region=us-central1 \
+              --memory=512Mi \
+              --cpu=1 \
+              --max-retries=1 \
+              --task-timeout=30m \
+              --command=python \
+              --args=${job//-/_}.py \
+              --set-env-vars=GCS_BUCKET_NAME=nfl-data-bronze \
+              --project=fantasy-football-473418
+          done
