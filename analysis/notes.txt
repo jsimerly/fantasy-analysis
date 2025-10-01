@@ -1,0 +1,17 @@
+Player cols missing from Players from Player IDs:
+    mfl_id
+    sports_radar_id
+    fantasypros_id
+    sleeper_id
+    yahoo_id
+    fleaflicker_id
+    cbs_id
+    rotowire_id
+    rotoworld_id
+    ktc_id
+    stats_id
+    stats_global_id
+    fantasy_data_id
+    swish_id
+    twitter_username
+    db_season
