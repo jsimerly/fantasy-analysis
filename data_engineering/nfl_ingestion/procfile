@@ -1,1 +1,0 @@
-web: functions-framework --target=incremental_load --port=${PORT:-8080}

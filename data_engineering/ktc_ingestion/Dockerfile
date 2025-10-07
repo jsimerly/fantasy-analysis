@@ -7,7 +7,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN ls -la /app
-
 # This is overridden by --args on deploy, so we can use this for multple jobs
 CMD ["python", "incremental_dynasty.py"]
