@@ -197,7 +197,7 @@ def set_dtypes(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str,  base_date: str):
-    file_path = f"gs://{bucket_name}/bronze/ktc/daily_load/load_date={base_date}/player_data.parquet"  
+    file_path = f"gs://{bucket_name}/bronze/ktc/dynasty/daily_load/load_date={base_date}/player_data.parquet"  
     
     try:
         df.write_parquet(file_path)
