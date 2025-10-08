@@ -57,8 +57,9 @@ def save_errors_to_gcs(errors: list, bucket_name: str, base_date: str):
 def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    
-    players = get_dynasty_playersArray()
+
+    devy_url = "https://keeptradecut.com/devy-rankings"   
+    players = get_dynasty_playersArray(devy_url)
 
     errors = []
     for i, player in enumerate(players):
@@ -72,7 +73,7 @@ def main():
                 'position': player['position'], # main used for identifying picks
             }
 
-            url = f"https://keeptradecut.com/dynasty-rankings/players/{slug}"
+            url = f"https://keeptradecut.com/devy-rankings/players/{slug}"
             soup = fetch_soup(url)
 
             one_qb_data = parse_historic_1QBplayer_data(soup)
