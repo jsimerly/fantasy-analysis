@@ -1,24 +1,24 @@
-import os
+import os 
+from datetime import datetime, timezone
 import time
 import json
-from datetime import datetime, timezone
 
-import numpy as np
 from dotenv import load_dotenv
 import polars as pl
+import numpy as np
 
 from utils import (
     fetch_soup,
     get_dynasty_playersArray,
     parse_historic_1QBplayer_data,
     parse_historic_SFplayer_data,
-    transform_player_data,
+    transform_player_data
 )
 
 load_dotenv()
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str, slug: str, base_date: str):
-    file_path = f"gs://{bucket_name}/bronze/ktc/dynasty/full_load/load_date={base_date}/{slug}.parquet"  
+    file_path = f"gs://{bucket_name}/bronze/ktc/redraft/full_load/load_date={base_date}/{slug}.parquet"  
 
     try:
         df.write_parquet(file_path)
@@ -32,7 +32,7 @@ def save_errors_to_gcs(errors: list, bucket_name: str, base_date: str):
     if not errors:
         return
     
-    error_path = f"gs://{bucket_name}/bronze/ktc/dynasty/full_load/errors/load_date={base_date}/errors.json"
+    error_path = f"gs://{bucket_name}/bronze/ktc/redraft/full_load/errors/load_date={base_date}/errors.json"
     
     try:
         error_data = {
@@ -52,27 +52,26 @@ def save_errors_to_gcs(errors: list, bucket_name: str, base_date: str):
             for error in errors:
                 f.write(f"{error['slug']}\n")
 
-
-
 def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
-    current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    players = get_dynasty_playersArray()
-
+    std_url = "https://keeptradecut.com/fantasy-rankings"
+    players = get_dynasty_playersArray(std_url)
+    
     errors = []
     for i, player in enumerate(players):
         slug = player['slug']
 
-        try: 
+        try:
             data = {
                 'slug': slug, 
                 'player_id': player['playerID'], 
                 'player_name': player['playerName'], 
-                'position': player['position'], # main used for identifying picks
+                'position': player['position'],
             }
 
-            url = f"https://keeptradecut.com/dynasty-rankings/players/{slug}"
+            url = f"https://keeptradecut.com/fantasy-rankings/players/{slug}"
             soup = fetch_soup(url)
 
             one_qb_data = parse_historic_1QBplayer_data(soup)
@@ -80,7 +79,6 @@ def main():
 
             data['one_qb_value'] = one_qb_data['overallValue']
             data['one_qb_overall_rank'] = one_qb_data['overallRankHistory']
-
             data['sf_value'] = sf_data['overallValue']
             data['sf_overall_rank'] = sf_data['overallRankHistory']
 
@@ -89,6 +87,7 @@ def main():
                 data['sf_pos_rank'] = sf_data['positionalRankHistory']
 
             df = transform_player_data(data, current_date)
+
             save_player_to_gcs(df, bucket_name, slug, current_date)
             print(f"✓ Saved {slug} ({i + 1}/{len(players)})")
             time.sleep(abs(np.random.normal(2, 1))+1)
@@ -110,8 +109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-

@@ -13,7 +13,7 @@ from utils import (
 load_dotenv()
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str,  base_date: str):
-    file_path = f"gs://{bucket_name}/bronze/ktc/dynasty/daily_load/load_date={base_date}/player_data.parquet"  
+    file_path = f"gs://{bucket_name}/bronze/ktc/redraft/daily_load/load_date={base_date}/player_data.parquet"  
     
     try:
         df.write_parquet(file_path)
@@ -26,7 +26,8 @@ def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-    playerArray = get_dynasty_playersArray()
+    std_url = "https://keeptradecut.com/fantasy-rankings"
+    playerArray = get_dynasty_playersArray(std_url)
     flattened = [flatten_player_data(player) for player in playerArray]
     df = pl.from_dicts(flattened)
     df = set_dtypes(df)
