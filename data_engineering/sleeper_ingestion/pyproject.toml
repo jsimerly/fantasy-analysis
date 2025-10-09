@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sleeper-ingestion"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "polars",
+    "gql[requests]",
+    "requests-toolbelt",
+    "python-dotenv",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sleeper_ingestion*"]
+namespaces = false

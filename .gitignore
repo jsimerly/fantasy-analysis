@@ -1,19 +1,62 @@
-Python virtual environments
+# Python virtual environments
 .venv/
 venv/
+env/
+ENV/
 
-Python cache files
-pycache/
+# Python cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.so
+.Python
 
-Environment variables
+# Environment variables
 .env
+.env.local
+.env.*.local
 
-Service account key files
-*.json
+# Service account key files (but be more specific)
+**/credentials/*.json
+**/keys/*.json
+service-account*.json
 
-VSCode settings folder
+# But allow specific JSONs you might want to commit
+!package.json
+!pyproject.json
+
+# VSCode settings folder
 .vscode/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pytest cache
+.pytest_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Data files (adjust as needed)
+*.parquet
+*.csv
+*.xlsx
+# But you might want to allow small sample data files
+
+# Logs
+*.log
+logs/
