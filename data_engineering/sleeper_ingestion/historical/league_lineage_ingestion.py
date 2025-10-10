@@ -100,12 +100,13 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
                 'league_lineage_id': league_lineage_id,
                 'league_name': league['league_name'],
                 'season': league['season'],
-                'season_number': league['season_number'],
                 'status': league['status'],
                 'season_type': league['season_type'],
                 'total_rosters': league['total_rosters'],
                 'draft_id': league['draft_id'],
                 'bracket_id': league['bracket_id'],
+                'leg': league['settings']['leg'],
+                'last_scored_leg': league['settings']['last_scored_leg'],
                 'previous_league_id': league['previous_league_id']
             }
             leagues_records.append(league_record)
@@ -165,6 +166,6 @@ if __name__ == "__main__":
     leagues_data = get_user_leagues_lineage()
     leagues_df, settings_df, rosters_df = flatten_lineage_to_parquets(leagues_data)
     
-    save_df_to_gcs(leagues_df, bucket_name, current_date, entity="league")
+    save_df_to_gcs(leagues_df, bucket_name, current_date, entity="leagues")
     save_df_to_gcs(settings_df, bucket_name, current_date, entity="settings")
     save_df_to_gcs(rosters_df, bucket_name, current_date, entity="roster_slots")

@@ -75,13 +75,12 @@ def get_latest_blob_path(bucket_name: str, base_prefix: str) -> str | None:
     else:
         return None
 
-def get_league_ids():
+def get_bronze_leagues() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     storage_path = get_latest_blob_path(bucket_name, "bronze/sleeper/league/leagues/")
 
     df = pl.read_parquet(storage_path)
-    league_ids = df.select("league_id").unique().to_series().to_list()
-    return league_ids
+    return df
 
 if __name__ == "__main__":
     ...
