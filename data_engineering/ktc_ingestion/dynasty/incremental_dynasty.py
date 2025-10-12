@@ -1,5 +1,8 @@
 import os
 from datetime import datetime, timezone
+import sys
+from pathlib import Path
+env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 from dotenv import load_dotenv
@@ -10,10 +13,10 @@ from utils import (
     set_dtypes,
 )
 
-load_dotenv()
+load_dotenv(env_path)
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str,  base_date: str):
-    file_path = f"gs://{bucket_name}/bronze/ktc/devy/daily_load/load_date={base_date}/player_data.parquet"  
+    file_path = f"gs://{bucket_name}/bronze/ktc/dynasty/daily_load/load_date={base_date}/player_data.parquet"  
     
     try:
         df.write_parquet(file_path)
@@ -26,8 +29,7 @@ def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-    std_url = "https://keeptradecut.com/devy-rankings"
-    playerArray = get_dynasty_playersArray(std_url)
+    playerArray = get_dynasty_playersArray()
     flattened = [flatten_player_data(player) for player in playerArray]
     df = pl.from_dicts(flattened)
     df = set_dtypes(df)

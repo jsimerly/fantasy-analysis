@@ -7,7 +7,7 @@ import time
 import polars as pl
 
 env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
-from _utils import get_bronze_leagues
+from _utils import get_fantasy_leagues
 from api.league import get_league
 
 def flatten_league_to_parquets(league: dict):
@@ -97,8 +97,8 @@ def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-    leagues = get_bronze_leagues()
-    active_leagues = leagues.filter(pl.col("status") != "complete")
+    leagues = get_fantasy_leagues()
+    active_leagues = leagues.filter(pl.col("status") != "complete").filter(pl.col("source_system") == "sleeper")
     league_ids = active_leagues.select("league_id").to_series().to_list()
     
     all_leagues = []
@@ -129,6 +129,5 @@ def main():
     save_df_to_gcs(combined_scoring, bucket_name, current_date, entity="scoring")
     save_df_to_gcs(combined_roster_slots, bucket_name, current_date, entity="roster_slots")
         
-
 if __name__ == "__main__":
     main()

@@ -82,5 +82,19 @@ def get_bronze_leagues() -> pl.DataFrame:
     df = pl.read_parquet(storage_path)
     return df
 
+def get_fantasy_leagues() -> pl.DataFrame:
+    bucket_name = os.environ.get('GCS_BUCKET_NAME')
+    storage_path = f"gs://{bucket_name}/silver/fantasy/dim_leagues/data.parquet"
+
+    try:
+        df = pl.read_parquet(storage_path)
+        return df
+    except FileNotFoundError:
+        print(f"File not found at {storage_path}")
+        raise
+    except Exception as e:
+        print(f"Error reading from GCS: {e}")
+        raise
+
 if __name__ == "__main__":
     ...

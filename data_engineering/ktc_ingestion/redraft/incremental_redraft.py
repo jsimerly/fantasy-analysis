@@ -1,5 +1,8 @@
 import os
 from datetime import datetime, timezone
+import sys
+from pathlib import Path
+env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 from dotenv import load_dotenv
@@ -10,7 +13,7 @@ from utils import (
     set_dtypes,
 )
 
-load_dotenv()
+load_dotenv(env_path)
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str,  base_date: str):
     file_path = f"gs://{bucket_name}/bronze/ktc/redraft/daily_load/load_date={base_date}/player_data.parquet"  

@@ -50,8 +50,22 @@ jobs:
       # Step 6: Deploy all KTC Cloud Run Jobs
       - name: "Deploy KTC Jobs"
         run: |
-          for job in full-dynasty full-devy full-redraft incremental-dynasty incremental-devy incremental-redraft; do
-            gcloud run jobs deploy ktc-${job} \
+          # Define job mappings: job-name -> script-path
+          declare -A jobs=(
+            ["ktc-full-dynasty"]="dynasty/full_dynasty.py"
+            ["ktc-incremental-dynasty"]="dynasty/incremental_dynasty.py"
+            ["ktc-full-devy"]="devy/full_devy.py"
+            ["ktc-incremental-devy"]="devy/incremental_devy.py"
+            ["ktc-full-redraft"]="redraft/full_redraft.py"
+            ["ktc-incremental-redraft"]="redraft/incremental_redraft.py"
+          )
+
+          for job_name in "${!jobs[@]}"; do
+            script_path="${jobs[$job_name]}"
+            
+            echo "Deploying ${job_name} with script ${script_path}..."
+            
+            gcloud run jobs deploy ${job_name} \
               --image=us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/ktc-ingestion:latest \
               --region=us-central1 \
               --memory=512Mi \
@@ -59,7 +73,7 @@ jobs:
               --max-retries=1 \
               --task-timeout=30m \
               --command=python \
-              --args=${job//-/_}.py \
+              --args=${script_path} \
               --set-env-vars=GCS_BUCKET_NAME=nfl-data-bronze \
               --project=fantasy-football-473418
           done

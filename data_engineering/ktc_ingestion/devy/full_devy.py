@@ -2,6 +2,9 @@ import os
 import time
 import json
 from datetime import datetime, timezone
+import sys
+from pathlib import Path
+env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 from dotenv import load_dotenv
@@ -15,10 +18,10 @@ from utils import (
     transform_player_data,
 )
 
-load_dotenv()
+load_dotenv(env_path)
 
 def save_player_to_gcs(df: pl.DataFrame, bucket_name: str, slug: str, base_date: str):
-    file_path = f"gs://{bucket_name}/bronze/ktc/dynasty/full_load/load_date={base_date}/{slug}.parquet"  
+    file_path = f"gs://{bucket_name}/bronze/ktc/devy/full_load/load_date={base_date}/{slug}.parquet"  
 
     try:
         df.write_parquet(file_path)
@@ -32,7 +35,7 @@ def save_errors_to_gcs(errors: list, bucket_name: str, base_date: str):
     if not errors:
         return
     
-    error_path = f"gs://{bucket_name}/bronze/ktc/dynasty/full_load/errors/load_date={base_date}/errors.json"
+    error_path = f"gs://{bucket_name}/bronze/ktc/devy/full_load/errors/load_date={base_date}/errors.json"
     
     try:
         error_data = {
@@ -57,8 +60,9 @@ def save_errors_to_gcs(errors: list, bucket_name: str, base_date: str):
 def main():
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    
-    players = get_dynasty_playersArray()
+
+    devy_url = "https://keeptradecut.com/devy-rankings"   
+    players = get_dynasty_playersArray(devy_url)
 
     errors = []
     for i, player in enumerate(players):
@@ -72,7 +76,7 @@ def main():
                 'position': player['position'], # main used for identifying picks
             }
 
-            url = f"https://keeptradecut.com/dynasty-rankings/players/{slug}"
+            url = f"https://keeptradecut.com/devy-rankings/players/{slug}"
             soup = fetch_soup(url)
 
             one_qb_data = parse_historic_1QBplayer_data(soup)
