@@ -77,7 +77,7 @@ def get_latest_blob_path(bucket_name: str, base_prefix: str) -> str | None:
 
 def get_bronze_leagues() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
-    storage_path = get_latest_blob_path(bucket_name, "bronze/sleeper/league/leagues/")
+    storage_path = get_latest_blob_path(bucket_name, "bronze/sleeper/league/leagues/full_load")
 
     df = pl.read_parquet(storage_path)
     return df

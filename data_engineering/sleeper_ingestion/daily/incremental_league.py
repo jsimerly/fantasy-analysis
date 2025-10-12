@@ -14,6 +14,7 @@ def flatten_league_to_parquets(league: dict):
     leagues_records = []
     settings_records = []
     rosters_records = []
+    scoring_records = []
     
     # LEAGUES TABLE - one row per league/season
     league_record = {
@@ -37,6 +38,20 @@ def flatten_league_to_parquets(league: dict):
         **league['settings']  # Unpack all settings as columns
     }
     settings_records.append(settings_record)
+
+    # SCORING SETTINGS TABLE - only if scoring_settings exists
+    if 'scoring_settings' in league and league['scoring_settings']:
+        scoring_record = {
+            'league_id': league['league_id'],
+            **league['scoring_settings'] 
+        }
+        scoring_records.append(scoring_record)
+    else:
+        # Add a record with just the IDs if no scoring settings
+        scoring_records.append({
+            'league_id': league['league_id'],
+        })
+            
     
     # ROSTERS TABLE - count unique positions
     roster_positions = league['roster_positions']
@@ -57,6 +72,7 @@ def flatten_league_to_parquets(league: dict):
     # Convert to Polars DataFrames
     leagues_df = pl.DataFrame(leagues_records)
     settings_df = pl.DataFrame(settings_records)
+    scoring_df = pl.DataFrame(scoring_record)
     rosters_df = pl.DataFrame(rosters_records)
     
     # Fill null values in rosters_df with 0 for position columns
@@ -65,14 +81,14 @@ def flatten_league_to_parquets(league: dict):
         pl.col(col).fill_null(0).cast(pl.Int64) for col in position_cols
     ])
     
-    return leagues_df, settings_df, rosters_df
+    return leagues_df, settings_df, scoring_df, rosters_df
 
-def save_df_to_gcs(df: pl.DataFrame, bucket_name: str, base_date: str, file_name: str):
-    file_path = f"gs://{bucket_name}/bronze/sleeper/league/leagues/daily/load_date={base_date}/{file_name}.parquet"
+def save_df_to_gcs(df: pl.DataFrame, bucket_name: str, base_date: str, entity: str):
+    file_path = f"gs://{bucket_name}/bronze/sleeper/league/{entity}/incremental/load_date={base_date}/data.parquet"
     
     try:
         df.write_parquet(file_path)
-        print(f"✅ Saved {file_name} to {file_path}") 
+        print(f"✅ Saved {entity} to {file_path}") 
     except Exception as e:
         print(f"Failed to save to GCS: {e}")
         raise
@@ -82,18 +98,37 @@ def main():
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     leagues = get_bronze_leagues()
-    active_leagues = leagues.filter(pl.col("status") == "in_season")
+    active_leagues = leagues.filter(pl.col("status") != "complete")
     league_ids = active_leagues.select("league_id").to_series().to_list()
     
+    all_leagues = []
+    all_settings = []
+    all_scoring = []
+    all_roster_slots = []
+
     for league_id in league_ids:
+        print(f"Processing league: {league_id}...")
         league_data = get_league(league_id=league_id)
 
-        leagues_df, settings_df, rosters_df = flatten_league_to_parquets(league_data)
-    
-        save_df_to_gcs(leagues_df, bucket_name, current_date, file_name="leagues")
-        save_df_to_gcs(settings_df, bucket_name, current_date, file_name="settings")
-        save_df_to_gcs(rosters_df, bucket_name, current_date, file_name="roster_slots")
+        leagues_df, settings_df, scoring_df, rosters_df = flatten_league_to_parquets(league_data)
+
+        all_leagues.append(leagues_df)
+        all_settings.append(settings_df)
+        all_scoring.append(scoring_df)
+        all_roster_slots.append(rosters_df)
+        print(f"✅ Processed {league_id}")
         time.sleep(1)
+
+    combined_leagues = pl.concat(all_leagues)
+    combined_settings = pl.concat(all_settings, how='align')
+    combined_scoring = pl.concat(all_scoring, how='align')
+    combined_roster_slots = pl.concat(all_roster_slots, how='align')
+    
+    save_df_to_gcs(combined_leagues, bucket_name, current_date, entity="leagues")
+    save_df_to_gcs(combined_settings, bucket_name, current_date, entity="settings")
+    save_df_to_gcs(combined_scoring, bucket_name, current_date, entity="scoring")
+    save_df_to_gcs(combined_roster_slots, bucket_name, current_date, entity="roster_slots")
+        
 
 if __name__ == "__main__":
     main()

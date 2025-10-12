@@ -20,11 +20,10 @@ def get_user_leagues_lineage(user_id: str = '730630390791929856', sport: str = "
         season = sports_state['season']
 
     leagues = get_user_leagues_for_year(user_id=user_id, sport=sport, year=season)
-
+    
     all_leagues = []
     for league in leagues:
         league_name = league['name']
-
         league_info = {
             'league_id': league['league_id'],
             'league_name': league['name'],
@@ -41,6 +40,7 @@ def get_user_leagues_lineage(user_id: str = '730630390791929856', sport: str = "
 
         lineage = [league_info]
         curr_league_id = league['previous_league_id']
+
         while curr_league_id:
             curr_league = get_league(league_id=curr_league_id)
 
@@ -54,6 +54,7 @@ def get_user_leagues_lineage(user_id: str = '730630390791929856', sport: str = "
                 'season': curr_league['season'],
                 'total_rosters': curr_league['total_rosters'],
                 'settings': curr_league['settings'],
+                'scoring_settings': curr_league['scoring_settings'],
                 'season_type': curr_league['season_type'],
                 'previous_league_id': curr_league['previous_league_id']
             }
@@ -88,6 +89,7 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
     
     leagues_records = []
     settings_records = []
+    scoring_records = []
     rosters_records = []
     
     for league_group in all_leagues:
@@ -118,6 +120,21 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
                 **league['settings']  # Unpack all settings as columns
             }
             settings_records.append(settings_record)
+
+            # SCORING SETTINGS TABLE - only if scoring_settings exists
+            if 'scoring_settings' in league and league['scoring_settings']:
+                scoring_record = {
+                    'league_id': league['league_id'],
+                    'league_lineage_id': league_lineage_id,
+                    **league['scoring_settings'] 
+                }
+                scoring_records.append(scoring_record)
+            else:
+                # Add a record with just the IDs if no scoring settings
+                scoring_records.append({
+                    'league_id': league['league_id'],
+                    'league_lineage_id': league_lineage_id,
+                })
             
             # ROSTERS TABLE - count unique positions
             roster_positions = league['roster_positions']
@@ -139,18 +156,19 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
     # Convert to Polars DataFrames
     leagues_df = pl.DataFrame(leagues_records)
     settings_df = pl.DataFrame(settings_records)
+    scoring_df = pl.DataFrame(scoring_records)
     rosters_df = pl.DataFrame(rosters_records)
-    
+
     # Fill null values in rosters_df with 0 for position columns
     position_cols = [col for col in rosters_df.columns if col not in ['league_id', 'league_lineage_id']]
     rosters_df = rosters_df.with_columns([
         pl.col(col).fill_null(0).cast(pl.Int64) for col in position_cols
     ])
     
-    return leagues_df, settings_df, rosters_df
+    return leagues_df, settings_df, scoring_df, rosters_df
 
 def save_df_to_gcs(df: pl.DataFrame, bucket_name: str, base_date: str, entity: str):
-    file_path = f"gs://{bucket_name}/bronze/sleeper/league/{entity}/load_date={base_date}/data.parquet" 
+    file_path = f"gs://{bucket_name}/bronze/sleeper/league/{entity}/full_load/load_date={base_date}/data.parquet" 
 
     try:
         df.write_parquet(file_path)
@@ -164,8 +182,9 @@ if __name__ == "__main__":
     current_date =  datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     leagues_data = get_user_leagues_lineage()
-    leagues_df, settings_df, rosters_df = flatten_lineage_to_parquets(leagues_data)
+    leagues_df, settings_df, scoring_df, rosters_df = flatten_lineage_to_parquets(leagues_data)
     
     save_df_to_gcs(leagues_df, bucket_name, current_date, entity="leagues")
     save_df_to_gcs(settings_df, bucket_name, current_date, entity="settings")
+    save_df_to_gcs(scoring_df, bucket_name, current_date, entity="scoring")
     save_df_to_gcs(rosters_df, bucket_name, current_date, entity="roster_slots")

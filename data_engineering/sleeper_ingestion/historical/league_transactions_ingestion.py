@@ -181,7 +181,7 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
     return transactions_df, players_df, draft_picks_df
 
 def save_df_to_gcs(df: pl.DataFrame, bucket_name: str, base_date: str, entity: str):
-    file_path = f"gs://{bucket_name}/bronze/sleeper/transactions/{entity}/load_date={base_date}/data.parquet" 
+    file_path = f"gs://{bucket_name}/bronze/sleeper/transactions/{entity}/full_load/load_date={base_date}/data.parquet" 
 
     try:
         df.write_parquet(file_path)
@@ -203,7 +203,7 @@ def main(auth_header: str):
     all_draft_picks = []
 
     for league_id in league_ids:
-        print(f"Processing league {league_id}...")
+        print(f"Processing league: {league_id}...")
         league_transactions = get_transactions(league_id, auth_header)
         transactions_df, players_df, draft_picks_df = flatten_transactions(league_transactions)
         
@@ -229,6 +229,8 @@ def main(auth_header: str):
     save_df_to_gcs(combined_transactions, bucket_name, current_date, entity="transactions")
     save_df_to_gcs(combined_players, bucket_name, current_date, entity="transaction_players")
     save_df_to_gcs(combined_draft_picks, bucket_name, current_date, entity="draft_picks")
+    print(f"✅ Save successful")
+
 
 if __name__ == "__main__":
     auth_header = os.environ.get("AUTH_TOKEN")
