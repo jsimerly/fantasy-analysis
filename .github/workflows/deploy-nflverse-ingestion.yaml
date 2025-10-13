@@ -1,11 +1,11 @@
-name: Deploy Silver Fantasy Transformations
+name: Deploy NFLverse Ingestion Jobs
 
 on:
   push:
     branches:
       - main
     paths:
-      - "data_engineering/silver_fantasy/**"
+      - "data_engineering/nflverse_ingestion/**"
   workflow_dispatch:
 
 jobs:
@@ -40,20 +40,24 @@ jobs:
       # Step 5: Build and push Docker image
       - name: "Build and Push Docker Image"
         run: |
-          docker build -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:${{ github.sha }} \
-            -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:latest \
-            -f data_engineering/silver_fantasy/Dockerfile \
-            data_engineering/silver_fantasy
-          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:${{ github.sha }}
-          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:latest
+          docker build -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/nflverse-ingestion:${{ github.sha }} \
+            -t us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/nflverse-ingestion:latest \
+            -f data_engineering/nflverse_ingestion/Dockerfile \
+            data_engineering/nflverse_ingestion
+          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/nflverse-ingestion:${{ github.sha }}
+          docker push us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/nflverse-ingestion:latest
 
-      # Step 6: Deploy Silver Fantasy Cloud Run Jobs
-      - name: "Deploy Silver Fantasy Jobs"
+      # Step 6: Deploy NFLverse Cloud Run Jobs
+      - name: "Deploy NFLverse Jobs"
         run: |
           # Define job mappings: job-name -> script-path
           declare -A jobs=(
-            ["silver-dim-leagues"]="dim_leagues.py"
-            ["silver-dim-league-scoring"]="dim_league_scoring_scd2.py"
+            ["nflverse-combine"]="combine_ingestion.py"
+            ["nflverse-daily"]="daily_ingestion.py"
+            ["nflverse-draft"]="draft_ingestion.py"
+            ["nflverse-full"]="full_ingestion.py"
+            ["nflverse-nfl-draft-picks"]="nfl_draft_picks.py"
+            ["nflverse-schedule"]="schedule_ingestion.py"
           )
 
           for job_name in "${!jobs[@]}"; do
@@ -62,7 +66,7 @@ jobs:
             echo "Deploying ${job_name} with script ${script_path}..."
             
             gcloud run jobs deploy ${job_name} \
-              --image=us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:latest \
+              --image=us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/nflverse-ingestion:latest \
               --region=us-central1 \
               --memory=1Gi \
               --cpu=1 \
