@@ -3,12 +3,13 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import time
+from typing import Iterable, Any
 
 import polars as pl
 
 env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
 from _utils import get_fantasy_leagues
-from api.league import get_rosters
+from api.league import get_rosters, get_traded_picks
 
 
 def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
@@ -122,6 +123,59 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
 
     return players_df, team_state_df, nicknames_df
 
+def _to_int_or_none(x: Any) -> int | None:
+    if x in (None, "", "NA", "N/A"):
+        return None
+    try:
+        return int(str(x).strip())
+    except Exception:
+        return None
+
+def flatten_traded_picks_current(traded: Iterable[dict], league_id: str) -> pl.DataFrame:
+    """
+    Normalize Sleeper get_traded_picks(league_id) for 'current draft pick ownership'.
+    Output cols:
+      league_id, season, round, original_roster_id, owner_roster_id, previous_owner_roster_id, timestamp
+    """
+    rows: list[dict] = []
+    now_ts = datetime.now(timezone.utc)
+
+    for t in traded or []:
+        rows.append({
+            "league_id": str(league_id),
+            "season": str(t.get("season")) if t.get("season") is not None else None,
+            "round": _to_int_or_none(t.get("round")),
+            "original_roster_id": _to_int_or_none(t.get("roster_id")),          # the roster the pick originally belongs to
+            "owner_roster_id": _to_int_or_none(t.get("owner_id")),              # current owner (by roster_id)
+            "previous_owner_roster_id": _to_int_or_none(t.get("previous_owner_id")),
+            "timestamp": now_ts,
+        })
+
+    if not rows:
+        return pl.DataFrame({
+            "league_id": pl.Series([], pl.Utf8),
+            "season": pl.Series([], pl.Utf8),
+            "round": pl.Series([], pl.Int64),
+            "original_roster_id": pl.Series([], pl.Int64),
+            "owner_roster_id": pl.Series([], pl.Int64),
+            "previous_owner_roster_id": pl.Series([], pl.Int64),
+            "timestamp": pl.Series([], pl.Datetime),
+        })
+
+    df = pl.from_dicts(rows).cast({
+        "league_id": pl.Utf8,
+        "season": pl.Utf8,
+        "round": pl.Int64,
+        "original_roster_id": pl.Int64,
+        "owner_roster_id": pl.Int64,
+        "previous_owner_roster_id": pl.Int64,
+        "timestamp": pl.Datetime,
+    }, strict=False)
+
+    # natural key (league_id, season, round, original_roster_id) should be unique for "current state"
+    df = df.unique(subset=["league_id", "season", "round", "original_roster_id"], keep="last")
+    return df
+
 def _get_week_start_from_str(date_str: str, week_start: str = "tuesday") -> str:
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
@@ -174,11 +228,10 @@ def _concat_or_empty(dfs: list[pl.DataFrame]) -> pl.DataFrame:
     return pl.concat(dfs, how="vertical_relaxed").rechunk()
 
 def main():
-    bucket_name = os.environ.get('GCS_BUCKET_NAME')
+    bucket_name = os.environ.get('GCS_BUCKET_NAME', 'YOUR_BUCKET')
     current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     leagues = get_fantasy_leagues()
-
     active_leagues = leagues.filter(
         (pl.col("status") != "complete") &
         (pl.col("source_system") == "sleeper")
@@ -189,6 +242,7 @@ def main():
     players_all: list[pl.DataFrame] = []
     team_state_all: list[pl.DataFrame] = []
     nicknames_all: list[pl.DataFrame] = []
+    traded_picks_all: list[pl.DataFrame] = []
 
     for row in active_leagues.iter_rows(named=True):
         league_id = row['league_id']
@@ -198,6 +252,7 @@ def main():
             print("=" * 60)
             print(f"Processing league: {league_name} ({league_id}) | run_date={current_date}")
 
+            # --- rosters
             rosters = get_rosters(league_id=league_id)
             players_df, team_state_df, nicknames_df = flatten_rosters(rosters)
 
@@ -215,6 +270,11 @@ def main():
             team_state_all.append(team_state_df)
             nicknames_all.append(nicknames_df)
 
+            # --- current draft pick ownership (part of "rosters" state)
+            traded_raw = get_traded_picks(league_id=league_id)  # list[dict]
+            traded_flat = flatten_traded_picks_current(traded_raw, league_id=str(league_id))
+            traded_picks_all.append(traded_flat)
+
         except Exception as e:
             print(f"   ❌ Error processing {league_name}: {e}")
 
@@ -224,33 +284,45 @@ def main():
     players_df_all = _concat_or_empty(players_all)
     team_state_df_all = _concat_or_empty(team_state_all)
     nicknames_df_all = _concat_or_empty(nicknames_all)
+    traded_picks_df_all = _concat_or_empty(traded_picks_all)
 
     print("\n=== Aggregate sizes ===")
-    print(f"roster_players: {players_df_all.height:,} rows")
-    print(f"team_state:     {team_state_df_all.height:,} rows")
-    print(f"nicknames:      {nicknames_df_all.height:,} rows")
+    print(f"roster_players:     {players_df_all.height:,} rows")
+    print(f"team_state:         {team_state_df_all.height:,} rows")
+    print(f"nicknames:          {nicknames_df_all.height:,} rows")
+    print(f"traded_picks:       {traded_picks_df_all.height:,} rows")
 
-    # Save all three as DAILY snapshots
+    # Save snapshots
+    # daily
     save_df_to_gcs(
-        players_df,
+        players_df_all,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"roster_players",
+        entity="roster_players",
         partition_mode="daily",
     )
     save_df_to_gcs(
-        team_state_df,
+        traded_picks_df_all,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"team_state",
+        entity="traded_picks",
         partition_mode="daily",
     )
+
+    # weekly (overwrite within the week)
     save_df_to_gcs(
-        nicknames_df,
+        team_state_df_all,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"nicknames",
-        partition_mode="daily",
+        entity="team_state",
+        partition_mode="weekly",
+    )
+    save_df_to_gcs(
+        nicknames_df_all,
+        bucket_name=bucket_name,
+        base_date=current_date,
+        entity="nicknames",
+        partition_mode="weekly",
     )
 
 
