@@ -156,7 +156,7 @@ def save_df_to_gcs(
     else:
         raise ValueError("partition_mode must be 'daily' or 'weekly'")
 
-    file_path = f"gs://{bucket_name}/bronze/sleeper/rosters/{entity}/incremental/{partition}/data.parquet"
+    file_path = f"gs://{bucket_name}/bronze/sleeper/rosters/{entity}/daily/{partition}/data.parquet"
 
     try:
         df.write_parquet(file_path)
@@ -235,21 +235,21 @@ def main():
         players_df,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"{league_id}/roster_players",
+        entity=f"roster_players",
         partition_mode="daily",
     )
     save_df_to_gcs(
         team_state_df,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"{league_id}/team_state",
+        entity=f"team_state",
         partition_mode="daily",
     )
     save_df_to_gcs(
         nicknames_df,
         bucket_name=bucket_name,
         base_date=current_date,
-        entity=f"{league_id}/nicknames",
+        entity=f"nicknames",
         partition_mode="daily",
     )
 
