@@ -53,6 +53,7 @@ jobs:
           # Define job mappings: job-name -> script-path
           declare -A jobs=(
             ["sleeper-incremental-league"]="daily/incremental_league.py"
+            ["sleeper-incremental-rosters"]="daily/incremental_rosters.py"
             ["sleeper-incremental-transactions"]="daily/incremental_transactions.py"
             ["sleeper-commissioner-adjustments"]="historical/commissioner_adjustments.py"
             ["sleeper-league-lineage"]="historical/league_lineage_ingestion.py"

@@ -272,11 +272,8 @@ def main():
             
             print(f"   ✅ Successfully saved transactions for {league_name}")
             
-        except Exception as e:
-            print(f"   ❌ Error processing {league_name}: {e}")
-        
-        print()
 
+        
 
 if __name__ == "__main__":
     main()
