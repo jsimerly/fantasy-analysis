@@ -55,11 +55,10 @@ def sleeper_login(email: str, password: str) -> str:
 def get_latest_blob_path(bucket_name: str, base_prefix: str) -> str | None:
     storage_client = storage.Client()
 
-    if not base_prefix.endswith('/'):
-        base_prefix += '/'
+    if not (base_prefix.endswith("/") or base_prefix.endswith("=")):
+        base_prefix += "/"
 
     blobs = storage_client.list_blobs(bucket_name, prefix=base_prefix)
-    
     most_recent_blob = None
     
     for blob in blobs:

@@ -58,6 +58,8 @@ jobs:
             ["sleeper-commissioner-adjustments"]="historical/commissioner_adjustments.py"
             ["sleeper-league-lineage"]="historical/league_lineage_ingestion.py"
             ["sleeper-league-transactions"]="historical/league_transactions_ingestion.py"
+            ["sleeper-drafts-overview"]="historical/league_drafts_ingestion.py"
+            ["sleeper-draft-picks"]="historical/league_drafts_ingestion.py"
           )
 
           for job_name in "${!jobs[@]}"; do
