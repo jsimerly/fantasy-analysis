@@ -55,6 +55,7 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
                 "roster_id": roster_id,
                 "owner_id": owner_id,
                 "timestamp": timestamp,
+                "team_name": metadata.get("team_name"),
 
                 # From metadata
                 "record": metadata.get("record"),
