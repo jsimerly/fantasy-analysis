@@ -109,6 +109,7 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
 
     team_state_df = pl.from_dicts(team_state_records) if team_state_records else pl.DataFrame(schema={
         "league_id": pl.Utf8, "roster_id": pl.Int64, "owner_id": pl.Utf8, "timestamp": pl.Datetime,
+        "team_name": pl.Utf8,  # <-- NEW
         "record": pl.Utf8, "streak": pl.Utf8, "division": pl.Int64, "wins": pl.Int64, "losses": pl.Int64,
         "ties": pl.Int64, "fpts": pl.Int64, "fpts_decimal": pl.Int64, "fpts_against": pl.Int64,
         "fpts_against_decimal": pl.Int64, "ppts": pl.Int64, "ppts_decimal": pl.Int64,
