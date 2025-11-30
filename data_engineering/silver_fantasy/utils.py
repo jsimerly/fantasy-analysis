@@ -1,11 +1,11 @@
 from google.cloud import storage
 import polars as pl
 
-def get_latest_bronze_path(bucket_name: str, entity_path: str) -> str:
+def get_latest_bronze_path(bucket_name: str, entity_path: str, source: str = 'sleeper') -> str:
     """Get the most recent load_date partition for a bronze entity."""
     client = storage.Client()
     bucket = client.bucket(bucket_name)
-    prefix = f"bronze/sleeper/{entity_path}"
+    prefix = f"bronze/{source}/{entity_path}"
     
     blobs = list(bucket.list_blobs(prefix=prefix))
     
@@ -20,7 +20,9 @@ def get_latest_bronze_path(bucket_name: str, entity_path: str) -> str:
         raise ValueError(f"No data found for {entity_path}")
     
     latest_date = max(load_dates)
-    return f"gs://{bucket_name}/bronze/sleeper/{entity_path}/load_date={latest_date}/data.parquet"
+    return f"gs://{bucket_name}/bronze/{source}/{entity_path}/load_date={latest_date}/data.parquet"
+
+
 
 def merge_full_and_incremental(
     full_df: pl.DataFrame,
