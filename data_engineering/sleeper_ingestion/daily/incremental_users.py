@@ -39,7 +39,7 @@ def save_df_to_gcs(
 
     if partition_mode == "weekly":
         wk_start = _get_week_start_from_str(base_date, week_start=week_start)
-        partition = f"week_start={wk_start}"
+        partition = f"load_date={wk_start}"
         subdir = "weekly"
     elif partition_mode == "daily":
         partition = f"load_date={base_date}"
