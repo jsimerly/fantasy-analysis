@@ -83,7 +83,7 @@ def get_bronze_leagues() -> pl.DataFrame:
 
 def get_fantasy_leagues() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
-    storage_path = f"gs://{bucket_name}/silver/fantasy/dim_leagues/data.parquet"
+    storage_path = f"gs://{bucket_name}/silver/fantasy/dim_leagues_meta/data.parquet"
 
     try:
         df = pl.read_parquet(storage_path)
