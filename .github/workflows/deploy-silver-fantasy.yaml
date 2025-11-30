@@ -52,8 +52,8 @@ jobs:
         run: |
           # Define job mappings: job-name -> script-path
           declare -A jobs=(
-            ["silver-dim-leagues-meta"]="dim_leagues_meta.py"
-            ["silver-dim-league-scoring"]="dim_league_scoring_scd2.py"
+            ["silver-dim-league-meta"]="dim_leagues_meta.py"
+            ["silver-dim-league-settings"]="dim_league_settings_scd2.py"
           )
 
           for job_name in "${!jobs[@]}"; do
