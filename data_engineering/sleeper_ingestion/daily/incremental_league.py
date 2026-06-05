@@ -72,7 +72,7 @@ def flatten_league_to_parquets(league: dict):
     # Convert to Polars DataFrames
     leagues_df = pl.DataFrame(leagues_records)
     settings_df = pl.DataFrame(settings_records)
-    scoring_df = pl.DataFrame(scoring_record)
+    scoring_df = pl.DataFrame(scoring_records)
     rosters_df = pl.DataFrame(rosters_records)
     
     # Fill null values in rosters_df with 0 for position columns

@@ -154,14 +154,14 @@ def flatten_traded_picks_current(traded: Iterable[dict], league_id: str) -> pl.D
         })
 
     if not rows:
-        return pl.DataFrame({
-            "league_id": pl.Series([], pl.Utf8),
-            "season": pl.Series([], pl.Utf8),
-            "round": pl.Series([], pl.Int64),
-            "original_roster_id": pl.Series([], pl.Int64),
-            "owner_roster_id": pl.Series([], pl.Int64),
-            "previous_owner_roster_id": pl.Series([], pl.Int64),
-            "timestamp": pl.Series([], pl.Datetime),
+        return pl.DataFrame(schema={
+            "league_id": pl.Utf8,
+            "season": pl.Utf8,
+            "round": pl.Int64,
+            "original_roster_id": pl.Int64,
+            "owner_roster_id": pl.Int64,
+            "previous_owner_roster_id": pl.Int64,
+            "timestamp": pl.Datetime,
         })
 
     df = pl.from_dicts(rows).cast({
@@ -182,8 +182,9 @@ def _get_week_start_from_str(date_str: str, week_start: str = "tuesday") -> str:
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
-    mapping = {"monday": 0, "tuesday": 1, "wednesday": 3, "sunday": 6}
-    start_idx = mapping.get(week_start.lower(), 1)  
+    mapping = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+               "friday": 4, "saturday": 5, "sunday": 6}
+    start_idx = mapping.get(week_start.lower(), 1)
     wd = dt.weekday()
     # distance back to start
     offset = (wd - start_idx) % 7

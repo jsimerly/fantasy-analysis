@@ -78,9 +78,6 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
     
     for txn in all_transactions:
         # Safely get nested dicts
-        with open('debug_transactions.json', 'w') as f:
-            json.dump(all_transactions, f, indent=2)
-
         settings = txn.get('settings') or {}
         metadata = txn.get('metadata') or {}
         

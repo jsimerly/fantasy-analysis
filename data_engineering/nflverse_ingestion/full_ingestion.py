@@ -36,7 +36,7 @@ def fetch_and_save_seasonal_dataset(name: str, loader_func: callable,
         if 'season' not in df.columns:
             # No season column - save with load_date partition instead
             load_date = datetime.now().strftime('%Y-%m-%d')
-            path = f"gs://{bucket_name}/bronze/nfl/{folder}/load_date={load_date}/{name}.parquet"
+            path = f"gs://{bucket_name}/bronze/nflverse/{folder}/load_date={load_date}/{name}.parquet"
             df.write_parquet(path)
             print(f"  ⚠ No season column - saved to load_date partition: {path}")
             result['success'] = True
@@ -50,11 +50,11 @@ def fetch_and_save_seasonal_dataset(name: str, loader_func: callable,
         print(f"  → Saving {len(seasons_in_data)} season partitions...")
         for season in seasons_in_data:
             season_df = df.filter(pl.col('season') == season)
-            path = f"gs://{bucket_name}/bronze/nfl/{folder}/season={season}/{name}.parquet"
+            path = f"gs://{bucket_name}/bronze/nflverse/{folder}/season={season}/{name}.parquet"
             season_df.write_parquet(path)
             result['seasons_loaded'] += 1
         
-        print(f"  ✓ Saved {result['seasons_loaded']} seasons to bronze/nfl/{folder}/season=YYYY/")
+        print(f"  ✓ Saved {result['seasons_loaded']} seasons to bronze/nflverse/{folder}/season=YYYY/")
         result['success'] = True
         
     except Exception as e:
@@ -85,7 +85,7 @@ def fetch_and_save_non_seasonal_dataset(name: str, loader_func: callable,
         
         # Save with load_date partition
         load_date = datetime.now().strftime('%Y-%m-%d')
-        path = f"gs://{bucket_name}/bronze/nfl/{folder}/load_date={load_date}/{name}.parquet"
+        path = f"gs://{bucket_name}/bronze/nflverse/{folder}/load_date={load_date}/{name}.parquet"
         df.write_parquet(path)
         
         print(f"  ✓ {df.height:,} rows → {path}")
@@ -106,7 +106,7 @@ def main():
     After this runs, daily incremental loads will update only the current season.
     
     Structure created:
-    bronze/nfl/
+    bronze/nflverse/
     ├── play_by_play/season=1999/, season=2000/, ..., season=2024/
     ├── player_stats/season=1999/, season=2000/, ..., season=2024/
     ├── players/load_date=2024-10-06/  (non-seasonal)

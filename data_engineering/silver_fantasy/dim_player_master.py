@@ -81,7 +81,16 @@ def transform_dim_players_master() -> pl.DataFrame:
         pl.col('player_id').alias('player_key'),
         
         pl.coalesce([pl.col('full_name'), pl.col('first_name') + " " + pl.col('last_name')]).alias('display_name'),
-        pl.coalesce([pl.col('nflverse_headshot'), pl.col('swish_id')]).alias('avatar_url'),
+        pl.coalesce([
+            pl.col('nflverse_headshot'),
+            pl.when(pl.col('swish_id').is_not_null())
+              .then(
+                  pl.lit('https://sleepercdn.com/content/nfl/players/')
+                  + pl.col('swish_id').cast(pl.Utf8)
+                  + pl.lit('.jpg')
+              )
+              .otherwise(None)
+        ]).alias('avatar_url'),
         pl.coalesce([pl.col('nfl_draft_year'), pl.col('birth_date').str.slice(0, 4).cast(pl.Int64).add(22)]).alias('draft_year'),
         
         # Metadata

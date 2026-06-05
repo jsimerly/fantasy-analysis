@@ -34,6 +34,7 @@ def get_user_leagues_lineage(user_id: str = '730630390791929856', sport: str = "
             'season': league['season'],
             'total_rosters': league['total_rosters'],
             'settings': league['settings'],
+            'scoring_settings': league.get('scoring_settings'),
             'season_type': league['season_type'],
             'previous_league_id': league['previous_league_id']
         }
