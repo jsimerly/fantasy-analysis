@@ -198,9 +198,9 @@ def save_transactions_to_bronze_deduplicated(
                     subset=['transaction_id', 'player_id', 'action'], 
                     keep='last'
                 )
-            elif table_name == 'transaction_draft_picks':
+            elif table_name == 'draft_picks':
                 combined_df = combined_df.unique(
-                    subset=['transaction_id', 'draft_pick_id'], 
+                    subset=['transaction_id', 'season', 'round', 'roster_id'],
                     keep='last'
                 )
             

@@ -59,8 +59,15 @@ jobs:
             ["sleeper-league-lineage"]="historical/league_lineage_ingestion.py"
             ["sleeper-league-transactions"]="historical/league_transactions_ingestion.py"
             ["sleeper-drafts-overview"]="historical/league_drafts_ingestion.py"
-            ["sleeper-draft-picks"]="historical/league_drafts_ingestion.py"
+            ["sleeper-draft-picks"]="historical/league_draft_picks_ingestion.py"
+            ["sleeper-incremental-players"]="daily/incremental_players.py"
+            ["sleeper-incremental-users"]="daily/incremental_users.py"
           )
+
+          # NOTE: sleeper-league-transactions also needs an AUTH_TOKEN env var
+          # (GraphQL auth) which is not set by the uniform loop below. Until that
+          # secret is wired up (and the sleeper_login captcha TODO is resolved),
+          # run that job manually rather than on a schedule.
 
           for job_name in "${!jobs[@]}"; do
             script_path="${jobs[$job_name]}"

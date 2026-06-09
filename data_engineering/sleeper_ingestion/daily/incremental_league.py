@@ -72,7 +72,7 @@ def flatten_league_to_parquets(league: dict):
     # Convert to Polars DataFrames
     leagues_df = pl.DataFrame(leagues_records)
     settings_df = pl.DataFrame(settings_records)
-    scoring_df = pl.DataFrame(scoring_record)
+    scoring_df = pl.DataFrame(scoring_records)
     rosters_df = pl.DataFrame(rosters_records)
     
     # Fill null values in rosters_df with 0 for position columns
@@ -100,7 +100,11 @@ def main():
     leagues = get_fantasy_leagues()
     active_leagues = leagues.filter(pl.col("status") != "complete").filter(pl.col("source_system") == "sleeper")
     league_ids = active_leagues.select("league_id").to_series().to_list()
-    
+    print(f"Found {len(league_ids)} active leagues to process.")
+    if not league_ids:
+        print("⚠️  No active leagues — nothing to ingest.")
+        return
+
     all_leagues = []
     all_settings = []
     all_scoring = []

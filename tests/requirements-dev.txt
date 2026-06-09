@@ -1,0 +1,18 @@
+# Test/dev dependencies for the ETL unit suite (tests/).
+# Install into a Python 3.10+ venv:  pip install -r tests/requirements-dev.txt
+#
+# Heavy / auth-only deps used by the ETL scripts are STUBBED in conftest.py
+# (gql, nflreadpy) so they are intentionally NOT required here.
+
+pytest>=8
+pytest-mock>=3
+
+# Runtime libraries the ETL modules import at load time.
+polars>=1.33
+pandas>=2
+numpy>=1.26
+python-dotenv>=1
+requests>=2.31
+beautifulsoup4>=4.12
+google-cloud-storage>=2.16
+pyarrow>=15
