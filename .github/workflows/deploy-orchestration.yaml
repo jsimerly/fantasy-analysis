@@ -1,0 +1,80 @@
+name: Deploy Pipeline Orchestration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "orchestration/**"
+      - ".github/workflows/deploy-orchestration.yaml"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: fantasy-football-473418
+  REGION: us-central1
+  WORKFLOW_NAME: fantasy-pipeline
+  SCHEDULER_NAME: fantasy-pipeline-daily
+  # One daily kickoff (UTC). Bronze runs first, silver tiers follow on completion.
+  SCHEDULE: "0 10 * * *"
+  RUNTIME_SA: 624985976737-compute@developer.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v2"
+        with:
+          workload_identity_provider: "projects/624985976737/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@fantasy-football-473418.iam.gserviceaccount.com"
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v2"
+
+      # Deploy (create or update) the Cloud Workflow DAG. The workflow runs as the
+      # compute SA, which has permission to execute the Cloud Run jobs.
+      - name: "Deploy Cloud Workflow"
+        run: |
+          gcloud workflows deploy "${WORKFLOW_NAME}" \
+            --source=orchestration/pipeline.yaml \
+            --location="${REGION}" \
+            --service-account="${RUNTIME_SA}" \
+            --project="${PROJECT_ID}"
+
+      # Ensure a single Cloud Scheduler job triggers the workflow daily. Idempotent:
+      # update if it already exists, otherwise create it.
+      - name: "Ensure daily scheduler trigger"
+        run: |
+          URI="https://workflowexecutions.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/workflows/${WORKFLOW_NAME}/executions"
+
+          if gcloud scheduler jobs describe "${SCHEDULER_NAME}" --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Updating existing scheduler ${SCHEDULER_NAME}..."
+            gcloud scheduler jobs update http "${SCHEDULER_NAME}" \
+              --location="${REGION}" \
+              --schedule="${SCHEDULE}" \
+              --time-zone="Etc/UTC" \
+              --uri="${URI}" \
+              --http-method=POST \
+              --oauth-service-account-email="${RUNTIME_SA}" \
+              --message-body='{}' \
+              --project="${PROJECT_ID}"
+          else
+            echo "Creating scheduler ${SCHEDULER_NAME}..."
+            gcloud scheduler jobs create http "${SCHEDULER_NAME}" \
+              --location="${REGION}" \
+              --schedule="${SCHEDULE}" \
+              --time-zone="Etc/UTC" \
+              --uri="${URI}" \
+              --http-method=POST \
+              --oauth-service-account-email="${RUNTIME_SA}" \
+              --message-body='{}' \
+              --project="${PROJECT_ID}"
+          fi
