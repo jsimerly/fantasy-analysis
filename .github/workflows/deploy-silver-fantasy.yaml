@@ -59,6 +59,7 @@ jobs:
             ["silver-dim-users"]="dim_users.py"
             ["silver-staging-asset-alignment"]="_staging/asset_alignment.py"
             ["silver-fact-asset-values"]="fact_asset_values.py"
+            ["silver-fact-roster-membership"]="fact_roster_membership.py"
           )
 
           for job_name in "${!jobs[@]}"; do
