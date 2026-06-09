@@ -331,11 +331,18 @@ class TestReconcile:
 
     def test_duplicate_ownership_is_quarantined_and_excluded(self):
         players, picks = _good_pipeline()
-        # Seed the same pick asset owned by a second franchise.
-        dup = picks.head(1).with_columns(pl.lit("F4").alias("franchise_id"))
+        # Seed a SECOND, different owner for one specific pick. Pick a fixed
+        # asset and read its current franchise so we assign a guaranteed-different
+        # one -- never rely on row order (it varies across polars versions).
+        bad_asset = "2024:1:1"
+        current_fr = picks.filter(pl.col("asset_id") == bad_asset)["franchise_id"].item(0)
+        other_fr = "F4" if current_fr != "F4" else "F5"
+        dup = (
+            picks.filter(pl.col("asset_id") == bad_asset)
+            .with_columns(pl.lit(other_fr).alias("franchise_id"))
+        )
         picks_bad = pl.concat([picks, dup], how="diagonal_relaxed")
         fact, quarantine = reconcile(players, picks_bad, _leagues())
-        bad_asset = dup.to_dicts()[0]["asset_id"]
         assert "duplicate_ownership" in quarantine["quarantine_reason"].to_list()
         # the conflicted asset must not appear in the published fact
         assert fact.filter(pl.col("asset_id") == bad_asset).height == 0
