@@ -59,18 +59,35 @@ jobs:
             ["silver-dim-users"]="dim_users.py"
             ["silver-staging-asset-alignment"]="_staging/asset_alignment.py"
             ["silver-fact-asset-values"]="fact_asset_values.py"
+            ["silver-fact-roster-membership"]="fact_roster_membership.py"
+          )
+
+          # Per-job memory/cpu overrides (default 1Gi/1). staging-asset-alignment
+          # rescans + melts all historical valuations and collect()s them in
+          # memory, so it needs more headroom; the fact jobs are also heavier than
+          # the dims. NOTE: the staging job's full-history collect grows over time
+          # -- a streaming sink_parquet / incremental rebuild is a follow-up.
+          declare -A mem=(
+            ["silver-staging-asset-alignment"]="4Gi"
+            ["silver-fact-asset-values"]="2Gi"
+            ["silver-fact-roster-membership"]="2Gi"
+          )
+          declare -A cpu=(
+            ["silver-staging-asset-alignment"]="2"
           )
 
           for job_name in "${!jobs[@]}"; do
             script_path="${jobs[$job_name]}"
-            
-            echo "Deploying ${job_name} with script ${script_path}..."
-            
+            job_mem="${mem[$job_name]:-1Gi}"
+            job_cpu="${cpu[$job_name]:-1}"
+
+            echo "Deploying ${job_name} with script ${script_path} (mem=${job_mem}, cpu=${job_cpu})..."
+
             gcloud run jobs deploy ${job_name} \
               --image=us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/silver-fantasy:latest \
               --region=us-central1 \
-              --memory=1Gi \
-              --cpu=1 \
+              --memory=${job_mem} \
+              --cpu=${job_cpu} \
               --max-retries=1 \
               --task-timeout=30m \
               --command=python \

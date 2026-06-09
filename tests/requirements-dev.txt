@@ -3,16 +3,24 @@
 #
 # Heavy / auth-only deps used by the ETL scripts are STUBBED in conftest.py
 # (gql, nflreadpy) so they are intentionally NOT required here.
-
+#
+# The data-processing libraries are PINNED to the exact versions the deployed
+# silver image uses (data_engineering/silver_fantasy/requirements.txt) so CI
+# exercises the same behavior that ships. Row ordering of group_by/join/unique is
+# version-dependent in polars, so an unpinned polars previously made a test pass
+# locally but fail on CI's newer build -- keep these in lockstep with production.
 pytest>=8
 pytest-mock>=3
 
-# Runtime libraries the ETL modules import at load time.
-polars>=1.33
-pandas>=2
+# --- pinned to match the deployed silver image ---
+polars==1.34.0
+pandas==2.2.3
+pyarrow==21.0.0
+python-dotenv==1.1.1
+requests==2.32.5
+google-cloud-storage==3.4.1
+
+# Transitive/scraper deps the ETL modules import at load time (not behavior-
+# critical for the suite; loose pins are fine).
 numpy>=1.26
-python-dotenv>=1
-requests>=2.31
 beautifulsoup4>=4.12
-google-cloud-storage>=2.16
-pyarrow>=15

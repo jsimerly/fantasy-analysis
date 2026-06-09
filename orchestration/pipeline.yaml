@@ -1,0 +1,161 @@
+# Fantasy Analytics daily pipeline — Cloud Workflows DAG
+#
+# Replaces 14 fixed-time Cloud Scheduler triggers with ONE orchestrated run:
+# bronze pulls first (in parallel), then each silver tier runs only after the
+# tier it depends on has finished. A single Cloud Scheduler triggers this
+# workflow once per day; dependency order lives here, in the repo, so it can't
+# drift the way per-job schedulers did.
+#
+# Execution model: every job is run best-effort (a single failure is recorded,
+# not fatal, so independent jobs still run and silver still builds on the latest
+# available bronze). Any failures are collected and the workflow is failed at the
+# very end, so a bad run still surfaces for alerting.
+#
+# Tiers (dependency-ordered):
+#   bronze     : raw pulls, all independent
+#   silver T1  : read bronze only
+#   silver T2  : read T1 silver outputs
+#   silver T3  : read T2 silver outputs
+
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - project: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - location: "us-central1"
+          - failures: []
+          # --- BRONZE: raw ingestion (all independent) ---
+          - bronze_jobs:
+              - "sleeper-incremental-league"
+              - "sleeper-incremental-players"
+              - "sleeper-incremental-rosters"
+              - "sleeper-incremental-transactions"
+              - "sleeper-incremental-users"
+              - "sleeper-drafts-overview"      # keeps drafts status/rounds current (pick lifecycle)
+              - "fantasycalc-daily"
+              - "ktc-incremental-dynasty"
+              - "ktc-incremental-redraft"
+              - "ktc-incremental-devy"
+              - "nflverse-daily"
+          # --- SILVER T1: read bronze only ---
+          - silver_t1_jobs:
+              - "silver-dim-league-meta"
+              - "silver-dim-league-settings"
+              - "silver-dim-player-master"
+              - "silver-dim-users"
+              - "silver-staging-asset-alignment"
+          # --- SILVER T2: read T1 outputs ---
+          - silver_t2_jobs:
+              - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
+              - "silver-fact-asset-values"      # needs staging-asset-alignment + dim-player-master
+          # --- SILVER T3: read T2 outputs ---
+          - silver_t3_jobs:
+              - "silver-fact-roster-membership" # needs dim-franchise-meta + dim-player-master + dim-league-meta
+
+    - bronze:
+        parallel:
+          shared: [failures]
+          for:
+            value: job
+            in: ${bronze_jobs}
+            steps:
+              - run_bronze:
+                  try:
+                    call: run_job
+                    args:
+                      project: ${project}
+                      location: ${location}
+                      job: ${job}
+                  except:
+                    as: e
+                    steps:
+                      - record_bronze_failure:
+                          assign:
+                            - failures: ${list.concat(failures, job)}
+
+    - silver_tier_1:
+        parallel:
+          shared: [failures]
+          for:
+            value: job
+            in: ${silver_t1_jobs}
+            steps:
+              - run_t1:
+                  try:
+                    call: run_job
+                    args:
+                      project: ${project}
+                      location: ${location}
+                      job: ${job}
+                  except:
+                    as: e
+                    steps:
+                      - record_t1_failure:
+                          assign:
+                            - failures: ${list.concat(failures, job)}
+
+    - silver_tier_2:
+        parallel:
+          shared: [failures]
+          for:
+            value: job
+            in: ${silver_t2_jobs}
+            steps:
+              - run_t2:
+                  try:
+                    call: run_job
+                    args:
+                      project: ${project}
+                      location: ${location}
+                      job: ${job}
+                  except:
+                    as: e
+                    steps:
+                      - record_t2_failure:
+                          assign:
+                            - failures: ${list.concat(failures, job)}
+
+    - silver_tier_3:
+        parallel:
+          shared: [failures]
+          for:
+            value: job
+            in: ${silver_t3_jobs}
+            steps:
+              - run_t3:
+                  try:
+                    call: run_job
+                    args:
+                      project: ${project}
+                      location: ${location}
+                      job: ${job}
+                  except:
+                    as: e
+                    steps:
+                      - record_t3_failure:
+                          assign:
+                            - failures: ${list.concat(failures, job)}
+
+    - finalize:
+        switch:
+          - condition: ${len(failures) > 0}
+            steps:
+              - fail_run:
+                  raise: '${"Pipeline finished with failed jobs: " + json.encode_to_string(failures)}'
+    - done:
+        return: "Pipeline completed: all jobs succeeded."
+
+# Run one Cloud Run job and block until its execution finishes. The run.v2
+# connector polls the long-running operation, so a job that fails raises here and
+# is caught by the caller's try/except.
+run_job:
+  params: [project, location, job]
+  steps:
+    - execute:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project + "/locations/" + location + "/jobs/" + job}
+        result: execution
+    - return_result:
+        return: ${execution}
