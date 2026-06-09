@@ -100,7 +100,11 @@ def main():
     leagues = get_fantasy_leagues()
     active_leagues = leagues.filter(pl.col("status") != "complete").filter(pl.col("source_system") == "sleeper")
     league_ids = active_leagues.select("league_id").to_series().to_list()
-    
+    print(f"Found {len(league_ids)} active leagues to process.")
+    if not league_ids:
+        print("⚠️  No active leagues — nothing to ingest.")
+        return
+
     all_leagues = []
     all_settings = []
     all_scoring = []

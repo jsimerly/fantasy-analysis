@@ -5,6 +5,7 @@ scoring / roster-slot frames. The scoring frame is currently built from a stray
 singular variable, so a league with no scoring_settings raises -> spec fails.
 """
 import polars as pl
+import pytest
 
 from tests.de_loader import load_de_module
 
@@ -60,3 +61,22 @@ class TestFlattenLeague:
         _, _, scoring_df, _ = flatten_league_to_parquets(_league(with_scoring=False))
         assert scoring_df.height == 1
         assert scoring_df.to_dicts()[0]["league_id"] == "L1"
+
+
+class TestMainNoActiveLeagues:
+    def test_offseason_no_active_leagues_is_a_clean_noop(self, monkeypatch):
+        # SPEC: when every league is complete (offseason) there are 0 active
+        # leagues, so main() must no-op cleanly instead of pl.concat([])-ing an
+        # empty list. It must not attempt any GCS writes.
+        monkeypatch.setenv("GCS_BUCKET_NAME", "test-bucket")
+        only_complete = pl.DataFrame({
+            "league_id": ["L1"], "status": ["complete"], "source_system": ["sleeper"],
+        })
+        monkeypatch.setattr(mod, "get_fantasy_leagues", lambda: only_complete)
+
+        saved = []
+        monkeypatch.setattr(mod, "save_df_to_gcs",
+                            lambda *a, **k: saved.append(a))
+        # If the guard is missing this raises "cannot concat empty list".
+        assert mod.main() is None
+        assert saved == []
