@@ -772,6 +772,47 @@ def _read_player_events(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataF
     return _lineage_franchise(ev, lineage_map).select("franchise_id", "player_id", "ts", "date", "action")
 
 
+def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df: pl.DataFrame,
+                        overrides_df: pl.DataFrame, drafts_df) -> pl.DataFrame:
+    """Per-day pick ownership over the daily traded_picks snapshots ->
+    (franchise_id, pick_id, snapshot_date).
+
+    Each day's traded_picks IS Sleeper's net pick state for that day, so we resolve
+    ownership as-of that day with an EMPTY txn event log (no future-trade leakage);
+    the resolver still applies the deterministic future-pick universe + draft cutoff.
+    The pick accrues to the OWNER's franchise (lineage + owner_roster_id)."""
+    from google.cloud import storage
+    client = storage.Client()
+    names = sorted(
+        bl.name for bl in client.bucket(bucket_name).list_blobs(
+            prefix="bronze/sleeper/rosters/traded_picks/daily/")
+        if bl.name.endswith(".parquet")
+    )
+    empty_txn = pl.DataFrame()
+    frames = []
+    for n in names:
+        d = n.split("load_date=")[1].split("/")[0]
+        traded = pl.read_parquet(f"gs://{bucket_name}/{n}")
+        resolved = resolve_pick_ownership(traded, empty_txn, overrides_df, leagues_df, drafts_df)
+        if resolved.height == 0:
+            continue
+        df = (
+            resolved.with_columns(pl.col("league_id").cast(pl.Utf8))
+            .join(lineage_map, on="league_id", how="inner")
+            .with_columns(
+                pl.concat_str([pl.col("league_lineage_id"), pl.col("owner_roster_id").cast(pl.Utf8)],
+                              separator="_").alias("franchise_id"),
+                pl.concat_str([pl.col("season").cast(pl.Utf8), pl.col("round").cast(pl.Utf8),
+                               pl.col("original_roster_id").cast(pl.Utf8)], separator=":").alias("pick_id"),
+                pl.lit(d).alias("snapshot_date"),
+            )
+            .select("franchise_id", "pick_id", "snapshot_date")
+        )
+        frames.append(df)
+    return pl.concat(frames, how="vertical") if frames else pl.DataFrame(
+        schema={"franchise_id": pl.Utf8, "pick_id": pl.Utf8, "snapshot_date": pl.Utf8})
+
+
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
 
@@ -790,21 +831,36 @@ def main():
     print(f"  {events.height:,} add/drop events; {events['date'].min()} -> {events['date'].max()}")
 
     print("Building SCD2 player ledger (snapshot era + reconstructed era)...")
-    KEY = ["franchise_id", "player_id"]
-    ledger = combine_eras(present, events, boundary, KEY).with_columns(
+    player_ledger = combine_eras(present, events, boundary, ["franchise_id", "player_id"]).with_columns(
         pl.lit("player").alias("asset_type"),
         pl.col("player_id").alias("asset_id"),
+    ).select("franchise_id", "asset_type", "asset_id", "valid_from", "valid_to", "is_current")
+
+    # --- picks (asset_type='pick'): snapshot-era ownership over the traded_picks
+    #     snapshots. Reconstruction of pre-snapshot pick ownership is a follow-up. ---
+    overrides_path = _latest_file(bucket_name, "bronze/sleeper/transactions/commission_overrides/")
+    overrides_df = pl.read_parquet(overrides_path) if overrides_path else pl.DataFrame()
+    try:
+        drafts_df = pl.read_parquet(get_latest_bronze_path(bucket_name, "drafts/drafts", source="sleeper"))
+    except ValueError:
+        drafts_df = None
+
+    print("Resolving per-day pick ownership over traded_picks snapshots...")
+    pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df)
+    pick_ledger = build_snapshot_intervals(pick_present, ["franchise_id", "pick_id"]).with_columns(
+        pl.lit("pick").alias("asset_type"),
+        pl.col("pick_id").alias("asset_id"),
+    ).select("franchise_id", "asset_type", "asset_id", "valid_from", "valid_to", "is_current")
+    print(f"  player intervals: {player_ledger.height:,} | pick intervals: {pick_ledger.height:,}")
+
+    ledger = pl.concat([player_ledger, pick_ledger], how="vertical").with_columns(
         pl.lit("sleeper").alias("source_system"),
         pl.lit(datetime.now()).alias("loaded_at"),
-    ).select(
-        "franchise_id", "asset_type", "asset_id",
-        "valid_from", "valid_to", "is_current", "source_system", "loaded_at",
     )
 
     fact_path = f"gs://{bucket_name}/silver/fantasy/fact_roster_membership"
     print(f"Writing {ledger.height:,} SCD2 intervals (full history) to {fact_path}...")
-    # NOTE: full-history rebuild each run (idempotent) — NOT the old latest-only overwrite.
-    # Picks are the next slice (asset_type='pick'); players ship first.
+    # Full-history rebuild each run (idempotent) — NOT the old latest-only overwrite.
     ledger.write_parquet(fact_path, partition_by=["asset_type"], use_pyarrow=True)
     print("Done.")
 
