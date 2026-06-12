@@ -579,69 +579,233 @@ def _snapshot_date_from_path(path: str) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+# -------------------------------------------------------------------------
+# SCD2 LEDGER  (gaps-and-islands over daily presence)
+# -------------------------------------------------------------------------
+def build_snapshot_intervals(present: pl.DataFrame, key_cols: list[str],
+                             date_col: str = "snapshot_date") -> pl.DataFrame:
+    """Collapse per-day presence rows into SCD2 intervals.
+
+    ``present`` is a long frame (``key_cols`` + ``date_col``), one row per asset that
+    is present on a given snapshot day. Returns one row per contiguous holding stint:
+    ``key_cols + [valid_from, valid_to, is_current]`` where the interval is
+    ``[valid_from, valid_to)``. A stint ends at the snapshot date the asset is first
+    absent; a stint that reaches the latest snapshot is ``is_current=True`` with
+    ``valid_to = None``. "Contiguous" means consecutive *snapshot* dates (so gaps in
+    snapshot collection don't split a stint), via gaps-and-islands.
+    """
+    schema_out = {**{k: present.schema.get(k, pl.Utf8) for k in key_cols},
+                  "valid_from": pl.Utf8, "valid_to": pl.Utf8, "is_current": pl.Boolean}
+    if present.height == 0:
+        return pl.DataFrame(schema=schema_out)
+
+    dates = present.select(pl.col(date_col).cast(pl.Utf8)).unique().sort(date_col).with_row_index("didx")
+    max_didx = dates["didx"].max()
+
+    p = (
+        present.with_columns(pl.col(date_col).cast(pl.Utf8))
+        .join(dates, on=date_col, how="left")
+        .sort(key_cols + ["didx"])
+        # consecutive didx within a key share an island id (didx - running count)
+        .with_columns((pl.col("didx") - pl.col("didx").cum_count().over(key_cols)).alias("_isl"))
+    )
+    iv = p.group_by(key_cols + ["_isl"]).agg(
+        pl.col(date_col).min().alias("valid_from"),
+        pl.col("didx").max().alias("_last"),
+    )
+    next_date = dates.select(pl.col("didx").alias("_nd"), pl.col(date_col).alias("_to"))
+    iv = (
+        iv.with_columns((pl.col("_last") + 1).alias("_nd"))
+        .join(next_date, on="_nd", how="left")
+        .with_columns(
+            pl.col("_to").alias("valid_to"),
+            (pl.col("_last") == max_didx).alias("is_current"),
+        )
+    )
+    return iv.select(key_cols + ["valid_from", "valid_to", "is_current"])
+
+
+def build_event_intervals(events: pl.DataFrame, key_cols: list[str],
+                          ts_col: str = "ts", date_col: str = "date",
+                          action_col: str = "action") -> pl.DataFrame:
+    """Build SCD2 holding intervals from an add/drop event stream.
+
+    For each key, order events by ``ts_col`` (ms; ``action_col`` drop-before-add on
+    ties). An asset is "held" after an add until the next drop; consecutive adds with
+    no drop between stay one stint. Emits ``key_cols + [valid_from, valid_to,
+    is_open]`` (interval ``[valid_from, valid_to)``); a still-held stint has
+    ``valid_to = None`` and ``is_open = True``. Used to reconstruct history before
+    the daily-snapshot era; the snapshot era overrides it from the anchor forward.
+    """
+    schema_out = {**{k: events.schema.get(k, pl.Utf8) for k in key_cols},
+                  "valid_from": pl.Utf8, "valid_to": pl.Utf8, "is_open": pl.Boolean}
+    if events.height == 0:
+        return pl.DataFrame(schema=schema_out)
+
+    e = (
+        events
+        .with_columns(
+            pl.col(date_col).cast(pl.Utf8),
+            (pl.col(action_col) == "add").alias("_add"),
+            pl.when(pl.col(action_col) == "add").then(1).otherwise(0).alias("_tb"),  # drop<add on ties
+        )
+        .sort(key_cols + [ts_col, "_tb"])
+        .with_columns(pl.col("_add").shift(1).over(key_cols).alias("_prev"))
+    )
+    # transitions: stint starts (not-held -> add) and ends (held -> drop)
+    starts = (
+        e.filter(pl.col("_add") & (pl.col("_prev").is_null() | ~pl.col("_prev")))
+        .select(key_cols + [pl.col(date_col).alias("valid_from")])
+        .with_columns(pl.col("valid_from").cum_count().over(key_cols).alias("_rank"))
+    )
+    ends = (
+        e.filter(~pl.col("_add") & pl.col("_prev").fill_null(False))
+        .select(key_cols + [pl.col(date_col).alias("valid_to")])
+        .with_columns(pl.col("valid_to").cum_count().over(key_cols).alias("_rank"))
+    )
+    iv = (
+        starts.join(ends, on=key_cols + ["_rank"], how="left")
+        .with_columns(pl.col("valid_to").is_null().alias("is_open"))
+    )
+    return iv.select(key_cols + ["valid_from", "valid_to", "is_open"])
+
+
+def combine_eras(present: pl.DataFrame, events: pl.DataFrame, boundary: str,
+                 key_cols: list[str]) -> pl.DataFrame:
+    """Merge the snapshot era (>= boundary, authoritative) with the reconstructed
+    era (< boundary, from events) into one SCD2 interval set.
+
+    The snapshot intervals own ``[boundary, present]``; reconstructed intervals are
+    truncated to end at ``boundary`` so the two eras don't overlap. Adjacent
+    intervals are left un-stitched (a continuously-held asset shows a boundary split
+    at ``boundary``) — correct for as-of queries; stitching is a later refinement.
+    """
+    snap = build_snapshot_intervals(present, key_cols).select(
+        key_cols + ["valid_from", "valid_to", "is_current"]
+    )
+    recon = build_event_intervals(events, key_cols)
+    recon = (
+        recon
+        .filter(pl.col("valid_from") < boundary)
+        .with_columns(
+            pl.when(pl.col("valid_to").is_null() | (pl.col("valid_to") > boundary))
+              .then(pl.lit(boundary)).otherwise(pl.col("valid_to")).alias("valid_to"),
+            pl.lit(False).alias("is_current"),
+        )
+        .filter(pl.col("valid_from") < pl.col("valid_to"))
+        .select(key_cols + ["valid_from", "valid_to", "is_current"])
+    )
+    return pl.concat([recon, snap], how="vertical")
+
+
+def _lineage_franchise(df: pl.DataFrame, lineage_map: pl.DataFrame) -> pl.DataFrame:
+    """Attach franchise_id = ``<lineage_id>_<roster_id>`` (matches dim_franchises_meta),
+    mapping each row's league_id onto its dynasty lineage so the snapshot era (current
+    league_id) and the reconstructed era (historical league_ids) share one key."""
+    return (
+        df.with_columns(pl.col("league_id").cast(pl.Utf8))
+        .join(lineage_map, on="league_id", how="inner")
+        .with_columns(
+            pl.concat_str([pl.col("league_lineage_id"), pl.col("roster_id").cast(pl.Utf8)],
+                          separator="_").alias("franchise_id")
+        )
+    )
+
+
+def _read_player_presence(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataFrame:
+    """All daily roster_players snapshots -> (franchise_id, player_id, snapshot_date)."""
+    from google.cloud import storage
+    client = storage.Client()
+    names = sorted(
+        bl.name for bl in client.bucket(bucket_name).list_blobs(
+            prefix="bronze/sleeper/rosters/roster_players/daily/")
+        if bl.name.endswith(".parquet")
+    )
+    frames = []
+    for n in names:
+        d = n.split("load_date=")[1].split("/")[0]
+        df = pl.read_parquet(f"gs://{bucket_name}/{n}").select(
+            pl.col("league_id").cast(pl.Utf8), pl.col("roster_id").cast(pl.Int64),
+            pl.col("player_id").cast(pl.Utf8),
+        ).with_columns(pl.lit(d).alias("snapshot_date"))
+        frames.append(df)
+    present = pl.concat(frames, how="vertical")
+    return _lineage_franchise(present, lineage_map).select("franchise_id", "player_id", "snapshot_date")
+
+
+def _read_player_events(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataFrame:
+    """Deduped add/drop event stream (drafts + transactions, full_load UNION daily) ->
+    (franchise_id, player_id, ts, date, action)."""
+    def both(sub, cols):
+        return pl.concat([
+            _read_prefix_concat(bucket_name, f"bronze/sleeper/transactions/{sub}/full_load/").select(cols)
+            if _read_prefix_concat(bucket_name, f"bronze/sleeper/transactions/{sub}/full_load/").height else pl.DataFrame(schema={c: pl.Utf8 for c in cols}),
+            _read_prefix_concat(bucket_name, f"bronze/sleeper/transactions/{sub}/daily/").select(cols)
+            if _read_prefix_concat(bucket_name, f"bronze/sleeper/transactions/{sub}/daily/").height else pl.DataFrame(schema={c: pl.Utf8 for c in cols}),
+        ], how="diagonal_relaxed")
+
+    tx = both("transactions", ["transaction_id", "created", "status"]).unique("transaction_id").filter(pl.col("status") == "complete")
+    tp = both("transaction_players", ["transaction_id", "league_id", "player_id", "roster_id", "action"]).unique(["transaction_id", "player_id", "roster_id", "action"])
+    txn = (
+        tp.join(tx.select("transaction_id", "created"), on="transaction_id", how="inner")
+        .with_columns(
+            pl.col("created").cast(pl.Int64).alias("ts"),
+            pl.from_epoch(pl.col("created").cast(pl.Int64), time_unit="ms").dt.date().cast(pl.Utf8).alias("date"),
+        )
+    )
+    # draft adds
+    drafts = _read_prefix_concat(bucket_name, "bronze/sleeper/drafts/drafts/").unique("draft_id").select("draft_id", "league_id", "start_time")
+    dpk = (
+        _read_prefix_concat(bucket_name, "bronze/sleeper/drafts/draft_picks/").unique(["draft_id", "pick_no"])
+        .select("draft_id", "player_id", "roster_id")
+        .join(drafts, on="draft_id", how="inner")
+        .with_columns(
+            pl.col("start_time").cast(pl.Int64).alias("ts"),
+            pl.from_epoch(pl.col("start_time").cast(pl.Int64), time_unit="ms").dt.date().cast(pl.Utf8).alias("date"),
+            pl.lit("add").alias("action"),
+        )
+    )
+    ev = pl.concat([
+        txn.select("league_id", "roster_id", "player_id", "ts", "date", "action"),
+        dpk.select("league_id", "roster_id", "player_id", "ts", "date", "action"),
+    ], how="vertical_relaxed").with_columns(pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8))
+    return _lineage_franchise(ev, lineage_map).select("franchise_id", "player_id", "ts", "date", "action")
+
+
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
 
-    # --- load sources ---
-    roster_path = get_latest_bronze_path(bucket_name, "rosters/roster_players/daily", source="sleeper")
-    snapshot_date = _snapshot_date_from_path(roster_path)
-    roster_players_df = pl.read_parquet(roster_path)
-
-    traded_path = get_latest_bronze_path(bucket_name, "rosters/traded_picks/daily", source="sleeper")
-    traded_picks_df = pl.read_parquet(traded_path)
-
-    txn_draft_picks_df = _read_prefix_concat(
-        bucket_name, "bronze/sleeper/transactions/draft_picks/daily/"
-    )
-    overrides_path = _latest_file(bucket_name, "bronze/sleeper/transactions/commission_overrides/")
-    overrides_df = pl.read_parquet(overrides_path) if overrides_path else pl.DataFrame()
-
-    # drafts give per-season draft status -> the precise "picks are spent" cutoff
-    try:
-        drafts_df = pl.read_parquet(get_latest_bronze_path(bucket_name, "drafts/drafts", source="sleeper"))
-    except ValueError:
-        drafts_df = None
-
-    dim_franchise = pl.read_parquet(f"gs://{bucket_name}/silver/fantasy/dim_franchises_meta/data.parquet")
-    dim_player = pl.read_parquet(f"gs://{bucket_name}/silver/fantasy/dim_players_master/data.parquet")
     leagues_df = pl.read_parquet(f"gs://{bucket_name}/silver/fantasy/dim_leagues_meta/data.parquet")
+    lineage_map = leagues_df.select(
+        pl.col("league_id").cast(pl.Utf8), pl.col("league_lineage_id").cast(pl.Utf8)
+    ).unique()
 
-    # --- build ---
-    print("Building player membership...")
-    player_membership = build_player_membership(roster_players_df, dim_franchise, dim_player)
+    print("Reading daily roster snapshots...")
+    present = _read_player_presence(bucket_name, lineage_map)
+    boundary = present["snapshot_date"].min()
+    print(f"  {present.height:,} player-days; snapshot era starts {boundary}")
 
-    # The resolver translates every pick source onto the *current* league of its
-    # dynasty lineage (max-season league per lineage) and only emits future picks,
-    # so it needs the full dim_leagues_meta (all seasons) to build the lineage map.
-    # This is what keeps commissioner overrides resolving across season rollovers
-    # without manual edits.
-    print("Resolving pick ownership (lineage-mapped: override > txn > traded > original)...")
-    resolved_picks = resolve_pick_ownership(
-        traded_picks_df, txn_draft_picks_df, overrides_df, leagues_df, drafts_df
-    )
-    pick_membership = build_pick_membership(resolved_picks, dim_franchise)
+    print("Reading event stream (drafts + transactions, full_load + daily)...")
+    events = _read_player_events(bucket_name, lineage_map)
+    print(f"  {events.height:,} add/drop events; {events['date'].min()} -> {events['date'].max()}")
 
-    print("Reconciling conservation invariants...")
-    fact_df, quarantine_df = reconcile(player_membership, pick_membership, leagues_df)
-
-    fact_df = fact_df.with_columns(
-        pl.lit(snapshot_date).alias("snapshot_date"),
-        pl.lit("sleeper+nflverse").alias("source_system"),
+    print("Building SCD2 player ledger (snapshot era + reconstructed era)...")
+    KEY = ["franchise_id", "player_id"]
+    ledger = combine_eras(present, events, boundary, KEY).with_columns(
+        pl.lit("player").alias("asset_type"),
+        pl.col("player_id").alias("asset_id"),
+        pl.lit("sleeper").alias("source_system"),
         pl.lit(datetime.now()).alias("loaded_at"),
+    ).select(
+        "franchise_id", "asset_type", "asset_id",
+        "valid_from", "valid_to", "is_current", "source_system", "loaded_at",
     )
-
-    if quarantine_df.height:
-        print(f"WARNING: {quarantine_df.height} asset rows quarantined. Reasons:")
-        print(quarantine_df.group_by("quarantine_reason").len().sort("len", descending=True))
-        q_path = f"gs://{bucket_name}/silver/fantasy/quarantine/unaccounted_assets.parquet"
-        quarantine_df.with_columns(pl.lit(snapshot_date).alias("snapshot_date")).write_parquet(q_path)
-        print(f"Wrote quarantine to {q_path}")
-    else:
-        print("Success: every asset accounted for (quarantine empty).")
 
     fact_path = f"gs://{bucket_name}/silver/fantasy/fact_roster_membership"
-    print(f"Writing {fact_df.height} asset rows to {fact_path}...")
-    fact_df.write_parquet(fact_path, partition_by=["asset_type"], use_pyarrow=True)
+    print(f"Writing {ledger.height:,} SCD2 intervals (full history) to {fact_path}...")
+    # NOTE: full-history rebuild each run (idempotent) — NOT the old latest-only overwrite.
+    # Picks are the next slice (asset_type='pick'); players ship first.
+    ledger.write_parquet(fact_path, partition_by=["asset_type"], use_pyarrow=True)
     print("Done.")
 
 

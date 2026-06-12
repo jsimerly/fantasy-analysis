@@ -60,6 +60,7 @@ jobs:
             ["silver-staging-asset-alignment"]="_staging/asset_alignment.py"
             ["silver-fact-asset-values"]="fact_asset_values.py"
             ["silver-fact-roster-membership"]="fact_roster_membership.py"
+            ["silver-fact-pick-values"]="fact_pick_values.py"
           )
 
           # Per-job memory/cpu overrides (default 1Gi/1). staging-asset-alignment
@@ -71,6 +72,7 @@ jobs:
             ["silver-staging-asset-alignment"]="4Gi"
             ["silver-fact-asset-values"]="2Gi"
             ["silver-fact-roster-membership"]="2Gi"
+            ["silver-fact-pick-values"]="2Gi"
           )
           declare -A cpu=(
             ["silver-staging-asset-alignment"]="2"
