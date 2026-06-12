@@ -45,13 +45,14 @@ main:
               - "silver-dim-player-master"
               - "silver-dim-users"
               - "silver-staging-asset-alignment"
+              - "silver-fact-pick-values"        # bronze KTC only (no dims)
           # --- SILVER T2: read T1 outputs ---
           - silver_t2_jobs:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
               - "silver-fact-asset-values"      # needs staging-asset-alignment + dim-player-master
           # --- SILVER T3: read T2 outputs ---
           - silver_t3_jobs:
-              - "silver-fact-roster-membership" # needs dim-franchise-meta + dim-player-master + dim-league-meta
+              - "silver-fact-roster-membership" # SCD2 ledger; needs dim-league-meta (T1) + bronze snapshots/events
 
     - bronze:
         parallel:
