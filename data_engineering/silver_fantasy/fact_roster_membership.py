@@ -698,6 +698,52 @@ def combine_eras(present: pl.DataFrame, events: pl.DataFrame, boundary: str,
     return pl.concat([recon, snap], how="vertical")
 
 
+def reconstruct_pick_intervals(lifecycle: pl.DataFrame, trades: pl.DataFrame) -> pl.DataFrame:
+    """Reconstruct historical pick-ownership SCD2 intervals from synthesized minting
+    + trades.
+
+    ``lifecycle`` (one row per pick): ``franchise_id`` (the ORIGINAL owner's franchise),
+    ``pick_id``, ``mint_ts``/``mint_date`` (pick created), ``consume_date`` (its draft;
+    None if not drafted yet). ``trades`` (one row per ownership change): ``pick_id``,
+    ``prev_franchise``, ``new_franchise``, ``ts``, ``date``.
+
+    Each pick becomes add/drop events — mint=add(original); trade=drop(prev)+add(new) —
+    fed through :func:`build_event_intervals`; a still-open final interval is then capped
+    at the pick's ``consume_date`` (drafted -> pick ceases to exist).
+    """
+    mint_ev = lifecycle.select(
+        "franchise_id", "pick_id",
+        pl.col("mint_ts").alias("ts"), pl.col("mint_date").alias("date"),
+        pl.lit("add").alias("action"),
+    )
+    drop_ev = trades.select(
+        pl.col("prev_franchise").alias("franchise_id"), "pick_id", "ts", "date",
+        pl.lit("drop").alias("action"),
+    )
+    add_ev = trades.select(
+        pl.col("new_franchise").alias("franchise_id"), "pick_id", "ts", "date",
+        pl.lit("add").alias("action"),
+    )
+    events = pl.concat([mint_ev, drop_ev, add_ev], how="vertical_relaxed")
+
+    iv = build_event_intervals(events, ["franchise_id", "pick_id"])  # valid_from, valid_to, is_open
+
+    consume = lifecycle.select("pick_id", "consume_date").unique(subset=["pick_id"], keep="first")
+    iv = (
+        iv.join(consume, on="pick_id", how="left")
+        .with_columns(
+            # a still-open interval whose pick has been drafted ends at the draft
+            pl.when(pl.col("is_open") & pl.col("consume_date").is_not_null())
+              .then(pl.col("consume_date"))
+              .otherwise(pl.col("valid_to"))
+              .alias("valid_to")
+        )
+        .filter(pl.col("valid_to").is_null() | (pl.col("valid_from") < pl.col("valid_to")))
+        .with_columns(pl.col("valid_to").is_null().alias("is_current"))
+    )
+    return iv.select("franchise_id", "pick_id", "valid_from", "valid_to", "is_current")
+
+
 def _lineage_franchise(df: pl.DataFrame, lineage_map: pl.DataFrame) -> pl.DataFrame:
     """Attach franchise_id = ``<lineage_id>_<roster_id>`` (matches dim_franchises_meta),
     mapping each row's league_id onto its dynasty lineage so the snapshot era (current
@@ -813,6 +859,134 @@ def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df:
         schema={"franchise_id": pl.Utf8, "pick_id": pl.Utf8, "snapshot_date": pl.Utf8})
 
 
+def _read_pick_trade_events(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataFrame:
+    """Unify pick ownership-change events with the CORRECT new/prev owner per source.
+
+    DATA QUIRK: `transactions/draft_picks/full_load` (GraphQL dump) has from/to SWAPPED
+    — its `from_team_id` is the NEW owner. The `daily` feed (`owner_id`) and
+    `commission_overrides` (`to_team_id`) are correct. Returns one row per ownership
+    change: ``pick_id, prev_franchise, new_franchise, ts, date`` (lineage-keyed)."""
+    txns = pl.concat([
+        _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/transactions/full_load/")
+            .select("transaction_id", "created", "status"),
+        _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/transactions/daily/")
+            .select("transaction_id", "created", "status"),
+    ], how="vertical_relaxed").unique("transaction_id").filter(pl.col("status") == "complete")
+
+    # full_load: NEW owner = from_team_id (swapped), prev = to_team_id
+    fl = _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/draft_picks/full_load/")
+    fl = fl.select(
+        "transaction_id", "league_id", "season", pl.col("round").cast(pl.Int64),
+        pl.col("roster_id").cast(pl.Int64), pl.col("from_team_id").cast(pl.Int64).alias("new_owner"),
+        pl.col("to_team_id").cast(pl.Int64).alias("prev_owner"),
+    ) if fl.height else fl
+    # daily: NEW owner = owner_id, prev = previous_owner_id
+    dl = _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/draft_picks/daily/")
+    dl = dl.select(
+        "transaction_id", "league_id", "season", pl.col("round").cast(pl.Int64),
+        pl.col("roster_id").cast(pl.Int64), pl.col("owner_id").cast(pl.Int64).alias("new_owner"),
+        pl.col("previous_owner_id").cast(pl.Int64).alias("prev_owner"),
+    ) if dl.height else dl
+    txn_picks = pl.concat([f for f in (fl, dl) if f.height], how="vertical_relaxed")
+    txn_picks = (
+        txn_picks.unique(["transaction_id", "season", "round", "roster_id"])
+        .join(txns.select("transaction_id", "created"), on="transaction_id", how="inner")
+        .with_columns(pl.col("created").cast(pl.Int64).alias("ts"))
+        .drop("transaction_id")
+    ) if txn_picks.height else pl.DataFrame()
+
+    # commission_overrides: NEW owner = to_team_id, prev = from_team_id
+    ov_path = _latest_file(bucket_name, "bronze/sleeper/transactions/commission_overrides/")
+    if ov_path:
+        ov = pl.read_parquet(ov_path).select(
+            "league_id", "season", pl.col("round").cast(pl.Int64), pl.col("roster_id").cast(pl.Int64),
+            pl.col("to_team_id").cast(pl.Int64).alias("new_owner"),
+            pl.col("from_team_id").cast(pl.Int64).alias("prev_owner"),
+            pl.col("created").cast(pl.Int64).alias("ts"),
+        )
+    else:
+        ov = pl.DataFrame()
+
+    allev = pl.concat([e for e in (txn_picks, ov) if e.height], how="diagonal_relaxed")
+    if allev.height == 0:
+        return pl.DataFrame(schema={"pick_id": pl.Utf8, "prev_franchise": pl.Utf8,
+                                    "new_franchise": pl.Utf8, "ts": pl.Int64, "date": pl.Utf8})
+    return (
+        allev.with_columns(pl.col("league_id").cast(pl.Utf8))
+        .join(lineage_map, on="league_id", how="inner")
+        .with_columns(
+            pl.concat_str([pl.col("season").cast(pl.Utf8), pl.col("round").cast(pl.Utf8),
+                           pl.col("roster_id").cast(pl.Utf8)], separator=":").alias("pick_id"),
+            pl.concat_str([pl.col("league_lineage_id"), pl.col("prev_owner").cast(pl.Utf8)],
+                          separator="_").alias("prev_franchise"),
+            pl.concat_str([pl.col("league_lineage_id"), pl.col("new_owner").cast(pl.Utf8)],
+                          separator="_").alias("new_franchise"),
+            pl.from_epoch(pl.col("ts"), time_unit="ms").dt.date().cast(pl.Utf8).alias("date"),
+        )
+        .select("pick_id", "prev_franchise", "new_franchise", "ts", "date")
+    )
+
+
+def synthesize_pick_lifecycle(drafts_df: pl.DataFrame, leagues_df: pl.DataFrame,
+                              lineage_map: pl.DataFrame, rounds_df: pl.DataFrame,
+                              years_out: int = 3) -> pl.DataFrame:
+    """Synthesize every pick's mint/consume (no creation transaction exists).
+
+    Sleeper mints, at each draft completion, the season-``(D+years_out)`` rookie picks
+    (rounds ``1..R``) for every roster; they are consumed at their own season's draft.
+    Returns one row per pick: ``franchise_id`` (original owner), ``pick_id``,
+    ``mint_ts``/``mint_date``, ``consume_date`` (None if its draft hasn't happened)."""
+    # draft completions per lineage/season (max ts per season picks the real rookie draft)
+    comp = (
+        drafts_df.unique("draft_id")
+        .with_columns(pl.col("league_id").cast(pl.Utf8))
+        .join(lineage_map, on="league_id", how="inner")
+        .with_columns(
+            pl.col("season").cast(pl.Int64).alias("dseason"),
+            pl.coalesce([pl.col("last_picked"), pl.col("start_time")]).cast(pl.Int64).alias("dts"),
+        )
+        .group_by(["league_lineage_id", "dseason"]).agg(pl.col("dts").max().alias("dts"))
+        .with_columns(pl.from_epoch("dts", time_unit="ms").dt.date().cast(pl.Utf8).alias("ddate"))
+    )
+    # per lineage: startup (first) season + roster count
+    lin_meta = (
+        leagues_df.select(
+            pl.col("league_lineage_id"), pl.col("season").cast(pl.Int64).alias("season"),
+            pl.col("total_rosters").cast(pl.Int64),
+        )
+        .group_by("league_lineage_id").agg(
+            pl.col("season").min().alias("startup"),
+            pl.col("total_rosters").max().alias("N"),
+        )
+    )
+    latest = comp.group_by("league_lineage_id").agg(pl.col("dseason").max().alias("latest_draft"))
+    R = rounds_df.select(pl.col("league_lineage_id"), pl.col("rounds").cast(pl.Int64).alias("R")).unique("league_lineage_id")
+    meta = lin_meta.join(latest, on="league_lineage_id").join(R, on="league_lineage_id", how="left").with_columns(pl.col("R").fill_null(3))
+
+    # pick universe per lineage: seasons (startup+1 .. latest_draft+years_out) x rounds x rosters
+    uni = (
+        meta.with_columns(pl.int_ranges(pl.col("startup") + 1, pl.col("latest_draft") + years_out + 1).alias("S"))
+        .explode("S")
+        .with_columns(pl.int_ranges(1, pl.col("R") + 1).alias("rnd")).explode("rnd")
+        .with_columns(pl.int_ranges(1, pl.col("N") + 1).alias("roster")).explode("roster")
+        .with_columns((pl.max_horizontal(pl.col("S") - years_out, pl.col("startup"))).alias("mint_season"))
+    )
+    # attach mint/consume completion dates
+    mint = comp.select(pl.col("league_lineage_id"), pl.col("dseason").alias("mint_season"),
+                       pl.col("ddate").alias("mint_date"), pl.col("dts").alias("mint_ts"))
+    consume = comp.select(pl.col("league_lineage_id"), pl.col("dseason").alias("S"),
+                          pl.col("ddate").alias("consume_date"))
+    out = (
+        uni.join(mint, on=["league_lineage_id", "mint_season"], how="inner")
+        .join(consume, on=["league_lineage_id", "S"], how="left")
+        .with_columns(
+            pl.concat_str([pl.col("league_lineage_id"), pl.col("roster").cast(pl.Utf8)], separator="_").alias("franchise_id"),
+            pl.concat_str([pl.col("S").cast(pl.Utf8), pl.col("rnd").cast(pl.Utf8), pl.col("roster").cast(pl.Utf8)], separator=":").alias("pick_id"),
+        )
+    )
+    return out.select("franchise_id", "pick_id", "mint_ts", "mint_date", "consume_date")
+
+
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
 
@@ -836,8 +1010,8 @@ def main():
         pl.col("player_id").alias("asset_id"),
     ).select("franchise_id", "asset_type", "asset_id", "valid_from", "valid_to", "is_current")
 
-    # --- picks (asset_type='pick'): snapshot-era ownership over the traded_picks
-    #     snapshots. Reconstruction of pre-snapshot pick ownership is a follow-up. ---
+    # --- picks (asset_type='pick'): full history. Snapshot era from the traded_picks
+    #     snapshots; reconstructed era from synthesized minting + corrected trade events. ---
     overrides_path = _latest_file(bucket_name, "bronze/sleeper/transactions/commission_overrides/")
     overrides_df = pl.read_parquet(overrides_path) if overrides_path else pl.DataFrame()
     try:
@@ -847,7 +1021,31 @@ def main():
 
     print("Resolving per-day pick ownership over traded_picks snapshots...")
     pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df)
-    pick_ledger = build_snapshot_intervals(pick_present, ["franchise_id", "pick_id"]).with_columns(
+    snap_pick = build_snapshot_intervals(pick_present, ["franchise_id", "pick_id"])
+
+    print("Reconstructing pre-snapshot pick ownership (mint/consume + trades)...")
+    rounds_df = (
+        drafts_df.unique("draft_id").with_columns(pl.col("league_id").cast(pl.Utf8))
+        .join(lineage_map, on="league_id", how="inner")
+        .filter(pl.col("status") == "complete").with_columns(pl.col("season").cast(pl.Int64))
+        .sort("season").group_by("league_lineage_id").agg(pl.col("rounds").last().alias("rounds"))
+    )
+    lifecycle = synthesize_pick_lifecycle(drafts_df, leagues_df, lineage_map, rounds_df, years_out=3)
+    trades = _read_pick_trade_events(bucket_name, lineage_map)
+    recon_pick = reconstruct_pick_intervals(lifecycle, trades)
+    # truncate reconstruction at the snapshot boundary (snapshots own >= boundary)
+    recon_pick = (
+        recon_pick.filter(pl.col("valid_from") < boundary)
+        .with_columns(
+            pl.when(pl.col("valid_to").is_null() | (pl.col("valid_to") > boundary))
+              .then(pl.lit(boundary)).otherwise(pl.col("valid_to")).alias("valid_to"),
+            pl.lit(False).alias("is_current"),
+        )
+        .filter(pl.col("valid_from") < pl.col("valid_to"))
+        .select("franchise_id", "pick_id", "valid_from", "valid_to", "is_current")
+    )
+
+    pick_ledger = pl.concat([recon_pick, snap_pick], how="vertical").with_columns(
         pl.lit("pick").alias("asset_type"),
         pl.col("pick_id").alias("asset_id"),
     ).select("franchise_id", "asset_type", "asset_id", "valid_from", "valid_to", "is_current")
