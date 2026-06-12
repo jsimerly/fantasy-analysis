@@ -873,13 +873,19 @@ def _read_pick_trade_events(bucket_name: str, lineage_map: pl.DataFrame) -> pl.D
             .select("transaction_id", "created", "status"),
     ], how="vertical_relaxed").unique("transaction_id").filter(pl.col("status") == "complete")
 
-    # full_load: NEW owner = from_team_id (swapped), prev = to_team_id
+    # full_load: corrected schema uses owner_id (new); legacy data (before the
+    # ingestion fix) used from_team_id as the new owner (labels were swapped).
     fl = _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/draft_picks/full_load/")
-    fl = fl.select(
-        "transaction_id", "league_id", "season", pl.col("round").cast(pl.Int64),
-        pl.col("roster_id").cast(pl.Int64), pl.col("from_team_id").cast(pl.Int64).alias("new_owner"),
-        pl.col("to_team_id").cast(pl.Int64).alias("prev_owner"),
-    ) if fl.height else fl
+    if fl.height:
+        if "owner_id" in fl.columns:                       # corrected schema
+            new_col, prev_col = "owner_id", "previous_owner_id"
+        else:                                              # legacy swapped schema
+            new_col, prev_col = "from_team_id", "to_team_id"
+        fl = fl.select(
+            "transaction_id", "league_id", "season", pl.col("round").cast(pl.Int64),
+            pl.col("roster_id").cast(pl.Int64), pl.col(new_col).cast(pl.Int64).alias("new_owner"),
+            pl.col(prev_col).cast(pl.Int64).alias("prev_owner"),
+        )
     # daily: NEW owner = owner_id, prev = previous_owner_id
     dl = _read_prefix_concat(bucket_name, "bronze/sleeper/transactions/draft_picks/daily/")
     dl = dl.select(
