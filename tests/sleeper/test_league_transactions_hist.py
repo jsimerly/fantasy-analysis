@@ -24,13 +24,17 @@ def _txn():
         "consenter_ids": ["U1", "U2"], "roster_ids": [1, 2], "waiver_budget": [],
         "adds": {"100": 1}, "drops": {"200": 2},
         "player_map": {"100": {"first_name": "Pat", "position": "QB"}},
-        # roster_id, season, round, from_team, to_team  -> "1,2023,1,5,1"
+        # GraphQL pick string: "orig_roster,season,round,NEW_OWNER,PREV_OWNER"
+        # -> orig roster 1's 2023 1st, traded TO roster 5 (new), FROM roster 1 (prev).
         "draft_picks": ["1,2023,1,5,1"],
     }
 
 
 class TestFlattenTransactions:
-    def test_draft_pick_id_string_is_parsed(self, tmp_path, monkeypatch):
+    def test_draft_pick_owner_semantics(self, tmp_path, monkeypatch):
+        # SPEC: the 4th field is the NEW owner; emit owner_id/previous_owner_id to
+        # match the daily REST feed (a prior bug labeled these from/to and swapped
+        # them, breaking reconstruction).
         monkeypatch.chdir(tmp_path)
         _, _, picks = flatten_transactions([_txn()])
         row = picks.to_dicts()[0]
@@ -38,8 +42,9 @@ class TestFlattenTransactions:
         assert row["roster_id"] == 1
         assert row["season"] == "2023"
         assert row["round"] == 1
-        assert row["from_team_id"] == 5
-        assert row["to_team_id"] == 1
+        assert row["owner_id"] == 5            # new owner (4th field)
+        assert row["previous_owner_id"] == 1   # previous owner (5th field)
+        assert "from_team_id" not in row       # old swapped labels removed
 
     def test_adds_and_drops_rows(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

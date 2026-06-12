@@ -150,13 +150,20 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
         # 3. TRANSACTION_DRAFT_PICKS TABLE - one row per draft pick
         if txn.get('draft_picks'):
             for draft_pick_str in txn['draft_picks']:
+                # Sleeper's GraphQL pick string is
+                #   "<orig_roster>,<season>,<round>,<NEW_OWNER>,<PREV_OWNER>"
+                # i.e. the 4th field is the NEW owner (verified against the
+                # traded_picks net state: 21/21). Emit `owner_id`/`previous_owner_id`
+                # to match the daily REST feed's schema + semantics so both agree.
+                # (A prior version mislabeled these as from_team_id/to_team_id and
+                # swapped them, which broke pick-ownership reconstruction.)
                 parts = draft_pick_str.rsplit(',', 2)
-                pick_sleeper_id = parts[0] 
-                from_team_id = parts[1]     
-                to_team_id = parts[2]     
-             
+                pick_sleeper_id = parts[0]
+                owner_id = int(parts[1])           # new owner
+                previous_owner_id = int(parts[2])  # previous owner
+
                 pick_parts = pick_sleeper_id.split(',')
-                
+
                 pick_record = {
                     'transaction_id': txn['transaction_id'],
                     'league_id': txn['league_id'],
@@ -164,8 +171,8 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
                     'roster_id': int(pick_parts[0]) if len(pick_parts) > 0 else None,
                     'season': pick_parts[1] if len(pick_parts) > 1 else None,
                     'round': int(pick_parts[2]) if len(pick_parts) > 2 else None,
-                    'from_team_id': int(from_team_id),
-                    'to_team_id': int(to_team_id)
+                    'previous_owner_id': previous_owner_id,
+                    'owner_id': owner_id,
                 }
 
                 draft_pick_records.append(pick_record)

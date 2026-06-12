@@ -109,25 +109,32 @@ def flatten_transactions(all_transactions: list[dict], league_id: str) -> tuple[
     return transactions_df, players_df, draft_picks_df
 
 
+# Sleeper records transactions per "leg" (week). A full NFL season runs to ~18, and
+# offseason moves continue under higher legs, so we sweep a generous range to be safe.
+FULL_LEG_SWEEP = list(range(1, 23))
+
+
 def get_recent_transactions_incremental(league_id: str, league_status: str, current_leg: int) -> list[dict]:
     """
     Get recent transactions for daily incremental loads.
-    Week 1 = offseason transactions
+
+    in_season: fetch only the recent legs (cheap; older legs were captured when they
+    were current). complete / other: sweep ALL legs — once a league finishes we must
+    keep capturing late-season + offseason moves, otherwise the daily feed silently
+    drops every leg after completion (the bug that left a ~6-month gap). Re-fetching is
+    idempotent (the bronze save dedupes), so over-fetching is safe.
     """
     all_transactions = []
-    
+
     if league_status == 'in_season':
         if current_leg == 0:
             weeks_to_fetch = [1, 2]
         else:
             weeks_to_fetch = [1, current_leg, current_leg + 1]
-    
-    elif league_status == 'complete':
-        weeks_to_fetch = [1]
-    
     else:
-        weeks_to_fetch = [1]
-    
+        # complete / pre_draft / offseason: don't lose any leg
+        weeks_to_fetch = FULL_LEG_SWEEP
+
     for week in weeks_to_fetch:
         week_transactions = get_transactions(league_id=league_id, week=week)
 

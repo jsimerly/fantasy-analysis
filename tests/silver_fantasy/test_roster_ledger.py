@@ -13,6 +13,7 @@ mod = load_de_module(
 build_snapshot_intervals = mod.build_snapshot_intervals
 build_event_intervals = mod.build_event_intervals
 combine_eras = mod.combine_eras
+reconstruct_pick_intervals = mod.reconstruct_pick_intervals
 
 
 def _present(rows):
@@ -163,3 +164,54 @@ class TestCombineEras:
         present = _present([(self.BOUNDARY, 3, "Z")])
         out = combine_eras(present, events, self.BOUNDARY, KEY)
         assert out.filter(pl.col("player_id") == "C").height == 0
+
+
+def _lifecycle(rows):
+    # rows: (franchise_id_orig, pick_id, mint_ts, mint_date, consume_date)
+    return pl.DataFrame({
+        "franchise_id": [r[0] for r in rows],
+        "pick_id": [r[1] for r in rows],
+        "mint_ts": [r[2] for r in rows],
+        "mint_date": [r[3] for r in rows],
+        "consume_date": [r[4] for r in rows],
+    })
+
+
+def _trades(rows):
+    # rows: (pick_id, prev_franchise, new_franchise, ts, date)
+    return pl.DataFrame({
+        "pick_id": [r[0] for r in rows],
+        "prev_franchise": [r[1] for r in rows],
+        "new_franchise": [r[2] for r in rows],
+        "ts": [r[3] for r in rows],
+        "date": [r[4] for r in rows],
+    })
+
+
+class TestReconstructPickIntervals:
+    def test_traded_then_consumed(self):
+        # pick minted to L_1 (2021), traded to L_2 (2023), drafted/consumed 2024.
+        lc = _lifecycle([("L_1", "2024:1:1", 100, "2021-09-07", "2024-05-08")])
+        tr = _trades([("2024:1:1", "L_1", "L_2", 500, "2023-01-01")])
+        out = reconstruct_pick_intervals(lc, tr).sort("valid_from")
+        rows = out.to_dicts()
+        assert len(rows) == 2
+        assert rows[0]["franchise_id"] == "L_1"
+        assert rows[0]["valid_from"] == "2021-09-07" and rows[0]["valid_to"] == "2023-01-01"
+        assert rows[1]["franchise_id"] == "L_2"
+        assert rows[1]["valid_from"] == "2023-01-01" and rows[1]["valid_to"] == "2024-05-08"
+        assert all(r["is_current"] is False for r in rows)   # consumed
+
+    def test_never_traded_pick_one_interval_to_consume(self):
+        lc = _lifecycle([("L_3", "2023:2:3", 100, "2020-09-01", "2023-05-11")])
+        out = reconstruct_pick_intervals(lc, _trades([]).clear()).to_dicts()
+        assert len(out) == 1
+        assert out[0]["franchise_id"] == "L_3"
+        assert out[0]["valid_from"] == "2020-09-01" and out[0]["valid_to"] == "2023-05-11"
+
+    def test_unconsumed_pick_stays_open(self):
+        # a future pick (no draft yet) -> open/current interval
+        lc = _lifecycle([("L_5", "2027:1:5", 100, "2024-05-08", None)])
+        out = reconstruct_pick_intervals(lc, _trades([]).clear()).to_dicts()
+        assert len(out) == 1
+        assert out[0]["valid_to"] is None and out[0]["is_current"] is True

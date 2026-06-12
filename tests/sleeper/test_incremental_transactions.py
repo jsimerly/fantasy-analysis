@@ -84,10 +84,19 @@ class TestWeekSelection:
         get_recent_transactions_incremental("L1", "in_season", 5)
         assert seen == [1, 5, 6]
 
-    def test_complete_fetches_week_1(self, monkeypatch):
+    def test_complete_sweeps_all_legs(self, monkeypatch):
+        # SPEC: once a league is complete we must keep capturing late-season +
+        # offseason legs (not just week 1), or the daily feed drops everything
+        # after completion. Sweep a generous leg range.
         seen = self._capture_weeks(monkeypatch)
         get_recent_transactions_incremental("L1", "complete", 0)
-        assert seen == [1]
+        assert seen == list(range(1, 23))
+        assert 1 in seen and 18 in seen          # late-season legs included
+
+    def test_offseason_status_also_sweeps(self, monkeypatch):
+        seen = self._capture_weeks(monkeypatch)
+        get_recent_transactions_incremental("L1", "pre_draft", 0)
+        assert seen == list(range(1, 23))
 
 
 class TestSaveDeduplicated:
