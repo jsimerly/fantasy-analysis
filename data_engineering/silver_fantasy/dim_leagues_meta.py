@@ -26,6 +26,29 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
         preserve_columns=['league_lineage_id']
     )
 
+    # Backfill lineage for newly-discovered seasons. `league_lineage_id` is only
+    # carried by full_load, so a league that rolled over to a new season (present
+    # only in the incremental feed) arrives with a null lineage and would orphan
+    # itself from its dynasty. Chain it onto its predecessor: a null-lineage league
+    # inherits the `league_lineage_id` of its `previous_league_id`, iterated so a
+    # multi-season gap still resolves to the chain root. Any league with no
+    # predecessor in the data is its own lineage root.
+    for _ in range(12):
+        if leagues_df.filter(pl.col('league_lineage_id').is_null()).height == 0:
+            break
+        prev_lineage = leagues_df.select(
+            pl.col('league_id').alias('previous_league_id'),
+            pl.col('league_lineage_id').alias('_prev_lineage'),
+        )
+        leagues_df = (
+            leagues_df.join(prev_lineage, on='previous_league_id', how='left')
+            .with_columns(pl.coalesce(['league_lineage_id', '_prev_lineage']).alias('league_lineage_id'))
+            .drop('_prev_lineage')
+        )
+    leagues_df = leagues_df.with_columns(
+        pl.coalesce(['league_lineage_id', 'league_id']).alias('league_lineage_id')
+    )
+
     # --- 2. Load Settings Data (For Status/Leg only) ---
     full_settings_path = get_latest_bronze_path(bucket_name, "league/settings/full_load")
     daily_settings_path = get_latest_bronze_path(bucket_name, "league/settings/incremental")
