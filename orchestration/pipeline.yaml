@@ -44,11 +44,13 @@ main:
               - "silver-dim-league-settings"
               - "silver-dim-player-master"
               - "silver-dim-users"
+              - "silver-dim-dates"               # bronze nflverse schedules only (no dims)
               - "silver-staging-asset-alignment"
               - "silver-fact-pick-values"        # bronze KTC only (no dims)
           # --- SILVER T2: read T1 outputs ---
           - silver_t2_jobs:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
+              - "silver-dim-league-events"      # needs dim-league-meta + dim-league-settings + bronze drafts/schedules
               - "silver-fact-asset-values"      # needs staging-asset-alignment + dim-player-master
           # --- SILVER T3: read T2 outputs ---
           - silver_t3_jobs:
