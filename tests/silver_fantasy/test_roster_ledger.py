@@ -215,3 +215,16 @@ class TestReconstructPickIntervals:
         out = reconstruct_pick_intervals(lc, _trades([]).clear()).to_dicts()
         assert len(out) == 1
         assert out[0]["valid_to"] is None and out[0]["is_current"] is True
+
+    def test_same_pick_id_across_lineages_keeps_own_consume(self):
+        # pick_id "2024:1:1" exists in BOTH lineages (franchise = "<lineage>_<roster>")
+        # with DIFFERENT draft/consume dates. Each must end at its OWN lineage's consume
+        # date -- not collide on pick_id (the bug: one lineage's 05-02 leaked onto others).
+        lc = _lifecycle([
+            ("1061_1", "2024:1:1", 100, "2021-09-07", "2024-05-02"),
+            ("1131_1", "2024:1:1", 100, "2021-09-07", "2024-06-28"),
+        ])
+        out = reconstruct_pick_intervals(lc, _trades([]).clear())
+        end = {r["franchise_id"]: r["valid_to"] for r in out.to_dicts()}
+        assert end["1061_1"] == "2024-05-02"
+        assert end["1131_1"] == "2024-06-28"
