@@ -89,14 +89,38 @@ def main():
     lf_ktc_devy_long = melt_ktc_values(ktc_devy_daily, "DEVY")
 
     # ---------------------------------------------------------------------
-    # 3. KTC HISTORIC (Schema: Datetime -> Date)
+    # 3. KTC HISTORIC — per-player full_load scrape (continuous 2020 -> 2025-10-01)
+    #    PLUS the older local_load archive as a coverage fallback.
+    #    The local_load archive truncated PLAYER values at 2024-08-02 (a 14-month gap
+    #    the daily feed jumped across) and is lower quality, but it tracked more players
+    #    (~600+ vs full_load's ~464). So: use full_load for the players it has (clean,
+    #    continuous, `slug` source_id matching the daily branch), and fall back to
+    #    local_load ONLY for ktc_ids full_load lacks (older/retired players). Picks
+    #    (position == "RDP") are dropped here — handled by fact_pick_values.
     # ---------------------------------------------------------------------
-    ktc_historic = (
+    # per-player files have heterogeneous schemas (varying rank cols) -> ignore extras
+    full_lf = (
+        pl.scan_parquet(f"{BUCKET_ROOT}/bronze/ktc/dynasty/full_load/load_date=*/*.parquet",
+                        extra_columns="ignore")
+        .filter(pl.col("position") != "RDP")
+    )
+    lf_hist_full = standardize_simple(
+        full_lf.rename({"ranking_date": "valuation_date", "slug": "source_id", "player_name": "asset_name"}),
+        "KTC", "DYNASTY", "SF", "Standard", "sf_value",
+    )
+    # ktc_id set covered by full_load (trailing number of the slug); local_load fills only the gaps
+    full_ktc_ids = full_lf.select(
+        pl.col("slug").str.split("-").list.get(-1).cast(pl.Int64, strict=False).alias("ktc_id")
+    ).unique()
+    local_only = (
         pl.scan_parquet(f"{BUCKET_ROOT}/bronze/ktc/dynasty/local_load/load_date=*/data.parquet")
         .rename({"date": "valuation_date", "ktc_id": "source_id", "display_name": "asset_name"})
+        .with_columns(pl.col("source_id").cast(pl.Int64, strict=False).alias("_kid"))
+        .join(full_ktc_ids, left_on="_kid", right_on="ktc_id", how="anti")  # only players full_load lacks
+        .drop("_kid")
     )
-    # The helper function will handle the Datetime -> Date cast
-    lf_historic_long = standardize_simple(ktc_historic, "KTC", "DYNASTY", "SF", "Standard", "value")
+    lf_hist_local = standardize_simple(local_only, "KTC", "DYNASTY", "SF", "Standard", "value")
+    lf_historic_long = pl.concat([lf_hist_full, lf_hist_local], how="vertical_relaxed")
 
     # ---------------------------------------------------------------------
     # 4. FANTASYCALC (Schema: String -> Date)

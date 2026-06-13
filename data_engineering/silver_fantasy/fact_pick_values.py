@@ -9,13 +9,21 @@ It deliberately carries NO ownership/franchise: combining a team's picks with th
 values (and deciding which tier a pick maps to) is a separate measure-layer job,
 ``algo(team, pick_data)`` (see ``_pick_projection.py`` and [[fact-pick-values]]).
 
-Two KTC feeds are unioned:
+KTC feeds are unioned in precedence order **daily > full_load > local_load**:
 - ``daily_load`` — recent (~252d), names ``Season Tier Round``, 4 value columns
   (1QB/SF x Standard/TEP).
-- ``local_load`` — historical archive (``date`` back to 2020), names REVERSED
-  ``Tier Season Round``, a single value = dynasty SF Standard, with some dirty
-  future-dated rows that are clipped.
-On overlap the daily feed wins.
+- ``full_load`` — per-player/pick historical scrape (``position == "RDP"`` rows are
+  picks; ``player_name`` is ``Season Tier Round`` like the daily feed). Continuous
+  daily ``sf_value``/``one_qb_value`` back to ~2020, but only for picks that still
+  EXIST at scrape time (2026+ future picks).
+- ``local_load`` — older, lower-quality archive (names REVERSED ``Tier Season Round``,
+  SF Standard only, dirty future dates clipped). Kept as a FALLBACK: it's the only
+  source for CONSUMED historical picks (2022-2025 tiers) that full_load no longer
+  carries.
+Higher-precedence feeds win on overlapping keys.
+
+FantasyCalc pick values are also folded in (``source_system='fantasycalc'``), stored
+at the round level (``tier='NA'``) since FC has no Early/Mid/Late tiers.
 """
 import os
 from datetime import datetime
@@ -117,6 +125,38 @@ def parse_ktc_local_pick_values(local_df: pl.DataFrame, max_date: str | None = N
     )
 
 
+_FC_ROUND_WORDS = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4}
+
+
+def parse_fc_pick_values(fc_df: pl.DataFrame) -> pl.DataFrame:
+    """FantasyCalc pick rows -> long pick values at the ROUND level.
+
+    FC marks picks with ``position == 'PICK'`` and a round-generic name like
+    ``2026 1st`` (it has no Early/Mid/Late tiers, so ``tier='NA'``). The exact-slot
+    rows (``2026 Pick 1.09``) are ignored here. FC's single ``value`` is its dynasty
+    value -> recorded as DYNASTY / SF / Standard.
+    """
+    pat = r"^(?P<season>20\d{2})\s+(?P<round>1st|2nd|3rd|4th)$"
+    return (
+        fc_df
+        .filter(pl.col("position") == "PICK")
+        .with_columns(pl.col("name").str.extract_groups(pat).alias("_g"))
+        .filter(pl.col("_g").struct.field("season").is_not_null())
+        .with_columns(
+            pl.col("valuation_date").cast(pl.Utf8),
+            pl.col("_g").struct.field("season").cast(pl.Int64).alias("season"),
+            pl.col("_g").struct.field("round").replace_strict(_FC_ROUND_WORDS, default=None)
+              .cast(pl.Int64).alias("round"),
+            pl.lit("NA").alias("tier"),
+            pl.lit("DYNASTY").alias("market_type"),
+            pl.lit("SF").alias("qb_format"),
+            pl.lit("Standard").alias("te_premium"),
+            pl.col("value").cast(pl.Float64),
+        )
+        .select(_LONG_COLS)
+    )
+
+
 def build_pick_values(daily_df: pl.DataFrame, local_df: pl.DataFrame) -> pl.DataFrame:
     """Union daily + historical pick values; daily wins on overlap.
 
@@ -156,14 +196,36 @@ def _read_ktc_prefix(bucket_name: str, prefix: str, suffix: str,
     return pl.concat(frames, how="diagonal_relaxed")
 
 
+def _read_fullload_picks(bucket_name: str) -> pl.DataFrame:
+    """Per-player full_load scrape -> just the PICK rows, shaped like the daily feed
+    so ``parse_ktc_daily_pick_values`` can parse them. ``position == 'RDP'`` selects
+    picks; rename to the daily column names (TEP columns are absent -> SF+1QB Standard).
+
+    Uses a single lazy glob scan (``extra_columns='ignore'`` — the per-player files have
+    heterogeneous rank columns) rather than reading ~499 files one-by-one."""
+    glob = f"gs://{bucket_name}/bronze/ktc/dynasty/full_load/load_date=*/*.parquet"
+    try:
+        lf = pl.scan_parquet(glob, extra_columns="ignore")
+    except Exception:
+        return pl.DataFrame()
+    return (
+        lf.filter(pl.col("position") == "RDP")
+        .select("player_name", "ranking_date", "sf_value", "one_qb_value")
+        .rename({"player_name": "playerName", "ranking_date": "valuation_date",
+                 "one_qb_value": "oneqb_value"})
+        .collect()
+    )
+
+
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
 
-    print("Reading KTC daily + historical archive...")
+    print("Reading KTC daily + full_load + local archive...")
     daily_raw = _read_ktc_prefix(
         bucket_name, "bronze/ktc/dynasty/daily_load/", "player_data.parquet",
         add_valuation_date_from_partition=True,
     )
+    full_raw = _read_fullload_picks(bucket_name)
     local_raw = _read_ktc_prefix(
         bucket_name, "bronze/ktc/dynasty/local_load/", ".parquet",
         add_valuation_date_from_partition=False,
@@ -171,15 +233,27 @@ def main():
 
     print("Parsing pick values...")
     daily = parse_ktc_daily_pick_values(daily_raw)
-    local = parse_ktc_local_pick_values(local_raw) if local_raw.height else daily.clear()
+    full_hist = parse_ktc_daily_pick_values(full_raw) if full_raw.height else daily.clear()
+    local_hist = parse_ktc_local_pick_values(local_raw) if local_raw.height else daily.clear()
 
-    fact = build_pick_values(daily, local).with_columns(
-        pl.lit("ktc").alias("source_system"),
-        pl.lit(datetime.now()).alias("loaded_at"),
+    # precedence: daily > full_load > local_load (local fills CONSUMED picks full_load lacks)
+    ktc = build_pick_values(build_pick_values(daily, full_hist), local_hist).with_columns(
+        pl.lit("ktc").alias("source_system"))
+
+    print("Reading + parsing FantasyCalc picks...")
+    fc_raw = _read_ktc_prefix(
+        bucket_name, "bronze/fantasycalc/values/daily/", ".parquet",
+        add_valuation_date_from_partition=True,
     )
+    fc = parse_fc_pick_values(fc_raw).with_columns(pl.lit("fantasycalc").alias("source_system")) \
+        if fc_raw.height else ktc.clear()
+
+    fact = pl.concat([ktc, fc], how="vertical_relaxed").with_columns(
+        pl.lit(datetime.now()).alias("loaded_at"))
 
     fact_path = f"gs://{bucket_name}/silver/fantasy/fact_pick_values"
-    print(f"Writing {fact.height} rows to {fact_path}...")
+    print(f"Writing {fact.height} rows to {fact_path} "
+          f"(ktc={ktc.height}, fantasycalc={fc.height})...")
     fact.write_parquet(fact_path, partition_by=["market_type"], use_pyarrow=True)
     print("Done.")
 

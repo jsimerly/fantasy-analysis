@@ -14,6 +14,7 @@ mod = load_de_module(
 )
 parse_ktc_daily_pick_values = mod.parse_ktc_daily_pick_values
 parse_ktc_local_pick_values = mod.parse_ktc_local_pick_values
+parse_fc_pick_values = mod.parse_fc_pick_values
 build_pick_values = mod.build_pick_values
 
 
@@ -52,6 +53,49 @@ class TestParseDaily:
     def test_round_words_to_numbers(self):
         out = parse_ktc_daily_pick_values(_daily([("2027 Mid 3rd", 2833, 2479)]))
         assert out["round"].unique().to_list() == [3]
+
+    def test_fullload_shape_missing_tep_cols(self):
+        # full_load picks arrive (after rename) with only oneqb_value + sf_value (no TEP).
+        # The parser's `present` filter must yield exactly those two Standard formats.
+        df = pl.DataFrame({
+            "valuation_date": ["2024-08-02"],
+            "playerName": ["2026 Early 1st"],
+            "oneqb_value": [5997], "sf_value": [4963],
+        })
+        out = parse_ktc_daily_pick_values(df)
+        formats = {(r["qb_format"], r["te_premium"]) for r in out.to_dicts()}
+        assert formats == {("1QB", "Standard"), ("SF", "Standard")}
+        assert out["season"].unique().to_list() == [2026]
+
+
+# --- FantasyCalc picks: round-generic "Season Round", tier='NA' --------------
+def _fc(rows):
+    # rows: (position, name, value); valuation_date fixed
+    return pl.DataFrame({
+        "valuation_date": ["2026-06-01"] * len(rows),
+        "position": [r[0] for r in rows],
+        "name": [r[1] for r in rows],
+        "value": [r[2] for r in rows],
+    })
+
+
+class TestParseFCPicks:
+    def test_round_generic_pick_parsed_to_na_tier(self):
+        out = parse_fc_pick_values(_fc([("PICK", "2026 1st", 3235)]))
+        row = out.to_dicts()[0]
+        assert row["season"] == 2026 and row["round"] == 1
+        assert row["tier"] == "NA"
+        assert (row["qb_format"], row["te_premium"], row["market_type"]) == ("SF", "Standard", "DYNASTY")
+        assert row["value"] == 3235.0
+
+    def test_non_pick_and_exact_slot_rows_excluded(self):
+        out = parse_fc_pick_values(_fc([
+            ("RB", "Bijan Robinson", 9000),     # not a pick
+            ("PICK", "2026 Pick 1.09", 2741),   # exact-slot form -> skipped
+            ("PICK", "2027 2nd", 1619),         # round-generic -> kept
+        ]))
+        assert out.height == 1
+        assert out.to_dicts()[0]["season"] == 2027 and out.to_dicts()[0]["round"] == 2
 
 
 # --- historical archive: "Tier Season Round", SF Standard only --------------
