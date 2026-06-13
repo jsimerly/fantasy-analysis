@@ -728,9 +728,19 @@ def reconstruct_pick_intervals(lifecycle: pl.DataFrame, trades: pl.DataFrame) ->
 
     iv = build_event_intervals(events, ["franchise_id", "pick_id"])  # valid_from, valid_to, is_open
 
-    consume = lifecycle.select("pick_id", "consume_date").unique(subset=["pick_id"], keep="first")
+    # consume_date must be keyed by the LINEAGE's pick, not pick_id alone:
+    # pick_id ("season:round:original_roster") COLLIDES across lineages, so joining on
+    # pick_id alone would apply one lineage's draft date to every lineage's matching pick
+    # (and which one wins is row-order-dependent -> non-deterministic). Scope by lineage,
+    # which is the prefix of franchise_id ("<lineage>_<roster>").
+    _lin = pl.col("franchise_id").str.split("_").list.get(0).alias("_lin")
+    consume = (
+        lifecycle.with_columns(_lin).select("_lin", "pick_id", "consume_date")
+        .unique(subset=["_lin", "pick_id"], keep="first")
+    )
     iv = (
-        iv.join(consume, on="pick_id", how="left")
+        iv.with_columns(_lin)
+        .join(consume, on=["_lin", "pick_id"], how="left")
         .with_columns(
             # a still-open interval whose pick has been drafted ends at the draft
             pl.when(pl.col("is_open") & pl.col("consume_date").is_not_null())
