@@ -73,6 +73,8 @@ class TestMainNoActiveLeagues:
             "league_id": ["L1"], "status": ["complete"], "source_system": ["sleeper"],
         })
         monkeypatch.setattr(mod, "get_fantasy_leagues", lambda: only_complete)
+        # discovery is exercised separately; here it finds nothing (no rollover)
+        monkeypatch.setattr(mod, "discover_new_season_leagues", lambda *a, **k: [])
 
         saved = []
         monkeypatch.setattr(mod, "save_df_to_gcs",
@@ -80,3 +82,59 @@ class TestMainNoActiveLeagues:
         # If the guard is missing this raises "cannot concat empty list".
         assert mod.main() is None
         assert saved == []
+
+
+def _next_season_league(lid="C", prev="B", season="2026", status="in_season"):
+    return {
+        "league_id": lid, "name": "Rolled Over", "season": season, "status": status,
+        "season_type": "regular", "total_rosters": 12, "draft_id": "D", "bracket_id": None,
+        "previous_league_id": prev,
+        "settings": {"leg": 1, "last_scored_leg": 0}, "roster_positions": ["QB", "BN"],
+        "scoring_settings": {},
+    }
+
+
+class TestDiscoverNewSeasonLeagues:
+    """Roll-forward discovery: walk previous_league_id FORWARD from a lineage's latest
+    known league to the new-season league Sleeper never points to."""
+
+    KNOWN = pl.DataFrame({
+        "league_id": ["A", "B"], "season": ["2024", "2025"],
+        "league_lineage_id": ["A", "A"], "source_system": ["sleeper", "sleeper"],
+    })
+
+    def _patch(self, monkeypatch, user_leagues):
+        monkeypatch.setattr(mod, "get_sport_state", lambda sport="nfl": {"season": "2026"})
+        monkeypatch.setattr(mod, "get_rosters", lambda league_id: [{"owner_id": "u1"}])
+        monkeypatch.setattr(mod, "get_user_leagues_for_year", user_leagues)
+
+    def test_finds_rolled_over_league(self, monkeypatch):
+        # latest known is B (2025); member u1's 2026 leagues include C whose previous is B
+        self._patch(monkeypatch, lambda uid, sport, yr: [_next_season_league()] if yr == 2026 else [])
+        out = mod.discover_new_season_leagues(self.KNOWN)
+        assert [l["league_id"] for l in out] == ["C"]
+        assert out[0]["previous_league_id"] == "B"
+
+    def test_idempotent_when_already_known(self, monkeypatch):
+        # C is already tracked -> nothing new (no duplicate ingestion)
+        known = pl.concat([self.KNOWN, pl.DataFrame({
+            "league_id": ["C"], "season": ["2026"], "league_lineage_id": ["A"],
+            "source_system": ["sleeper"]})], how="vertical")
+        self._patch(monkeypatch, lambda uid, sport, yr: [_next_season_league()] if yr == 2026 else [])
+        assert mod.discover_new_season_leagues(known) == []
+
+    def test_unrelated_league_not_picked_up(self, monkeypatch):
+        # a league whose previous_league_id is NOT in our lineage must be ignored
+        self._patch(monkeypatch,
+                    lambda uid, sport, yr: [_next_season_league(lid="Z", prev="OTHER")] if yr == 2026 else [])
+        assert mod.discover_new_season_leagues(self.KNOWN) == []
+
+    def test_chains_multiple_seasons_behind(self, monkeypatch):
+        # behind by two seasons: B(2025) -> C(2026) -> D(2027) discovered in one pass
+        def user_leagues(uid, sport, yr):
+            if yr == 2026: return [_next_season_league(lid="C", prev="B", season="2026")]
+            if yr == 2027: return [_next_season_league(lid="D", prev="C", season="2027")]
+            return []
+        self._patch(monkeypatch, user_leagues)
+        ids = sorted(l["league_id"] for l in mod.discover_new_season_leagues(self.KNOWN))
+        assert ids == ["C", "D"]
