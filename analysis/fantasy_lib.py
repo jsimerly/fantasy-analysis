@@ -55,6 +55,36 @@ def load_ledger() -> pl.DataFrame:
     return pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/fact_roster_membership")
 
 
+def load_calendar() -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(dim_dates, dim_league_events) for graph overlays.
+
+    Reads the production silver calendar dims if they exist; otherwise builds them on the
+    fly from bronze using the silver modules (so this works before PR #7 is deployed)."""
+    try:
+        dd = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_dates/data.parquet")
+        le = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_league_events/data.parquet")
+        return dd, le
+    except Exception:
+        pass
+    import importlib.util
+    sf = Path(__file__).resolve().parent.parent / "data_engineering" / "silver_fantasy"
+
+    def _imp(name):
+        spec = importlib.util.spec_from_file_location(name, sf / f"{name}.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    DD, LE = _imp("dim_dates"), _imp("dim_league_events")
+    sched = _read_prefix("bronze/nflverse/schedules/").select("season", "game_type", "week", "gameday")
+    leagues = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_leagues_meta/data.parquet")
+    settings = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_league_settings/data.parquet")
+    drafts = _read_prefix("bronze/sleeper/drafts/drafts/")
+    dd = DD.build_dim_dates(sched)
+    le = LE.build_dim_league_events(drafts, settings, leagues, sched)
+    return dd, le
+
+
 def load_dims() -> tuple[pl.DataFrame, pl.DataFrame]:
     """(franchises, players). franchises: franchise_id -> current_team_name, lineage."""
     fr = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_franchises_meta/data.parquet")
