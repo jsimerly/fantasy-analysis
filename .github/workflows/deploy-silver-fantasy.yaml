@@ -57,6 +57,8 @@ jobs:
             ["silver-dim-league-settings"]="dim_league_settings_scd2.py"
             ["silver-dim-player-master"]="dim_player_master.py"
             ["silver-dim-users"]="dim_users.py"
+            ["silver-dim-dates"]="dim_dates.py"
+            ["silver-dim-league-events"]="dim_league_events.py"
             ["silver-staging-asset-alignment"]="_staging/asset_alignment.py"
             ["silver-fact-asset-values"]="fact_asset_values.py"
             ["silver-fact-roster-membership"]="fact_roster_membership.py"
