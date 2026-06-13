@@ -1,0 +1,6 @@
+# Extra deps for the exploratory analysis notebooks (on top of the repo's requirements.txt).
+# Install into the root venv:  .venv/Scripts/python.exe -m pip install -r analysis/requirements-analysis.txt
+matplotlib>=3.10
+nbformat>=5.10
+nbconvert>=7.16
+ipykernel>=6.30

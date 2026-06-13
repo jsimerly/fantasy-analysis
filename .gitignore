@@ -51,6 +51,9 @@ dist/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
+# Local analysis cache (locally-built ledger / value parquets)
+analysis/_cache/
+
 # Data files (adjust as needed)
 *.parquet
 *.csv
