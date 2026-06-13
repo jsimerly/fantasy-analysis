@@ -266,9 +266,10 @@ def team_value_timeseries(ledger: pl.DataFrame, source: str, dates: list[str],
 
 def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
     """Per (lineage, date) aggregates for spotting GLOBAL (synchronized) moves vs real ones.
-    Returns (tv_plus, agg) where tv_plus adds `share` (value / league-mean that week) and `idx`
-    (value / the franchise's first non-zero value), and `agg` has the league mean/total, the
-    league-wide valued-player count, avg value per valued player, and week-over-week %."""
+    Returns (tv_plus, agg) where tv_plus adds `share` (value / league-mean that week), `idx`
+    (value / the franchise's first non-zero value), and `ktc_index` (KTC's 1-99 scale: top
+    team = 99 each date, computed on player_value to mirror KTC), and `agg` has the league
+    mean/total, the league-wide valued-player count, avg value per valued player, and week-over-week %."""
     if "league_lineage_id" not in tv.columns:
         tv = tv.join(fr_meta.select("franchise_id", "league_lineage_id", "current_team_name"),
                      on="franchise_id", how="left")
@@ -292,7 +293,13 @@ def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
         tv.join(agg.select("league_lineage_id", "date", "league_mean"), on=["league_lineage_id", "date"])
         .join(base, on="franchise_id", how="left")
         .with_columns((pl.col("total_value") / pl.col("league_mean")).alias("share"),
-                      (pl.col("total_value") / pl.col("_base") * 100).alias("idx"))
+                      (pl.col("total_value") / pl.col("_base") * 100).alias("idx"),
+                      # KTC's own scale: per (lineage, date) the top team = 99 and every
+                      # other team scales off it. Computed on player_value (picks excluded)
+                      # to mirror KTC's team index exactly.
+                      (99 * pl.col("player_value")
+                       / pl.col("player_value").max().over("league_lineage_id", "date")
+                       ).round(0).alias("ktc_index"))
         .sort("franchise_id", "date")
     )
     return tv_plus, agg
