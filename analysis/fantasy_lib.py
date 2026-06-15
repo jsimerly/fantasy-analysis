@@ -109,6 +109,21 @@ def load_player_values(qb_format: str = DEFAULT_QB_FORMAT,
     )
 
 
+def load_player_values_blend(qb_format: str = "SF") -> pl.DataFrame:
+    """SF + TE-Premium player values with a Standard fallback for the pre-TEP era.
+
+    KTC only began publishing TE-premium (TEP) values ~2025-10; before that only SF Standard
+    exists. This returns one continuous series: SF/TEP from the TEP era onward, SF/Standard
+    before it — the lens KTC's power rankings use, extended back over the full history. Shape
+    matches load_player_values (valuation_date, player_id, name, position, ktc_value, fc_value)."""
+    std = load_player_values(qb_format, "Standard")
+    tep = load_player_values(qb_format, "TEP")
+    if tep.is_empty():
+        return std
+    tstart = tep["valuation_date"].min()
+    return pl.concat([std.filter(pl.col("valuation_date") < tstart), tep], how="vertical_relaxed")
+
+
 def load_pick_values_round(source: str, qb_format: str = DEFAULT_QB_FORMAT,
                            te_premium: str = DEFAULT_TE_PREMIUM) -> pl.DataFrame:
     """Round-level pick value series for one source from production `fact_pick_values`
@@ -276,32 +291,58 @@ def _pr_adjval(val: pl.Expr, slotavg: pl.Expr) -> pl.Expr:
 
 
 def team_power_index(ledger: pl.DataFrame, dates: list[str], player_values: pl.DataFrame,
-                     fr_meta: pl.DataFrame, value_col: str = "ktc_value") -> pl.DataFrame:
+                     fr_meta: pl.DataFrame, value_col: str = "ktc_value",
+                     pick_values: pl.DataFrame | None = None) -> pl.DataFrame:
     """KTC's league POWER RANKING (the /power-rankings/teams page), replicated from KTC's JS.
 
-    This is NOT total roster value: each team's players are ranked by value, each player is
-    adjusted relative to the league-average value at its roster slot (`prProcessV`) — a
-    non-linear depth discount — summed to `adj_total`, then scaled
-    ``floor(adj_total / top-team adj_total * 99)`` within each league/date. Pass SF/TEP
-    `player_values` to match a superflex TE-premium league. Picks are excluded (KTC's power
-    rank is players only). Returns (franchise_id, league_lineage_id, date, adj_total, power_index).
+    This is NOT total roster value: each team's assets are ranked by value, each is adjusted
+    relative to the league-average value at its roster slot (`prProcessV`) — a non-linear depth
+    discount — summed to `adj_total`, then scaled ``floor(adj_total / top-team adj_total * 99)``
+    within each league/date. Pass SF/TEP `player_values` to match a superflex TE-premium league.
+
+    Picks: if `pick_values` (round-level) is given, picks are folded into the SAME prProcessV
+    pipeline as extra assets (KTC's default ``hrdp=0`` "Include Picks" view — verified vs the
+    live page). Omit it for the players-only view (KTC's ``hrdp=1``). Returns
+    (franchise_id, league_lineage_id, date, adj_total, power_index).
     """
     pv = (player_values.select("valuation_date", "player_id", pl.col(value_col).alias("val"))
           .drop_nulls("val").filter(pl.col("val") > 0).sort("valuation_date"))
     lin = fr_meta.select("franchise_id", "league_lineage_id").unique(subset=["franchise_id"])
-    held = (
-        _holdings_by_date(ledger, dates).filter(pl.col("asset_type") == "player").sort("date")
+    hold = _holdings_by_date(ledger, dates).sort("date").join(lin, on="franchise_id", how="left")
+    players = (
+        hold.filter(pl.col("asset_type") == "player")
         .join_asof(pv, left_on="date", right_on="valuation_date", by_left="asset_id",
                    by_right="player_id", strategy="backward")
-        .filter(pl.col("val") > 0)
-        .join(lin, on="franchise_id", how="left")
+        .select("franchise_id", "league_lineage_id", "date", pl.col("val"))
+    )
+    parts = [players]
+    if pick_values is not None:
+        # mirror team_value_timeseries' pick valuation: parse asset_id "season:round:orig",
+        # as-of join the round value, backfill pre-window nulls to the first-priced value.
+        pk = pick_values.sort("valuation_date")
+        first_priced = pk.group_by("season", "round").agg(pl.col("value").first().alias("_first"))
+        picks = (
+            hold.filter(pl.col("asset_type") == "pick")
+            .with_columns(pl.col("asset_id").str.split(":").alias("_p"))
+            .with_columns(pl.col("_p").list.get(0).alias("season"),
+                          pl.col("_p").list.get(1).cast(pl.Int64).alias("round"))
+            .sort("date")
+            .join_asof(pk, left_on="date", right_on="valuation_date", by=["season", "round"],
+                       strategy="backward")
+            .join(first_priced, on=["season", "round"], how="left")
+            .select("franchise_id", "league_lineage_id", "date",
+                    pl.coalesce(["value", "_first"]).alias("val"))
+        )
+        parts.append(picks)
+    assets = (
+        pl.concat(parts, how="vertical").filter(pl.col("val") > 0)
         # slot index within each team (0 = best), then the league-average value at that slot
         .with_columns((pl.col("val").rank("ordinal", descending=True).over("date", "franchise_id") - 1)
                       .alias("slot"))
         .with_columns(pl.col("val").mean().over("league_lineage_id", "date", "slot").alias("slotavg"))
         .with_columns(_pr_adjval(pl.col("val"), pl.col("slotavg")).alias("adjval"))
     )
-    adj = held.group_by("franchise_id", "league_lineage_id", "date").agg(
+    adj = assets.group_by("franchise_id", "league_lineage_id", "date").agg(
         pl.col("adjval").sum().alias("adj_total"))
     return (
         adj.with_columns(
