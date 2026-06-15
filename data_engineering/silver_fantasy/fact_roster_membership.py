@@ -1003,6 +1003,120 @@ def synthesize_pick_lifecycle(drafts_df: pl.DataFrame, leagues_df: pl.DataFrame,
     return out.select("franchise_id", "pick_id", "mint_ts", "mint_date", "consume_date")
 
 
+def reconstruct_rollover_presence(present: pl.DataFrame, leagues_df: pl.DataFrame,
+                                  bucket_name: str) -> pl.DataFrame:
+    """Repair the season-rollover gap in PLAYER presence.
+
+    When a lineage rolls to a new season, Sleeper keeps serving the OLD (completed) league, so
+    the daily snapshot job records a FROZEN roster for it, while the NEW league's offseason
+    (rookie draft + trades) goes unsnapshotted until its first real snapshot. The timeline then
+    reads flat (frozen old roster) and then spikes (new roster lands all at once).
+
+    We replace the stale window ``[R, S_new)`` -- R = the new league's first move, S_new = its
+    first real snapshot -- with the new league's roster reconstructed by replaying its events
+    (transactions + draft) forward from the carry-over (the frozen roster just before R),
+    ORDERED BY the millisecond timestamp (drop-before-add on ties) so same-day add/drop
+    round-trips net correctly. The real S_new snapshot then takes over (anchor to truth).
+    Validated to reproduce the new league's first snapshot bar a couple of same-day round-trip
+    fringe players. Returns corrected presence (franchise_id, player_id, snapshot_date)."""
+    import datetime as _dt
+    from collections import defaultdict
+    from google.cloud import storage
+    client = storage.Client()
+
+    def _read(prefix):
+        names = [b.name for b in client.bucket(bucket_name).list_blobs(prefix=prefix)
+                 if b.name.endswith(".parquet")]
+        return (pl.concat([pl.read_parquet(f"gs://{bucket_name}/{n}") for n in names],
+                          how="diagonal_relaxed") if names else pl.DataFrame())
+
+    drafts_all = _read("bronze/sleeper/drafts/drafts/")
+    dpicks_all = _read("bronze/sleeper/drafts/draft_picks/")
+    current = (
+        leagues_df.with_columns(pl.col("season").cast(pl.Int64, strict=False).alias("_s"))
+        .sort("_s").group_by("league_lineage_id")
+        .agg(pl.col("league_id").last().cast(pl.Utf8).alias("cur_league"))
+    )
+
+    synth: list[tuple] = []
+    windows: list[tuple] = []
+    for row in current.iter_rows(named=True):
+        lin, L, pref = row["league_lineage_id"], row["cur_league"], row["league_lineage_id"] + "_"
+        dates = sorted(present.filter(pl.col("franchise_id").str.starts_with(pref))["snapshot_date"].unique().to_list())
+        if len(dates) < 2:
+            continue
+        gaps = [(_dt.date.fromisoformat(dates[i + 1]) - _dt.date.fromisoformat(dates[i])).days
+                for i in range(len(dates) - 1)]
+        gi = max(range(len(gaps)), key=lambda i: gaps[i])
+        if gaps[gi] < 3:               # no rollover gap -> nothing to reconstruct
+            continue
+        S_new = dates[gi + 1]          # new league's first real snapshot
+
+        # current-league events (transactions add/drop) with millisecond ts
+        tp = _read(f"bronze/sleeper/transactions/transaction_players/daily/league_id={L}/")
+        tx = _read(f"bronze/sleeper/transactions/transactions/daily/league_id={L}/")
+        if tp.is_empty() or tx.is_empty():
+            continue
+        txc = tx.filter(pl.col("status") == "complete").select(
+            "transaction_id", pl.col("created").cast(pl.Int64).alias("ts"))
+        ev = tp.join(txc, on="transaction_id", how="inner").select(
+            "ts", pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8), "action")
+        # draft adds with the draft's ts so they interleave with same-day transactions
+        dr = (drafts_all.filter(pl.col("league_id") == L)
+              .select("draft_id", pl.coalesce([pl.col("start_time"), pl.col("last_picked")]).cast(pl.Int64).alias("ts"))
+              .unique("draft_id"))
+        if not dr.is_empty() and not dpicks_all.is_empty():
+            dadd = dpicks_all.join(dr, on="draft_id", how="inner").select(
+                "ts", pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8),
+                pl.lit("add").alias("action"))
+            ev = pl.concat([ev, dadd], how="vertical_relaxed")
+        ev = (ev.drop_nulls("ts")
+              .with_columns(pl.from_epoch(pl.col("ts"), time_unit="ms").dt.date().cast(pl.Utf8).alias("d"),
+                            pl.when(pl.col("action") == "add").then(1).otherwise(0).alias("_tb"))
+              .sort(["ts", "_tb"]))        # ts asc; drop(0) before add(1) on identical ts
+        if ev.is_empty():
+            continue
+        R = ev["d"].min()
+        if R >= S_new:
+            continue
+        pre = present.filter(pl.col("franchise_id").str.starts_with(pref) & (pl.col("snapshot_date") < R))
+        if pre.is_empty():
+            continue
+        carry_date = pre["snapshot_date"].max()       # frozen roster just before the first move
+        roster: dict = defaultdict(set)
+        for x in pre.filter(pl.col("snapshot_date") == carry_date).iter_rows(named=True):
+            roster[x["franchise_id"]].add(x["player_id"])
+
+        by_day: dict = defaultdict(list)
+        for e in ev.iter_rows(named=True):             # already ts-ordered
+            by_day[e["d"]].append(e)
+        d, end, one = _dt.date.fromisoformat(R), _dt.date.fromisoformat(S_new), _dt.timedelta(days=1)
+        while d < end:
+            ds = d.isoformat()
+            for e in by_day.get(ds, []):
+                fid = f"{lin}_{e['roster_id']}"
+                if e["action"] == "add":
+                    roster[fid].add(e["player_id"])
+                else:
+                    roster[fid].discard(e["player_id"])
+            for fid, s in roster.items():
+                for pid in s:
+                    synth.append((fid, pid, ds))
+            d += one
+        windows.append((pref, R, S_new))
+
+    if not synth:
+        return present
+    synth_df = pl.DataFrame({"franchise_id": [s[0] for s in synth],
+                             "player_id": [s[1] for s in synth],
+                             "snapshot_date": [s[2] for s in synth]})
+    out = present
+    for pref, R, S_new in windows:      # drop the stale frozen-old-league window
+        out = out.filter(~(pl.col("franchise_id").str.starts_with(pref)
+                           & (pl.col("snapshot_date") >= R) & (pl.col("snapshot_date") < S_new)))
+    return pl.concat([out, synth_df], how="vertical_relaxed").unique(["franchise_id", "player_id", "snapshot_date"])
+
+
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
 
@@ -1013,8 +1127,11 @@ def main():
 
     print("Reading daily roster snapshots...")
     present = _read_player_presence(bucket_name, lineage_map)
+    print(f"  {present.height:,} player-days (raw)")
+    print("Reconstructing season-rollover gaps from events (offseason draft + trades)...")
+    present = reconstruct_rollover_presence(present, leagues_df, bucket_name)
     boundary = present["snapshot_date"].min()
-    print(f"  {present.height:,} player-days; snapshot era starts {boundary}")
+    print(f"  {present.height:,} player-days after rollover repair; snapshot era starts {boundary}")
 
     print("Reading event stream (drafts + transactions, full_load + daily)...")
     events = _read_player_events(bucket_name, lineage_map)
@@ -1072,7 +1189,8 @@ def main():
         pl.lit(datetime.now()).alias("loaded_at"),
     )
 
-    fact_path = f"gs://{bucket_name}/silver/fantasy/fact_roster_membership"
+    fact_path = os.environ.get(
+        "LEDGER_OUTPUT_PATH", f"gs://{bucket_name}/silver/fantasy/fact_roster_membership")
     print(f"Writing {ledger.height:,} SCD2 intervals (full history) to {fact_path}...")
     # Full-history rebuild each run (idempotent) — NOT the old latest-only overwrite.
     ledger.write_parquet(fact_path, partition_by=["asset_type"], use_pyarrow=True)
