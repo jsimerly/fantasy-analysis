@@ -1106,7 +1106,7 @@ def reconstruct_rollover_presence(present: pl.DataFrame, leagues_df: pl.DataFram
         windows.append((pref, R, S_new))
 
     if not synth:
-        return present
+        return present, []
     synth_df = pl.DataFrame({"franchise_id": [s[0] for s in synth],
                              "player_id": [s[1] for s in synth],
                              "snapshot_date": [s[2] for s in synth]})
@@ -1114,7 +1114,43 @@ def reconstruct_rollover_presence(present: pl.DataFrame, leagues_df: pl.DataFram
     for pref, R, S_new in windows:      # drop the stale frozen-old-league window
         out = out.filter(~(pl.col("franchise_id").str.starts_with(pref)
                            & (pl.col("snapshot_date") >= R) & (pl.col("snapshot_date") < S_new)))
-    return pl.concat([out, synth_df], how="vertical_relaxed").unique(["franchise_id", "player_id", "snapshot_date"])
+    corrected = pl.concat([out, synth_df], how="vertical_relaxed").unique(["franchise_id", "player_id", "snapshot_date"])
+    return corrected, windows
+
+
+def reconstruct_rollover_pick_presence(pick_present: pl.DataFrame, recon_intervals: pl.DataFrame,
+                                       windows: list) -> pl.DataFrame:
+    """Apply the same rollover repair to PICK presence. The reconstructed pick intervals
+    (`reconstruct_pick_intervals`, keyed on mint/consume/trades) already CONSUME each season's
+    picks at that season's draft. We project them onto daily presence across each rollover
+    window [R, S_new) and replace the stale frozen-old-league pick snapshots there -- so the new
+    season's picks turn into rookies (drop) at the draft instead of lingering until the first
+    new-league snapshot (which would double-count vs the reconstructed rookies)."""
+    import datetime as _dt
+    if not windows or recon_intervals is None or recon_intervals.is_empty():
+        return pick_present
+    synth: list[tuple] = []
+    for pref, R, S_new in windows:
+        rows = recon_intervals.filter(pl.col("franchise_id").str.starts_with(pref)).select(
+            "franchise_id", "pick_id", "valid_from", "valid_to").to_dicts()
+        if not rows:
+            continue
+        d, end, one = _dt.date.fromisoformat(R), _dt.date.fromisoformat(S_new), _dt.timedelta(days=1)
+        while d < end:
+            ds = d.isoformat()
+            for r in rows:
+                if r["valid_from"] <= ds and (r["valid_to"] is None or r["valid_to"] > ds):
+                    synth.append((r["franchise_id"], r["pick_id"], ds))
+            d += one
+    if not synth:
+        return pick_present
+    sdf = pl.DataFrame({"franchise_id": [s[0] for s in synth], "pick_id": [s[1] for s in synth],
+                        "snapshot_date": [s[2] for s in synth]})
+    out = pick_present
+    for pref, R, S_new in windows:
+        out = out.filter(~(pl.col("franchise_id").str.starts_with(pref)
+                           & (pl.col("snapshot_date") >= R) & (pl.col("snapshot_date") < S_new)))
+    return pl.concat([out, sdf], how="vertical_relaxed").unique(["franchise_id", "pick_id", "snapshot_date"])
 
 
 def main():
@@ -1129,7 +1165,7 @@ def main():
     present = _read_player_presence(bucket_name, lineage_map)
     print(f"  {present.height:,} player-days (raw)")
     print("Reconstructing season-rollover gaps from events (offseason draft + trades)...")
-    present = reconstruct_rollover_presence(present, leagues_df, bucket_name)
+    present, rollover_windows = reconstruct_rollover_presence(present, leagues_df, bucket_name)
     boundary = present["snapshot_date"].min()
     print(f"  {present.height:,} player-days after rollover repair; snapshot era starts {boundary}")
 
@@ -1154,7 +1190,6 @@ def main():
 
     print("Resolving per-day pick ownership over traded_picks snapshots...")
     pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df)
-    snap_pick = build_snapshot_intervals(pick_present, ["franchise_id", "pick_id"])
 
     print("Reconstructing pre-snapshot pick ownership (mint/consume + trades)...")
     rounds_df = (
@@ -1165,10 +1200,14 @@ def main():
     )
     lifecycle = synthesize_pick_lifecycle(drafts_df, leagues_df, lineage_map, rounds_df, years_out=3)
     trades = _read_pick_trade_events(bucket_name, lineage_map)
-    recon_pick = reconstruct_pick_intervals(lifecycle, trades)
+    recon_pick_full = reconstruct_pick_intervals(lifecycle, trades)
+    # rollover repair: in the offseason window, replace stale frozen-old-league pick snapshots
+    # with the reconstructed holdings so the new season's picks consume at the draft.
+    pick_present = reconstruct_rollover_pick_presence(pick_present, recon_pick_full, rollover_windows)
+    snap_pick = build_snapshot_intervals(pick_present, ["franchise_id", "pick_id"])
     # truncate reconstruction at the snapshot boundary (snapshots own >= boundary)
     recon_pick = (
-        recon_pick.filter(pl.col("valid_from") < boundary)
+        recon_pick_full.filter(pl.col("valid_from") < boundary)
         .with_columns(
             pl.when(pl.col("valid_to").is_null() | (pl.col("valid_to") > boundary))
               .then(pl.lit(boundary)).otherwise(pl.col("valid_to")).alias("valid_to"),

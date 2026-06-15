@@ -346,7 +346,11 @@ def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
                       # to mirror KTC's team index exactly.
                       (99 * pl.col("player_value")
                        / pl.col("player_value").max().over("league_lineage_id", "date")
-                       ).round(0).alias("ktc_index"))
+                       ).round(0).alias("ktc_index"),
+                      # full-roster value (players + picks) on the same 1-99 scale
+                      (99 * pl.col("total_value")
+                       / pl.col("total_value").max().over("league_lineage_id", "date")
+                       ).round(0).alias("total_index"))
         .sort("franchise_id", "date")
     )
     return tv_plus, agg
