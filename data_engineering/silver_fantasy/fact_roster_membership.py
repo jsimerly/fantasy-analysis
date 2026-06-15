@@ -1050,17 +1050,22 @@ def reconstruct_rollover_presence(present: pl.DataFrame, leagues_df: pl.DataFram
         gi = max(range(len(gaps)), key=lambda i: gaps[i])
         if gaps[gi] < 3:               # no rollover gap -> nothing to reconstruct
             continue
-        S_new = dates[gi + 1]          # new league's first real snapshot
+        last_old, S_new = dates[gi], dates[gi + 1]   # old league's last snapshot; new league's first
 
-        # current-league events (transactions add/drop) with millisecond ts
+        # current-league events (transactions add/drop) with millisecond ts -- MAY be empty
+        # (e.g. a pre-draft new league with no offseason moves yet). Even then we must carry the
+        # frozen roster forward across the gap, or this lineage alone is absent on the synthetic
+        # days the OTHER lineages' reconstruction adds to the global date grid -> a spurious hole.
         tp = _read(f"bronze/sleeper/transactions/transaction_players/daily/league_id={L}/")
         tx = _read(f"bronze/sleeper/transactions/transactions/daily/league_id={L}/")
         if tp.is_empty() or tx.is_empty():
-            continue
-        txc = tx.filter(pl.col("status") == "complete").select(
-            "transaction_id", pl.col("created").cast(pl.Int64).alias("ts"))
-        ev = tp.join(txc, on="transaction_id", how="inner").select(
-            "ts", pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8), "action")
+            ev = pl.DataFrame(schema={"ts": pl.Int64, "roster_id": pl.Int64,
+                                      "player_id": pl.Utf8, "action": pl.Utf8})
+        else:
+            txc = tx.filter(pl.col("status") == "complete").select(
+                "transaction_id", pl.col("created").cast(pl.Int64).alias("ts"))
+            ev = tp.join(txc, on="transaction_id", how="inner").select(
+                "ts", pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8), "action")
         # draft adds with the draft's ts so they interleave with same-day transactions
         dr = (drafts_all.filter(pl.col("league_id") == L)
               .select("draft_id", pl.coalesce([pl.col("start_time"), pl.col("last_picked")]).cast(pl.Int64).alias("ts"))
@@ -1070,13 +1075,15 @@ def reconstruct_rollover_presence(present: pl.DataFrame, leagues_df: pl.DataFram
                 "ts", pl.col("roster_id").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8),
                 pl.lit("add").alias("action"))
             ev = pl.concat([ev, dadd], how="vertical_relaxed")
-        ev = (ev.drop_nulls("ts")
-              .with_columns(pl.from_epoch(pl.col("ts"), time_unit="ms").dt.date().cast(pl.Utf8).alias("d"),
-                            pl.when(pl.col("action") == "add").then(1).otherwise(0).alias("_tb"))
-              .sort(["ts", "_tb"]))        # ts asc; drop(0) before add(1) on identical ts
+        one = _dt.timedelta(days=1)
         if ev.is_empty():
-            continue
-        R = ev["d"].min()
+            R = (_dt.date.fromisoformat(last_old) + one).isoformat()   # no events -> just bridge the gap
+        else:
+            ev = (ev.drop_nulls("ts")
+                  .with_columns(pl.from_epoch(pl.col("ts"), time_unit="ms").dt.date().cast(pl.Utf8).alias("d"),
+                                pl.when(pl.col("action") == "add").then(1).otherwise(0).alias("_tb"))
+                  .sort(["ts", "_tb"]))        # ts asc; drop(0) before add(1) on identical ts
+            R = ev["d"].min()
         if R >= S_new:
             continue
         pre = present.filter(pl.col("franchise_id").str.starts_with(pref) & (pl.col("snapshot_date") < R))
@@ -1131,8 +1138,9 @@ def reconstruct_rollover_pick_presence(pick_present: pl.DataFrame, recon_interva
         return pick_present
     synth: list[tuple] = []
     for pref, R, S_new in windows:
-        rows = recon_intervals.filter(pl.col("franchise_id").str.starts_with(pref)).select(
-            "franchise_id", "pick_id", "valid_from", "valid_to").to_dicts()
+        rows = recon_intervals.filter(
+            pl.col("franchise_id").str.starts_with(pref) & pl.col("valid_from").is_not_null()
+        ).select("franchise_id", "pick_id", "valid_from", "valid_to").to_dicts()
         if not rows:
             continue
         d, end, one = _dt.date.fromisoformat(R), _dt.date.fromisoformat(S_new), _dt.timedelta(days=1)
