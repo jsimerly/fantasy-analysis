@@ -350,3 +350,45 @@ def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
         .sort("franchise_id", "date")
     )
     return tv_plus, agg
+
+
+def team_bags(lineage_id: str | None = None, as_of: str | None = None,
+              ledger: pl.DataFrame | None = None, player_values: pl.DataFrame | None = None,
+              pick_values: pl.DataFrame | None = None) -> dict:
+    """Each current franchise's held-asset values (players + picks) as a value LIST, as-of a date.
+
+    Returns {franchise_id: {"name", "values" (desc), "naive_sum", "n"}} — the per-team value
+    distribution, which the summed/indexed measures (team_value_timeseries, team_power_index)
+    don't expose. Handy for ad-hoc "what does each team hold and what's it worth" inspection.
+    Picks are valued at round level. Loaders are called lazily; pass frames to reuse them."""
+    led = ledger if ledger is not None else load_ledger()
+    fr, _ = load_dims()
+    pv = player_values if player_values is not None else load_player_values()
+    pk = pick_values if pick_values is not None else load_pick_values_round("ktc")
+    as_of = as_of or pv["valuation_date"].max().isoformat()
+    cutoff = pl.lit(as_of).str.to_date()
+
+    held = held_on(led, as_of)
+    if lineage_id:
+        held = held.filter(pl.col("franchise_id").str.starts_with(lineage_id))
+    pl_latest = (pv.filter(pl.col("valuation_date") <= cutoff).sort("valuation_date")
+                 .group_by("player_id").agg(pl.col("ktc_value").last().alias("v")))
+    players = (held.filter(pl.col("asset_type") == "player")
+               .join(pl_latest, left_on="asset_id", right_on="player_id", how="left"))
+    pk_latest = (pk.filter(pl.col("valuation_date") <= cutoff).sort("valuation_date")
+                 .group_by("season", "round").agg(pl.col("value").last().alias("v")))
+    picks = (held.filter(pl.col("asset_type") == "pick")
+             .with_columns(pl.col("asset_id").str.split(":").alias("_p"))
+             .with_columns(pl.col("_p").list.get(0).alias("season"),
+                           pl.col("_p").list.get(1).cast(pl.Int64).alias("round"))
+             .join(pk_latest, on=["season", "round"], how="left"))
+    allv = pl.concat([players.select("franchise_id", "v"), picks.select("franchise_id", "v")],
+                     how="vertical")
+    names = dict(zip(fr["franchise_id"].to_list(), fr["current_team_name"].to_list()))
+    out = {}
+    for fid in allv["franchise_id"].unique().to_list():
+        vals = [float(x) for x in allv.filter(pl.col("franchise_id") == fid)["v"].drop_nulls().to_list()
+                if x and x > 0]
+        out[fid] = {"name": names.get(fid, fid), "values": sorted(vals, reverse=True),
+                    "naive_sum": float(sum(vals)), "n": len(vals)}
+    return out
