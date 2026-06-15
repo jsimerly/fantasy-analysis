@@ -104,6 +104,18 @@ def load_league_events() -> pl.DataFrame:
             .sort("event_date"))
 
 
+def load_nfl_season_starts() -> pl.DataFrame:
+    """NFL regular-season Week 1 date per season from nflverse schedules
+    -> (season:Int, season_start:Date). Pair with `fantasy_end` from dim_league_events
+    to bracket each in-season window."""
+    sch = _read_prefix("bronze/nflverse/schedules/")
+    return (sch.filter(pl.col("game_type") == "REG")
+            .with_columns(pl.col("season").cast(pl.Int64, strict=False),
+                          pl.col("gameday").str.to_date())
+            .group_by("season").agg(pl.col("gameday").min().alias("season_start"))
+            .sort("season"))
+
+
 def load_player_values(qb_format: str = DEFAULT_QB_FORMAT,
                        te_premium: str = DEFAULT_TE_PREMIUM) -> pl.DataFrame:
     """Dynasty player values from production `fact_asset_values_daily`
