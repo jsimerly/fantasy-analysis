@@ -92,6 +92,18 @@ def load_dims() -> tuple[pl.DataFrame, pl.DataFrame]:
     return fr, pm
 
 
+def load_league_events() -> pl.DataFrame:
+    """League calendar events from `dim_league_events`
+    -> (league_lineage_id, season:Int, event_type, event_date:Date), sorted by date.
+
+    event_type in {startup_draft, rookie_draft, fantasy_end} — the offseason draft days
+    (the inaugural startup draft = the lineage's start) and each season's end."""
+    df = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/dim_league_events/**/*.parquet")
+    return (df.select("league_lineage_id", pl.col("season").cast(pl.Int64),
+                      "event_type", pl.col("event_date").cast(pl.Date))
+            .sort("event_date"))
+
+
 def load_player_values(qb_format: str = DEFAULT_QB_FORMAT,
                        te_premium: str = DEFAULT_TE_PREMIUM) -> pl.DataFrame:
     """Dynasty player values from production `fact_asset_values_daily`
