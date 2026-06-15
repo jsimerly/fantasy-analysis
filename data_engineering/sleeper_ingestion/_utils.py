@@ -3,8 +3,6 @@ import os
 import polars as pl
 
 import requests
-from gql import gql, Client
-from gql.transport.requests import RequestsHTTPTransport
 from google.cloud import storage
 from dotenv import load_dotenv
 
@@ -24,6 +22,8 @@ def get_sport_state(sport: str = "nfl") -> dict[str, Any]:
 # TODO: need to solve the captcha problem
 def sleeper_login(email: str, password: str) -> str:
     """Login via GraphQL endpoint."""
+    from gql import gql, Client
+    from gql.transport.requests import RequestsHTTPTransport
 
     transport = RequestsHTTPTransport(
         url='https://sleeper.com/graphql',

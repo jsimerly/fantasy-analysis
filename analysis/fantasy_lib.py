@@ -92,17 +92,18 @@ def load_dims() -> tuple[pl.DataFrame, pl.DataFrame]:
     return fr, pm
 
 
-def load_player_values() -> pl.DataFrame:
-    """SF dynasty player values from production `fact_asset_values_daily`
+def load_player_values(qb_format: str = DEFAULT_QB_FORMAT,
+                       te_premium: str = DEFAULT_TE_PREMIUM) -> pl.DataFrame:
+    """Dynasty player values from production `fact_asset_values_daily`
     -> (valuation_date, player_id, name, position, ktc_value, fc_value).
 
-    KTC history is now continuous back to 2020 (the fact reads `dynasty/full_load`, not the
-    gapped `local_load`); FC is the daily era (~2025-10+). Bare-blob parquet; name/position
-    are columns on the fact already."""
+    Defaults to SF / Standard. Pass te_premium='TEP' (and qb_format='SF') for a superflex
+    TE-premium league — the lens KTC's power rankings use. KTC history is continuous back to
+    2020 (the fact reads `dynasty/full_load`); FC is the daily era (~2025-10+)."""
     df = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/fact_asset_values_daily")
     return (
-        df.filter((pl.col("market_type") == DEFAULT_MARKET) & (pl.col("qb_format") == DEFAULT_QB_FORMAT)
-                  & (pl.col("te_premium") == DEFAULT_TE_PREMIUM))
+        df.filter((pl.col("market_type") == DEFAULT_MARKET) & (pl.col("qb_format") == qb_format)
+                  & (pl.col("te_premium") == te_premium))
         .select("valuation_date", "player_id", "name", "position", "ktc_value", "fc_value")
         .with_columns(pl.col("valuation_date").cast(pl.Date))
     )
@@ -264,11 +265,58 @@ def team_value_timeseries(ledger: pl.DataFrame, source: str, dates: list[str],
     )
 
 
+def _pr_adjval(val: pl.Expr, slotavg: pl.Expr) -> pl.Expr:
+    """KTC's `prProcessV`, vectorized (MAXPLAYERVAL=10000 -> t=10100, t+100=10200).
+    Recovered verbatim from keeptradecut.com/js/site.min.js."""
+    a = pl.max_horizontal(slotavg, pl.lit(0.1))
+    t = 10100.0
+    r = (0.05 * (val / t).pow(1.3) + 0.05 * (val / (1.05 * a)) + 0.1) * val
+    s = (val / 10200.0).pow(1.3)
+    return r * ((2.0 * s + (a / 10200.0).pow(1.2)) / 3.0 * 0.7 + 0.3)
+
+
+def team_power_index(ledger: pl.DataFrame, dates: list[str], player_values: pl.DataFrame,
+                     fr_meta: pl.DataFrame, value_col: str = "ktc_value") -> pl.DataFrame:
+    """KTC's league POWER RANKING (the /power-rankings/teams page), replicated from KTC's JS.
+
+    This is NOT total roster value: each team's players are ranked by value, each player is
+    adjusted relative to the league-average value at its roster slot (`prProcessV`) — a
+    non-linear depth discount — summed to `adj_total`, then scaled
+    ``floor(adj_total / top-team adj_total * 99)`` within each league/date. Pass SF/TEP
+    `player_values` to match a superflex TE-premium league. Picks are excluded (KTC's power
+    rank is players only). Returns (franchise_id, league_lineage_id, date, adj_total, power_index).
+    """
+    pv = (player_values.select("valuation_date", "player_id", pl.col(value_col).alias("val"))
+          .drop_nulls("val").filter(pl.col("val") > 0).sort("valuation_date"))
+    lin = fr_meta.select("franchise_id", "league_lineage_id").unique(subset=["franchise_id"])
+    held = (
+        _holdings_by_date(ledger, dates).filter(pl.col("asset_type") == "player").sort("date")
+        .join_asof(pv, left_on="date", right_on="valuation_date", by_left="asset_id",
+                   by_right="player_id", strategy="backward")
+        .filter(pl.col("val") > 0)
+        .join(lin, on="franchise_id", how="left")
+        # slot index within each team (0 = best), then the league-average value at that slot
+        .with_columns((pl.col("val").rank("ordinal", descending=True).over("date", "franchise_id") - 1)
+                      .alias("slot"))
+        .with_columns(pl.col("val").mean().over("league_lineage_id", "date", "slot").alias("slotavg"))
+        .with_columns(_pr_adjval(pl.col("val"), pl.col("slotavg")).alias("adjval"))
+    )
+    adj = held.group_by("franchise_id", "league_lineage_id", "date").agg(
+        pl.col("adjval").sum().alias("adj_total"))
+    return (
+        adj.with_columns(
+            (pl.col("adj_total") / pl.col("adj_total").max().over("league_lineage_id", "date") * 99)
+            .floor().alias("power_index"))
+        .sort("franchise_id", "date")
+    )
+
+
 def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
     """Per (lineage, date) aggregates for spotting GLOBAL (synchronized) moves vs real ones.
-    Returns (tv_plus, agg) where tv_plus adds `share` (value / league-mean that week) and `idx`
-    (value / the franchise's first non-zero value), and `agg` has the league mean/total, the
-    league-wide valued-player count, avg value per valued player, and week-over-week %."""
+    Returns (tv_plus, agg) where tv_plus adds `share` (value / league-mean that week), `idx`
+    (value / the franchise's first non-zero value), and `ktc_index` (KTC's 1-99 scale: top
+    team = 99 each date, computed on player_value to mirror KTC), and `agg` has the league
+    mean/total, the league-wide valued-player count, avg value per valued player, and week-over-week %."""
     if "league_lineage_id" not in tv.columns:
         tv = tv.join(fr_meta.select("franchise_id", "league_lineage_id", "current_team_name"),
                      on="franchise_id", how="left")
@@ -292,7 +340,55 @@ def league_diagnostics(tv: pl.DataFrame, fr_meta: pl.DataFrame):
         tv.join(agg.select("league_lineage_id", "date", "league_mean"), on=["league_lineage_id", "date"])
         .join(base, on="franchise_id", how="left")
         .with_columns((pl.col("total_value") / pl.col("league_mean")).alias("share"),
-                      (pl.col("total_value") / pl.col("_base") * 100).alias("idx"))
+                      (pl.col("total_value") / pl.col("_base") * 100).alias("idx"),
+                      # KTC's own scale: per (lineage, date) the top team = 99 and every
+                      # other team scales off it. Computed on player_value (picks excluded)
+                      # to mirror KTC's team index exactly.
+                      (99 * pl.col("player_value")
+                       / pl.col("player_value").max().over("league_lineage_id", "date")
+                       ).round(0).alias("ktc_index"))
         .sort("franchise_id", "date")
     )
     return tv_plus, agg
+
+
+def team_bags(lineage_id: str | None = None, as_of: str | None = None,
+              ledger: pl.DataFrame | None = None, player_values: pl.DataFrame | None = None,
+              pick_values: pl.DataFrame | None = None) -> dict:
+    """Each current franchise's held-asset values (players + picks) as a value LIST, as-of a date.
+
+    Returns {franchise_id: {"name", "values" (desc), "naive_sum", "n"}} — the per-team value
+    distribution, which the summed/indexed measures (team_value_timeseries, team_power_index)
+    don't expose. Handy for ad-hoc "what does each team hold and what's it worth" inspection.
+    Picks are valued at round level. Loaders are called lazily; pass frames to reuse them."""
+    led = ledger if ledger is not None else load_ledger()
+    fr, _ = load_dims()
+    pv = player_values if player_values is not None else load_player_values()
+    pk = pick_values if pick_values is not None else load_pick_values_round("ktc")
+    as_of = as_of or pv["valuation_date"].max().isoformat()
+    cutoff = pl.lit(as_of).str.to_date()
+
+    held = held_on(led, as_of)
+    if lineage_id:
+        held = held.filter(pl.col("franchise_id").str.starts_with(lineage_id))
+    pl_latest = (pv.filter(pl.col("valuation_date") <= cutoff).sort("valuation_date")
+                 .group_by("player_id").agg(pl.col("ktc_value").last().alias("v")))
+    players = (held.filter(pl.col("asset_type") == "player")
+               .join(pl_latest, left_on="asset_id", right_on="player_id", how="left"))
+    pk_latest = (pk.filter(pl.col("valuation_date") <= cutoff).sort("valuation_date")
+                 .group_by("season", "round").agg(pl.col("value").last().alias("v")))
+    picks = (held.filter(pl.col("asset_type") == "pick")
+             .with_columns(pl.col("asset_id").str.split(":").alias("_p"))
+             .with_columns(pl.col("_p").list.get(0).alias("season"),
+                           pl.col("_p").list.get(1).cast(pl.Int64).alias("round"))
+             .join(pk_latest, on=["season", "round"], how="left"))
+    allv = pl.concat([players.select("franchise_id", "v"), picks.select("franchise_id", "v")],
+                     how="vertical")
+    names = dict(zip(fr["franchise_id"].to_list(), fr["current_team_name"].to_list()))
+    out = {}
+    for fid in allv["franchise_id"].unique().to_list():
+        vals = [float(x) for x in allv.filter(pl.col("franchise_id") == fid)["v"].drop_nulls().to_list()
+                if x and x > 0]
+        out[fid] = {"name": names.get(fid, fid), "values": sorted(vals, reverse=True),
+                    "naive_sum": float(sum(vals)), "n": len(vals)}
+    return out
