@@ -176,9 +176,12 @@ def _meta_row(lg: dict) -> dict:
     }
 
 
-def _harvest_season(lg: dict, sink: dict[str, list]):
-    """Fetch + flatten every per-league-season entity into `sink`."""
+def _harvest_season(lg: dict, sink: dict[str, list], lineage_id: str):
+    """Fetch + flatten every per-league-season entity into `sink`, stamping `league_lineage_id`
+    (the chain's root/originating league_id — matches dim_leagues_meta's convention) on every
+    row so the crawl is lineage-keyed as it lands (no post-hoc lineage reconstruction)."""
     lid, season = str(lg.get("league_id")), str(lg.get("season"))
+    _before = {e: len(sink[e]) for e in sink}
     s = lg.get("settings") or {}
     pws = s.get("playoff_week_start") or 15
     last_reg = min(max(int(pws) - 1, 1), REG_WEEKS)
@@ -264,6 +267,11 @@ def _harvest_season(lg: dict, sink: dict[str, list]):
                 "metadata": _j(p.get("metadata")),
             })
 
+    # stamp the lineage id on every row added for this league-season
+    for ent, lst in sink.items():
+        for row in lst[_before[ent]:]:
+            row["league_lineage_id"] = lineage_id
+
 
 # --------------------------------------------------------------------------- output
 _part = 0
@@ -309,9 +317,10 @@ def crawl():
 
     for i, seed_row in enumerate(sl, 1):
         chain = _walk_lineage(_as_league_dict(seed_row), seen)
+        lineage_id = str(chain[-1]["league_id"]) if chain else None   # root/originating league
         for lg in chain:
             try:
-                _harvest_season(lg, sink)
+                _harvest_season(lg, sink, lineage_id)
             except Exception as e:
                 print(f"  ! {lg.get('league_id')} {lg.get('season')}: {e}", flush=True)
         if i % 25 == 0:
