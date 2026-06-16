@@ -828,6 +828,27 @@ def _read_player_events(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataF
     return _lineage_franchise(ev, lineage_map).select("franchise_id", "player_id", "ts", "date", "action")
 
 
+def _drafts_completed_by(drafts_df, day: str):
+    """Subset of `drafts_df` whose rookie draft had actually run on/before ISO `day`.
+
+    The pick cutoff (`_drafted_cutoffs`) treats a `status=='complete'` draft as spending
+    its season's picks. But a draft is complete *forever* once it runs, so resolving a
+    historical snapshot day with the full drafts table would let a future draft (now
+    complete) retroactively roll that day's picks forward a year. Gating on the draft's
+    run date (``start_time``, epoch ms) keeps each day's cutoff as-of that day. Drafts
+    with no ``start_time`` are kept (status-only fallback); when the column is absent the
+    table is returned unchanged so callers degrade to the prior behavior."""
+    if drafts_df is None or drafts_df.height == 0 or "start_time" not in drafts_df.columns:
+        return drafts_df
+    return (
+        drafts_df.with_columns(
+            pl.from_epoch((pl.col("start_time").cast(pl.Int64, strict=False) // 1000),
+                          time_unit="s").dt.date().cast(pl.Utf8).alias("_cd"))
+        .filter(pl.col("_cd").is_null() | (pl.col("_cd") <= day))
+        .drop("_cd")
+    )
+
+
 def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df: pl.DataFrame,
                         overrides_df: pl.DataFrame, drafts_df) -> pl.DataFrame:
     """Per-day pick ownership over the daily traded_picks snapshots ->
@@ -849,7 +870,11 @@ def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df:
     for n in names:
         d = n.split("load_date=")[1].split("/")[0]
         traded = pl.read_parquet(f"gs://{bucket_name}/{n}")
-        resolved = resolve_pick_ownership(traded, empty_txn, overrides_df, leagues_df, drafts_df)
+        # date-aware cutoff: only count drafts that had actually run by day `d`, so a
+        # now-complete FUTURE draft can't retroactively roll earlier days' picks forward
+        # a year (e.g. the 2026 class vanishing months before the 2026 draft).
+        resolved = resolve_pick_ownership(traded, empty_txn, overrides_df, leagues_df,
+                                          _drafts_completed_by(drafts_df, d))
         if resolved.height == 0:
             continue
         df = (
