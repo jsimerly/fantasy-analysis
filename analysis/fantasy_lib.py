@@ -149,12 +149,24 @@ def load_player_values_blend(qb_format: str = "SF") -> pl.DataFrame:
 
 
 def load_pick_values_round(source: str, qb_format: str = DEFAULT_QB_FORMAT,
-                           te_premium: str = DEFAULT_TE_PREMIUM) -> pl.DataFrame:
+                           te_premium: str = DEFAULT_TE_PREMIUM,
+                           carry_forward_seasons: int = 2) -> pl.DataFrame:
     """Round-level pick value series for one source from production `fact_pick_values`
     -> (season:Utf8, round:Int64, valuation_date:Date, value:Int64).
 
     KTC is tiered -> use tier='Mid' as the round proxy; FantasyCalc is natively round-level
-    (tier='NA'). Both selected via the fact's `source_system` column."""
+    (tier='NA'). Both selected via the fact's `source_system` column.
+
+    carry_forward_seasons: the source only prices a draft class ~3yr out (KTC's furthest is
+    2028 as of 2026-06), but the ledger holds picks further out (2029+). Rather than value
+    those held picks at $0, proxy each further-out class from the FURTHEST priced class's
+    value HISTORY, time-shifted forward by k years for the k-th class out. Rationale: a pick
+    k seasons further out has, at any date, the time-to-maturity the furthest class had k
+    years earlier, and longer-to-maturity picks are worth LESS — so a brand-new 2029 pick is
+    anchored to the *beginning* of 2028's trajectory (its 3yr-out value), not 2028's current
+    (2yr-out) value. When the source later publishes a real class it becomes the new furthest
+    season and the proxy shifts out automatically (no overlap), so real values backfill with
+    no code change. Set 0 to disable (strictly faithful to published data)."""
     df = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/fact_pick_values")
     if source == "ktc":
         f = df.filter((pl.col("source_system") == "ktc") & (pl.col("market_type") == DEFAULT_MARKET)
@@ -164,8 +176,20 @@ def load_pick_values_round(source: str, qb_format: str = DEFAULT_QB_FORMAT,
         f = df.filter(pl.col("source_system") == "fantasycalc")
     else:
         raise ValueError(f"unknown source {source!r}")
-    return f.select(pl.col("season").cast(pl.Utf8), pl.col("round").cast(pl.Int64),
-                    pl.col("valuation_date").cast(pl.Date), pl.col("value").cast(pl.Int64))
+    out = f.select(pl.col("season").cast(pl.Utf8), pl.col("round").cast(pl.Int64),
+                   pl.col("valuation_date").cast(pl.Date), pl.col("value").cast(pl.Int64))
+    if carry_forward_seasons and out.height:
+        max_s = int(out["season"].cast(pl.Int64).max())             # furthest priced class
+        furthest = out.filter(pl.col("season").cast(pl.Int64) == max_s)
+        # shift that class's history forward by k years (k-th class out) so a further-out
+        # pick is valued at the furthest class's same-time-to-maturity (lower) point; dates
+        # before the shifted series resolve to its first/"beginning" value via the consumer's
+        # first-priced backfill.
+        proxies = [furthest.with_columns(pl.col("valuation_date").dt.offset_by(f"{k}y"),
+                                         pl.lit(str(max_s + k)).alias("season"))
+                   for k in range(1, carry_forward_seasons + 1)]
+        out = pl.concat([out, *proxies], how="vertical")
+    return out
 
 
 _ORD = {"1st": 1, "2nd": 2, "3rd": 3, "4th": 4}
