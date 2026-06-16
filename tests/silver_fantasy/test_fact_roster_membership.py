@@ -215,6 +215,55 @@ class TestLineageAutomation:
         assert "2026" in seasons
 
 
+class TestDateAwareDraftCutoff:
+    """A draft stays status=='complete' forever once it runs, so resolving a HISTORICAL
+    snapshot day with the full drafts table would let a future draft retroactively spend
+    that day's picks (the 2026 class vanishing months before the 2026 draft). The snapshot
+    path gates the cutoff on each draft's run date via `_drafts_completed_by`."""
+
+    @staticmethod
+    def _ms(iso):  # epoch ms at midnight UTC for an ISO date (no tz dependence)
+        return int((datetime.fromisoformat(iso) - datetime(1970, 1, 1)).total_seconds() * 1000)
+
+    def _drafts(self):
+        return pl.DataFrame({
+            "league_id": ["CUR", "CUR"],
+            "season": ["2025", "2026"],
+            "status": ["complete", "complete"],     # both complete in the live table
+            "rounds": [3, 3],
+            "start_time": [self._ms("2025-05-12"), self._ms("2026-05-08")],
+        })
+
+    def test_future_draft_excluded_until_it_runs(self):
+        drafts = self._drafts()
+        assert set(mod._drafts_completed_by(drafts, "2026-02-01")["season"].to_list()) == {"2025"}
+        assert set(mod._drafts_completed_by(drafts, "2026-06-01")["season"].to_list()) == {"2025", "2026"}
+
+    def test_missing_start_time_kept(self):
+        drafts = pl.DataFrame({
+            "league_id": ["CUR"], "season": ["2025"], "status": ["complete"],
+            "rounds": [3], "start_time": [None],
+        })
+        assert mod._drafts_completed_by(drafts, "2000-01-01").height == 1   # status-only fallback
+
+    def test_cutoff_reflects_asof_day(self):
+        leagues = pl.DataFrame({
+            "league_id": ["CUR"], "league_lineage_id": ["ROOT"], "season": ["2026"],
+            "status": ["in_season"], "total_rosters": [6],
+        })
+        drafts = self._drafts()
+        # before the 2026 draft -> 2026 picks still live, window has NOT rolled to 2029
+        pre = resolve_pick_ownership(_EMPTY, _EMPTY, _EMPTY, leagues,
+                                     mod._drafts_completed_by(drafts, "2026-02-01"))
+        pre_seasons = set(pre["season"].to_list())
+        assert "2026" in pre_seasons and "2029" not in pre_seasons
+        # after the 2026 draft -> 2026 spent, window rolls forward to include 2029
+        post = resolve_pick_ownership(_EMPTY, _EMPTY, _EMPTY, leagues,
+                                      mod._drafts_completed_by(drafts, "2026-06-01"))
+        post_seasons = set(post["season"].to_list())
+        assert "2026" not in post_seasons and "2029" in post_seasons
+
+
 # --- deterministic pick universe (untraded picks are still accounted) ------
 def _drafts(rows, status="complete"):
     # rows: list of (league_id, season, rounds)
