@@ -108,8 +108,8 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
                 'total_rosters': league['total_rosters'],
                 'draft_id': league['draft_id'],
                 'bracket_id': league['bracket_id'],
-                'leg': league['settings']['leg'],
-                'last_scored_leg': league['settings']['last_scored_leg'],
+                'leg': league['settings'].get('leg'),
+                'last_scored_leg': league['settings'].get('last_scored_leg'),  # absent until first game scored
                 'previous_league_id': league['previous_league_id']
             }
             leagues_records.append(league_record)
@@ -154,8 +154,12 @@ def flatten_lineage_to_parquets(all_leagues: list[dict]) -> tuple[pl.DataFrame, 
             }
             rosters_records.append(roster_record)
     
-    # Convert to Polars DataFrames
-    leagues_df = pl.DataFrame(leagues_records)
+    # Convert to Polars DataFrames. Pin the leg columns to Int64 so a None last_scored_leg
+    # (absent until the first game is scored) can't infer a Null-dtype column when every
+    # sampled record happens to be unscored.
+    leagues_df = pl.DataFrame(leagues_records).with_columns(
+        pl.col("leg").cast(pl.Int64), pl.col("last_scored_leg").cast(pl.Int64)
+    )
     settings_df = pl.DataFrame(settings_records)
     scoring_df = pl.DataFrame(scoring_records)
     rosters_df = pl.DataFrame(rosters_records)

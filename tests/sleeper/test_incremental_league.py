@@ -63,6 +63,59 @@ class TestFlattenLeague:
         assert scoring_df.to_dicts()[0]["league_id"] == "L1"
 
 
+class TestOffseasonSettingsDrift:
+    """Sleeper omits season-derived settings keys until the games are played: a fresh
+    season is `in_season` at leg 1 with NO `last_scored_leg` key yet. flatten must
+    tolerate that (None), not KeyError. Regression for the 2026-06-27 Cloud Run failure
+    on 'Stuck in High School'. We tolerate *legitimately-absent* optional keys; truly
+    required identity (league_id) is covered separately below."""
+
+    def _unscored(self):
+        lg = _league()
+        lg["settings"] = {"taxi_slots": 3, "reserve_slots": 2, "leg": 1}  # no last_scored_leg
+        return lg
+
+    def test_missing_last_scored_leg_does_not_crash(self):
+        leagues_df, _, _, _ = flatten_league_to_parquets(self._unscored())
+        row = leagues_df.to_dicts()[0]
+        assert row["leg"] == 1
+        assert row["last_scored_leg"] is None        # absent -> null, not a crash
+
+    def test_missing_leg_also_tolerated(self):
+        lg = _league()
+        lg["settings"] = {"taxi_slots": 3, "reserve_slots": 2}  # neither leg nor last_scored_leg
+        leagues_df, _, _, _ = flatten_league_to_parquets(lg)
+        row = leagues_df.to_dicts()[0]
+        assert row["leg"] is None and row["last_scored_leg"] is None
+
+    def test_leg_columns_are_nullable_int64(self):
+        # SPEC: the leg columns must be Int64 (nullable) even when the value is absent,
+        # NOT a Null-dtype column — otherwise vstacking a scored league onto an unscored
+        # one fails on a dtype mismatch (the second-order bug behind the same incident).
+        leagues_df, _, _, _ = flatten_league_to_parquets(self._unscored())
+        assert leagues_df.schema["leg"] == pl.Int64
+        assert leagues_df.schema["last_scored_leg"] == pl.Int64
+
+    def test_scored_and_unscored_leagues_concat_cleanly(self):
+        # The real failure path: main() vertically concats per-league frames. A league
+        # that has scored (Int64) and one that hasn't (was Null) must concat without a
+        # schema mismatch.
+        scored, _, _, _ = flatten_league_to_parquets(_league())          # last_scored_leg=2
+        unscored, _, _, _ = flatten_league_to_parquets(self._unscored())  # last_scored_leg absent
+        combined = pl.concat([scored, unscored])                          # must not raise
+        assert combined.height == 2
+        assert combined["last_scored_leg"].to_list() == [2, None]
+
+    def test_missing_league_id_still_raises(self):
+        # Boundary: we are flexible with optional/season-derived keys, but a payload
+        # missing a required identity field is a genuine break and SHOULD fail loudly
+        # rather than silently write a keyless row.
+        lg = _league()
+        del lg["league_id"]
+        with pytest.raises(KeyError):
+            flatten_league_to_parquets(lg)
+
+
 class TestMainNoActiveLeagues:
     def test_offseason_no_active_leagues_is_a_clean_noop(self, monkeypatch):
         # SPEC: when every league is complete (offseason) there are 0 active

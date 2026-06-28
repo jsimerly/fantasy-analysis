@@ -39,6 +39,20 @@ class TestFlattenLineage:
         assert rr["L2"]["TAXI"] == 3
         assert rr["L2"]["IR"] == 1
 
+    def test_offseason_missing_last_scored_leg_tolerated(self):
+        # SPEC: same offseason drift as the daily job — a fresh-season league in the
+        # lineage has no last_scored_leg yet. flatten must yield null (Int64), not KeyError,
+        # and must not produce a Null-dtype column that breaks a later concat.
+        unscored = _lineage_league("NEW")
+        unscored["settings"] = {"leg": 1, "taxi_slots": 3, "reserve_slots": 1}  # no last_scored_leg
+        groups = [{"league_name": "Dynasty", "league_lineage_id": "ROOT",
+                   "lineage": [unscored, _lineage_league("ROOT")]}]
+        leagues_df, _, _, _ = flatten_lineage_to_parquets(groups)
+        assert leagues_df.schema["last_scored_leg"] == pl.Int64
+        rr = {r["league_id"]: r for r in leagues_df.to_dicts()}
+        assert rr["NEW"]["last_scored_leg"] is None
+        assert rr["ROOT"]["last_scored_leg"] == 0   # scored league in the same frame still typed
+
 
 def _raw_api_league(lid):
     """A league as returned by the Sleeper REST API (note the raw 'name' key)."""

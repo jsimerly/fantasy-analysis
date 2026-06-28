@@ -59,6 +59,19 @@ class TestFlattenTransactions:
         assert players is None
         assert picks is None
 
+    def test_missing_optional_header_keys_tolerated(self):
+        # SPEC: optional header fields Sleeper may omit (creator on system/commissioner
+        # moves, status_updated) must flatten to null, not KeyError. transaction_id stays
+        # required (it's the dedup key) and is asserted present.
+        t = _txn()
+        del t["creator"]
+        del t["status_updated"]
+        txns, _, _ = flatten_transactions([t], league_id="L1")
+        row = txns.to_dicts()[0]
+        assert row["transaction_id"] == "t1"
+        assert row["creator"] is None
+        assert row["status_updated"] is None
+
 
 class TestWeekSelection:
     @pytest.fixture(autouse=True)

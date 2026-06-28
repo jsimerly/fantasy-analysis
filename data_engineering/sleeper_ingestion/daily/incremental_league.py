@@ -26,8 +26,8 @@ def flatten_league_to_parquets(league: dict):
         'total_rosters': league['total_rosters'],
         'draft_id': league['draft_id'],
         'bracket_id': league['bracket_id'],
-        'leg': league['settings']['leg'],
-        'last_scored_leg': league['settings']['last_scored_leg'],
+        'leg': league['settings'].get('leg'),
+        'last_scored_leg': league['settings'].get('last_scored_leg'),  # absent until first game scored (offseason / fresh season)
         'previous_league_id': league['previous_league_id']
     }
     leagues_records.append(league_record)
@@ -69,8 +69,12 @@ def flatten_league_to_parquets(league: dict):
     }
     rosters_records.append(roster_record)
     
-    # Convert to Polars DataFrames
-    leagues_df = pl.DataFrame(leagues_records)
+    # Convert to Polars DataFrames. Pin the leg columns to Int64 so a None last_scored_leg
+    # (absent until the first game is scored) stays a nullable Int64 rather than a Null-dtype
+    # column — otherwise the vertical pl.concat below mismatches once any league has scored.
+    leagues_df = pl.DataFrame(leagues_records).with_columns(
+        pl.col("leg").cast(pl.Int64), pl.col("last_scored_leg").cast(pl.Int64)
+    )
     settings_df = pl.DataFrame(settings_records)
     scoring_df = pl.DataFrame(scoring_records)
     rosters_df = pl.DataFrame(rosters_records)
