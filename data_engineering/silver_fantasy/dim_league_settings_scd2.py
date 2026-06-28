@@ -12,7 +12,6 @@ load_dotenv()
 def transform_dim_league_settings_scd2() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
     
-    # --- 1. Setup Paths ---
     # Scoring
     full_scoring_path = get_latest_bronze_path(bucket_name, "league/scoring/full_load")
     daily_scoring_path = get_latest_bronze_path(bucket_name, "league/scoring/incremental")
@@ -25,7 +24,7 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
     
     existing_silver_path = f"gs://{bucket_name}/silver/fantasy/dim_league_settings/data.parquet"
 
-    # --- 2. Process Scoring (The Base) ---
+    # scoring (the base)
     scoring_df = merge_full_and_incremental(
         pl.read_parquet(full_scoring_path),
         pl.read_parquet(daily_scoring_path),
@@ -33,7 +32,6 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
         preserve_columns=['league_lineage_id']
     )
 
-    # --- 3. Process Rosters ---
     raw_rosters_df = merge_full_and_incremental(
         pl.read_parquet(full_rosters_path),
         pl.read_parquet(daily_rosters_path),
@@ -55,7 +53,6 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
         pl.col(col).fill_null(0).cast(pl.Int64) for col in roster_slot_cols if col in rosters_df.columns
     ])
 
-    # --- 4. Process Settings ---
     full_settings_raw = pl.read_parquet(full_settings_path)
     daily_settings_raw = pl.read_parquet(daily_settings_path)
 
@@ -74,15 +71,14 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
         preserve_columns=['league_lineage_id']
     )
 
-    # --- 5. Join into One "Constitution" DataFrame ---
+    # join scoring + rosters + settings into one "constitution" frame
     new_rules_df = (
         scoring_df
         .join(rosters_df.drop('league_lineage_id'), on='league_id', how='left')
         .join(settings_df.drop('league_lineage_id'), on='league_id', how='left')
     )
 
-    # --- 6. SCD Type 2 Logic ---
-    
+    # SCD Type 2 logic
     try:
         existing_df = pl.read_parquet(existing_silver_path)
     except:
