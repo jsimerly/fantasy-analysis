@@ -16,7 +16,6 @@ from _utils import get_latest_blob_path
 
 load_dotenv()
 
-# Utils
 def _to_int_or_none(x: Any) -> int | None:
     if x in (None, "", "NA", "N/A"):
         return None
@@ -201,11 +200,9 @@ def main():
         print("=" * 60)
         print(f"[{i}] Draft ID: {draft_id}")
 
-        # --- fetch
         picks_raw = get_player_draft_picks(draft_id=draft_id)
         trades_raw = get_traded_draft_picks(draft_id=draft_id)
 
-        # --- flatten
         picks_flat = flatten_draft_picks(picks_raw)
         trades_flat = flatten_traded_draft_picks(trades_raw)
 
@@ -220,7 +217,7 @@ def main():
  
         time.sleep(0.1) 
 
-    # --- combine across drafts and save (daily)
+    # combine across drafts and save
     current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     picks_df_all = (

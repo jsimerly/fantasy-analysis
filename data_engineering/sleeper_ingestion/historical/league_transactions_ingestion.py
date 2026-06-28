@@ -77,7 +77,6 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
     draft_pick_records = []
     
     for txn in all_transactions:
-        # Safely get nested dicts
         settings = txn.get('settings') or {}
         metadata = txn.get('metadata') or {}
         
@@ -150,13 +149,9 @@ def flatten_transactions(all_transactions: list[dict]) -> tuple[pl.DataFrame, pl
         # 3. TRANSACTION_DRAFT_PICKS TABLE - one row per draft pick
         if txn.get('draft_picks'):
             for draft_pick_str in txn['draft_picks']:
-                # Sleeper's GraphQL pick string is
-                #   "<orig_roster>,<season>,<round>,<NEW_OWNER>,<PREV_OWNER>"
-                # i.e. the 4th field is the NEW owner (verified against the
-                # traded_picks net state: 21/21). Emit `owner_id`/`previous_owner_id`
-                # to match the daily REST feed's schema + semantics so both agree.
-                # (A prior version mislabeled these as from_team_id/to_team_id and
-                # swapped them, which broke pick-ownership reconstruction.)
+                # pick string "<orig_roster>,<season>,<round>,<NEW_OWNER>,<PREV_OWNER>" — the 4th
+                # field is the new owner; emit owner_id/previous_owner_id (the from/to swap bug —
+                # see ./CLAUDE.md).
                 parts = draft_pick_str.rsplit(',', 2)
                 pick_sleeper_id = parts[0]
                 owner_id = int(parts[1])           # new owner
@@ -201,7 +196,6 @@ def main(auth_header: str):
     leagues = get_bronze_leagues()
     league_ids = leagues.select("league_id").unique().to_series().to_list()
 
-    # Collect all dataframes
     all_transactions = []
     all_players = []
     all_draft_picks = []
@@ -211,7 +205,6 @@ def main(auth_header: str):
         league_transactions = get_transactions(league_id, auth_header)
         transactions_df, players_df, draft_picks_df = flatten_transactions(league_transactions)
         
-        # Append to lists
         if transactions_df is not None and len(transactions_df) > 0:
             all_transactions.append(transactions_df)
         if players_df is not None and len(players_df) > 0:
@@ -222,13 +215,11 @@ def main(auth_header: str):
         print(f"✅ Processed {league_id}")
         time.sleep(3)  # Rate limiting
 
-    # Combine all leagues
     print("\nCombining all leagues...")
     combined_transactions = pl.concat(all_transactions) if all_transactions else None
     combined_players = pl.concat(all_players) if all_players else None
     combined_draft_picks = pl.concat(all_draft_picks) if all_draft_picks else None
 
-    # Save once with all leagues
     print("\nSaving to GCS...")
     save_df_to_gcs(combined_transactions, bucket_name, current_date, entity="transactions")
     save_df_to_gcs(combined_players, bucket_name, current_date, entity="transaction_players")

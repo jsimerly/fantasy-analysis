@@ -32,7 +32,6 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
         taxi = set(roster.get("taxi", []) or [])
         reserve = set(roster.get("reserve", []) or [])
 
-        # ---- per-player rows (raw-ish)
         for player_id in players:
             player_records.append(
                 {
@@ -48,7 +47,6 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
                 }
             )
 
-        # ---- per-roster state (once per roster)
         team_state_records.append(
             {
                 "league_id": league_id,
@@ -56,12 +54,8 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
                 "owner_id": owner_id,
                 "timestamp": timestamp,
                 "team_name": metadata.get("team_name"),
-
-                # From metadata
                 "record": metadata.get("record"),
                 "streak": metadata.get("streak"),
-
-                # From settings 
                 "division": settings.get("division"),
                 "wins": settings.get("wins"),
                 "losses": settings.get("losses"),
@@ -78,8 +72,7 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
             }
         )
 
-        # ---- nicknames
-        # Keep ALL p_nick_* entries as-is (including empty strings), plus a very light parse.
+        # keep ALL p_nick_* entries as-is (incl. empty strings) + a light parse of the suffix
         for k, v in (metadata.items() if isinstance(metadata, dict) else []):
             if not (isinstance(k, str) and k.startswith("p_nick_")):
                 continue
@@ -100,7 +93,7 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
                 }
             )
 
-    # ---- DataFrames (let Polars infer types; bronze prefers raw)
+    # let Polars infer types; bronze prefers raw
     players_df = pl.from_dicts(player_records) if player_records else pl.DataFrame(schema={
         "league_id": pl.Utf8, "roster_id": pl.Int64, "owner_id": pl.Utf8, "player_id": pl.Utf8,
         "is_starter": pl.Boolean, "is_taxi": pl.Boolean, "is_reserve": pl.Boolean, "is_active": pl.Boolean,
@@ -109,7 +102,7 @@ def flatten_rosters(rosters_data: list[dict]) -> tuple[pl.DataFrame, pl.DataFram
 
     team_state_df = pl.from_dicts(team_state_records) if team_state_records else pl.DataFrame(schema={
         "league_id": pl.Utf8, "roster_id": pl.Int64, "owner_id": pl.Utf8, "timestamp": pl.Datetime,
-        "team_name": pl.Utf8,  # <-- NEW
+        "team_name": pl.Utf8,
         "record": pl.Utf8, "streak": pl.Utf8, "division": pl.Int64, "wins": pl.Int64, "losses": pl.Int64,
         "ties": pl.Int64, "fpts": pl.Int64, "fpts_decimal": pl.Int64, "fpts_against": pl.Int64,
         "fpts_against_decimal": pl.Int64, "ppts": pl.Int64, "ppts_decimal": pl.Int64,
@@ -186,7 +179,6 @@ def _get_week_start_from_str(date_str: str, week_start: str = "tuesday") -> str:
                "friday": 4, "saturday": 5, "sunday": 6}
     start_idx = mapping.get(week_start.lower(), 1)
     wd = dt.weekday()
-    # distance back to start
     offset = (wd - start_idx) % 7
     week_start_dt = (dt - timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
     return week_start_dt.strftime("%Y-%m-%d")
@@ -197,10 +189,9 @@ def save_df_to_gcs(
     bucket_name: str,
     base_date: str,    
     entity: str,
-    partition_mode: str = "daily",   # 'daily' | 'weekly' (daily per your note)
+    partition_mode: str = "daily",   # 'daily' | 'weekly'
     week_start: str = "tuesday",
 ) -> str:
-    # Auto-skip empties
     if df is None or df.height == 0:
         print(f"⚠️  Skipping {entity}: empty DataFrame")
         return ""
@@ -255,7 +246,6 @@ def main():
             print("=" * 60)
             print(f"Processing league: {league_name} ({league_id}) | run_date={current_date}")
 
-            # --- rosters
             rosters = get_rosters(league_id=league_id)
             players_df, team_state_df, nicknames_df = flatten_rosters(rosters)
 
@@ -273,8 +263,8 @@ def main():
             team_state_all.append(team_state_df)
             nicknames_all.append(nicknames_df)
 
-            # --- current draft pick ownership (part of "rosters" state)
-            traded_raw = get_traded_picks(league_id=league_id)  # list[dict]
+            # current draft pick ownership (part of roster state)
+            traded_raw = get_traded_picks(league_id=league_id)
             traded_flat = flatten_traded_picks_current(traded_raw, league_id=str(league_id))
             traded_picks_all.append(traded_flat)
 
@@ -283,7 +273,6 @@ def main():
 
         time.sleep(0.1)
 
-    # Union across leagues
     players_df_all = _concat_or_empty(players_all)
     team_state_df_all = _concat_or_empty(team_state_all)
     nicknames_df_all = _concat_or_empty(nicknames_all)
@@ -295,8 +284,6 @@ def main():
     print(f"nicknames:          {nicknames_df_all.height:,} rows")
     print(f"traded_picks:       {traded_picks_df_all.height:,} rows")
 
-    # Save snapshots
-    # daily
     save_df_to_gcs(
         players_df_all,
         bucket_name=bucket_name,

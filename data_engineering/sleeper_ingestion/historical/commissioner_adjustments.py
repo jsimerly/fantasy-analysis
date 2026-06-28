@@ -70,8 +70,7 @@ commissioner_pick_transactions = [
 def save_picks_to_gcs(commissioner_picks: list[dict], bucket_name: str, base_date: str):
     df = pl.DataFrame(commissioner_picks)
     
-    # Build GCS path matching your transaction_draft_picks structure
-    file_path = f"gs://{bucket_name}/bronze/sleeper/transactions/commission_overrides/load_date={base_date}.parquet" 
+    file_path = f"gs://{bucket_name}/bronze/sleeper/transactions/commission_overrides/load_date={base_date}.parquet"
     
     try:
         df.write_parquet(file_path)

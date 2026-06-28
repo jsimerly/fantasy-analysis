@@ -49,7 +49,6 @@ def main():
             raise ValueError("GCS_BUCKET_NAME environment variable is not set")
 
         current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        # 1. Fetch Data
         players_dict = fetch_all_players(sport="nfl")
         print("⚙️ Processing and flattening player data...")
         
@@ -58,14 +57,12 @@ def main():
             p_data['player_id'] = p_id
             players_list.append(p_data)
 
-        # 3. Create DataFrame
         df = pl.from_dicts(players_list, infer_schema_length=10000)
         if 'player_id' in df.columns:
             df = df.with_columns(pl.col('player_id').cast(pl.Utf8))
 
         print(f"📊 Created DataFrame with shape: {df.shape}")
 
-        # 4. Save
         save_df_to_gcs(df, bucket_name, current_date, "players")
 
     except Exception as e:
