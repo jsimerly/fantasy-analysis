@@ -10,8 +10,6 @@ load_dotenv()
 def transform_dim_players_master() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
 
-    # --- 1. Load Data ---
-    
     # A. Sleeper Players (The Base Universe)
     sleeper_path = get_latest_bronze_path(bucket_name, "league/players/incremental", source="sleeper")
     sleeper_df = pl.read_parquet(sleeper_path)
@@ -27,8 +25,6 @@ def transform_dim_players_master() -> pl.DataFrame:
         nfl_players_path = get_latest_bronze_path(bucket_name, "nfl_players", source="nflverse")
     
     nfl_players_df = pl.read_parquet(nfl_players_path)
-    
-    # --- 2. Clean & Prepare for Join ---
     
     # Sleeper: Ensure ID is string
     sleeper_df = sleeper_df.with_columns(
@@ -58,8 +54,6 @@ def transform_dim_players_master() -> pl.DataFrame:
         pl.col('draft_pick').alias('nfl_draft_pick')
     ]).unique(subset=['gsis_id'], keep='first')
 
-    # --- 3. Execute Joins ---
-    
     # Step 1: Attach Global IDs to Sleeper Players
     dim_players = sleeper_df.join(
         ids_clean,
@@ -75,8 +69,6 @@ def transform_dim_players_master() -> pl.DataFrame:
         how='left'
     )
 
-    # --- 4. Transformations & Coalescing ---
-    
     dim_players = dim_players.with_columns([
         pl.col('player_id').alias('player_key'),
         
@@ -98,7 +90,6 @@ def transform_dim_players_master() -> pl.DataFrame:
         pl.lit(datetime.now()).alias('loaded_at')
     ])
 
-    # --- 5. Final Selection ---
     target_cols = [
         # IDs
         'player_key',       # Sleeper ID (Primary)

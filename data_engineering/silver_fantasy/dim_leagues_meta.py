@@ -12,7 +12,6 @@ load_dotenv()
 def transform_dim_leagues_meta() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
 
-    # --- 1. Load League Data (Base Identity) ---
     full_leagues_path = get_latest_bronze_path(bucket_name, "league/leagues/full_load")
     daily_leagues_path = get_latest_bronze_path(bucket_name, "league/leagues/incremental")
 
@@ -49,7 +48,7 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
         pl.coalesce(['league_lineage_id', 'league_id']).alias('league_lineage_id')
     )
 
-    # --- 2. Load Settings Data (For Status/Leg only) ---
+    # settings: status / leg only
     full_settings_path = get_latest_bronze_path(bucket_name, "league/settings/full_load")
     daily_settings_path = get_latest_bronze_path(bucket_name, "league/settings/incremental")
 
@@ -65,7 +64,6 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
         preserve_columns=[]
     )
 
-    # --- 3. Join and Transform ---
     dim_leagues_meta = leagues_df.join(settings_df, on='league_id', how='left')
 
     dim_leagues_meta = dim_leagues_meta.with_columns([
@@ -83,7 +81,6 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
         'is_active', 'source_system', 'loaded_at'
     ]
 
-    # Final Cleaning
     existing_cols = dim_leagues_meta.columns
     for col in target_cols:
         if col not in existing_cols:

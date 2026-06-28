@@ -24,9 +24,6 @@ from utils import get_latest_bronze_path
 
 load_dotenv()
 
-# -------------------------------------------------------------------------
-# CONFIGURATION
-# -------------------------------------------------------------------------
 # Canonical key types shared by every pick source. Pick identity is
 # (league_id, season, round, original_roster_id) everywhere.
 _PICK_KEY = ["league_id", "season", "round", "original_roster_id"]
@@ -40,9 +37,6 @@ _FACT_COLS = [
 ]
 
 
-# -------------------------------------------------------------------------
-# PLAYERS
-# -------------------------------------------------------------------------
 def build_player_membership(
     roster_players_df: pl.DataFrame,
     dim_franchise: pl.DataFrame,
@@ -94,9 +88,6 @@ def build_player_membership(
     return out.select(_FACT_COLS)
 
 
-# -------------------------------------------------------------------------
-# PICKS
-# -------------------------------------------------------------------------
 def _norm_pick_keys(df: pl.DataFrame, original_col: str) -> pl.DataFrame:
     """Cast a pick source to the canonical (league_id, season, round,
     original_roster_id) key types."""
@@ -476,9 +467,6 @@ def build_pick_membership(
     return out.select(_FACT_COLS)
 
 
-# -------------------------------------------------------------------------
-# RECONCILIATION
-# -------------------------------------------------------------------------
 def reconcile(
     player_membership: pl.DataFrame,
     pick_membership: pl.DataFrame,
@@ -539,9 +527,6 @@ def reconcile(
     return fact_df, quarantine_df
 
 
-# -------------------------------------------------------------------------
-# IO / MAIN
-# -------------------------------------------------------------------------
 def _read_prefix_concat(bucket_name: str, prefix: str) -> pl.DataFrame:
     """Read and vertically concat every parquet under a bronze prefix (used for
     sources partitioned by something other than load_date, e.g. league_id)."""
@@ -579,9 +564,7 @@ def _snapshot_date_from_path(path: str) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-# -------------------------------------------------------------------------
-# SCD2 LEDGER  (gaps-and-islands over daily presence)
-# -------------------------------------------------------------------------
+# SCD2 ledger: gaps-and-islands over daily presence
 def build_snapshot_intervals(present: pl.DataFrame, key_cols: list[str],
                              date_col: str = "snapshot_date") -> pl.DataFrame:
     """Collapse per-day presence rows into SCD2 intervals.

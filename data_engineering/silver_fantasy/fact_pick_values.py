@@ -47,9 +47,6 @@ _KEY = ["valuation_date", "season", "round", "tier",
         "market_type", "qb_format", "te_premium"]
 
 
-# -------------------------------------------------------------------------
-# PARSERS
-# -------------------------------------------------------------------------
 def parse_ktc_daily_pick_values(ktc_df: pl.DataFrame) -> pl.DataFrame:
     """Daily KTC feed -> long pick values.
 
@@ -169,9 +166,6 @@ def build_pick_values(daily_df: pl.DataFrame, local_df: pl.DataFrame) -> pl.Data
     return pl.concat([daily, local_only], how="vertical_relaxed").select(_LONG_COLS)
 
 
-# -------------------------------------------------------------------------
-# IO / MAIN
-# -------------------------------------------------------------------------
 def _read_ktc_prefix(bucket_name: str, prefix: str, suffix: str,
                      add_valuation_date_from_partition: bool) -> pl.DataFrame:
     """Read every parquet under a KTC prefix and concat. For the daily feed the
