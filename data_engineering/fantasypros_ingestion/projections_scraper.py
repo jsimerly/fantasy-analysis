@@ -17,7 +17,7 @@ periodic long breaks, rotating realistic browser headers, and hard backoff on 42
 
 Run LOCALLY (rate-limited, not compute-bound). Env:
   GCS_BUCKET_NAME (nfl-data-bronze), FP_NO_GCS (1=skip GCS / dry run), FP_RATE_PER_MIN (4),
-  FP_YEAR_START (2008), FP_YEAR_END (current), FP_WEEKS (18), FP_SEASON_ONLY/FP_WEEKLY_ONLY.
+  FP_YEAR_START (2012, the consensus floor), FP_YEAR_END (current), FP_WEEKS (18), FP_SEASON_ONLY/FP_WEEKLY_ONLY.
   `python projections_scraper.py audit`  -> parser audit matrix (years x positions x weekly/season), no writes.
 """
 from __future__ import annotations
