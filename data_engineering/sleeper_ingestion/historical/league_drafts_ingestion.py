@@ -75,7 +75,6 @@ def save_df_to_gcs_drafts(
     base_date: str,         
     entity: str,           
 ) -> str:
-    # auto-skip empties
     if df is None or df.height == 0:
         print(f"⚠️  Skipping {entity}: empty DataFrame")
         return ""

@@ -69,9 +69,7 @@ def flatten_league_to_parquets(league: dict):
     }
     rosters_records.append(roster_record)
     
-    # Convert to Polars DataFrames. Pin the leg columns to Int64 so a None last_scored_leg
-    # (absent until the first game is scored) stays a nullable Int64 rather than a Null-dtype
-    # column — otherwise the vertical pl.concat below mismatches once any league has scored.
+    # pin leg cols to nullable Int64 so unscored + scored leagues still vstack (see ./CLAUDE.md)
     leagues_df = pl.DataFrame(leagues_records).with_columns(
         pl.col("leg").cast(pl.Int64), pl.col("last_scored_leg").cast(pl.Int64)
     )

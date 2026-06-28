@@ -12,9 +12,6 @@ from _utils import get_fantasy_leagues
 from api.league import get_users_in_league
 
 
-# --------------------------
-# Helpers
-# --------------------------
 def _get_week_start_from_str(date_str: str, week_start: str = "tuesday") -> str:
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     mapping = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
@@ -57,9 +54,6 @@ def save_df_to_gcs(
     return file_path
 
 
-# --------------------------
-# Bronze flattener
-# --------------------------
 def flatten_users(users: list[dict], league_id: str) -> pl.DataFrame:
     ts = datetime.now(timezone.utc)
 
@@ -106,9 +100,6 @@ def flatten_users(users: list[dict], league_id: str) -> pl.DataFrame:
     return df
 
 
-# --------------------------
-# Main
-# --------------------------
 def main():
     bucket_name = os.environ.get("GCS_BUCKET_NAME", "YOUR_BUCKET")
     current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
