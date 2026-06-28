@@ -27,8 +27,8 @@ def flatten_transactions(all_transactions: list[dict], league_id: str) -> tuple[
             'type': txn['type'],
             'status': txn['status'],
             'created': txn['created'],
-            'status_updated': txn['status_updated'],
-            'creator': txn['creator'],
+            'status_updated': txn.get('status_updated'),
+            'creator': txn.get('creator'),  # null for system/commissioner moves
             'leg': txn.get('leg'),  # Can be null for offseason
             'api_week': txn.get('api_week'),  # Track which week we fetched from
             'waiver_bid': settings.get('waiver_bid'),
