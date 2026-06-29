@@ -24,19 +24,22 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
                                      │ (all complete)
                                      ▼
                           ┌──────────── SILVER T2 (read T1) ────────────┐
-                          dim-franchise-meta · fact-asset-values
+                          dim-franchise-meta · fact-asset-values · fact-player-week
                                      │ (all complete)
                                      ▼
                           ┌──────────── SILVER T3 (read T2) ────────────┐
-                          fact-roster-membership
+                          fact-roster-membership · fact-player-season
 ```
 
 ### Dependency rationale
 - **dim-franchise-meta** (T2) reads `dim_leagues_meta` + `dim_users` (T1).
 - **fact-asset-values** (T2) reads `_staging/asset_values_long` (staging-asset-alignment, T1)
   + `dim_players_master` (T1).
+- **fact-player-week** (T2) reads `dim_league_settings` (T1, for scoring) + bronze nflverse
+  `player_stats`/`schedules`/`nfl_players`; it's the atomic player-week production fact.
 - **fact-roster-membership** (T3) reads `dim_franchises_meta` (T2) + `dim_players_master`
   (T1) + `dim_leagues_meta` (T1) + bronze rosters/picks/drafts.
+- **fact-player-season** (T3) is a season rollup of `fact-player-week` (T2).
 - **sleeper-drafts-overview** is in the daily bronze tier (not just manual) because
   fact-roster-membership keys the pick lifecycle off draft `status`/`rounds` — it must
   stay current so a completed draft rolls the pick window.

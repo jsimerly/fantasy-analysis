@@ -1,0 +1,112 @@
+name: Deploy Data Engineering Jobs
+
+# One consolidated image for all of data_engineering/ (built from data_engineering/Dockerfile);
+# every Cloud Run job runs one module via `python -m <package.module>`.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "data_engineering/src/**"
+      - "data_engineering/pyproject.toml"
+      - "data_engineering/uv.lock"
+      - "data_engineering/Dockerfile"
+  workflow_dispatch:
+
+env:
+  IMAGE: us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/data-engineering
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v2"
+        with:
+          workload_identity_provider: "projects/624985976737/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@fantasy-football-473418.iam.gserviceaccount.com"
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v2"
+
+      - name: "Configure Docker"
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      - name: "Build and Push Docker Image"
+        run: |
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest \
+            -f data_engineering/Dockerfile data_engineering
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: "Deploy Cloud Run Jobs"
+        run: |
+          # job-name -> "module:memory:cpu:task-timeout"  (defaults preserved from the
+          # former per-package workflows: sleeper/ktc 512Mi; nflverse/fantasycalc/silver
+          # 1Gi; heavier silver facts 2Gi; staging 4Gi/2cpu; fantasycalc 45m timeout).
+          declare -A jobs=(
+            # --- sleeper (512Mi) ---
+            ["sleeper-incremental-league"]="sleeper_ingestion.daily.incremental_league:512Mi:1:30m"
+            ["sleeper-incremental-rosters"]="sleeper_ingestion.daily.incremental_rosters:512Mi:1:30m"
+            ["sleeper-incremental-transactions"]="sleeper_ingestion.daily.incremental_transactions:512Mi:1:30m"
+            ["sleeper-incremental-players"]="sleeper_ingestion.daily.incremental_players:512Mi:1:30m"
+            ["sleeper-incremental-users"]="sleeper_ingestion.daily.incremental_users:512Mi:1:30m"
+            ["sleeper-commissioner-adjustments"]="sleeper_ingestion.historical.commissioner_adjustments:512Mi:1:30m"
+            ["sleeper-league-lineage"]="sleeper_ingestion.historical.league_lineage_ingestion:512Mi:1:30m"
+            ["sleeper-league-transactions"]="sleeper_ingestion.historical.league_transactions_ingestion:512Mi:1:30m"
+            ["sleeper-drafts-overview"]="sleeper_ingestion.historical.league_drafts_ingestion:512Mi:1:30m"
+            ["sleeper-draft-picks"]="sleeper_ingestion.historical.league_draft_picks_ingestion:512Mi:1:30m"
+            # --- ktc (512Mi) ---
+            ["ktc-full-dynasty"]="ktc_ingestion.dynasty.full_dynasty:512Mi:1:30m"
+            ["ktc-incremental-dynasty"]="ktc_ingestion.dynasty.incremental_dynasty:512Mi:1:30m"
+            ["ktc-full-devy"]="ktc_ingestion.devy.full_devy:512Mi:1:30m"
+            ["ktc-incremental-devy"]="ktc_ingestion.devy.incremental_devy:512Mi:1:30m"
+            ["ktc-full-redraft"]="ktc_ingestion.redraft.full_redraft:512Mi:1:30m"
+            ["ktc-incremental-redraft"]="ktc_ingestion.redraft.incremental_redraft:512Mi:1:30m"
+            # --- fantasycalc (1Gi, 45m) ---
+            ["fantasycalc-daily"]="fantasycalc_ingestion.daily_ingestion:1Gi:1:45m"
+            # --- nflverse (1Gi) ---
+            ["nflverse-combine"]="nflverse_ingestion.combine_ingestion:1Gi:1:30m"
+            ["nflverse-daily"]="nflverse_ingestion.daily_ingestion:1Gi:1:30m"
+            ["nflverse-draft"]="nflverse_ingestion.draft_ingestion:1Gi:1:30m"
+            ["nflverse-full"]="nflverse_ingestion.full_ingestion:1Gi:1:30m"
+            ["nflverse-nfl-draft-picks"]="nflverse_ingestion.nfl_draft_picks:1Gi:1:30m"
+            ["nflverse-schedule"]="nflverse_ingestion.schedule_ingestion:1Gi:1:30m"
+            # --- silver (1Gi; heavier facts 2Gi; staging 4Gi/2cpu) ---
+            ["silver-dim-franchise-meta"]="silver_fantasy.dim_franchise_meta:1Gi:1:30m"
+            ["silver-dim-league-meta"]="silver_fantasy.dim_leagues_meta:1Gi:1:30m"
+            ["silver-dim-league-settings"]="silver_fantasy.dim_league_settings_scd2:1Gi:1:30m"
+            ["silver-dim-player-master"]="silver_fantasy.dim_player_master:1Gi:1:30m"
+            ["silver-dim-users"]="silver_fantasy.dim_users:1Gi:1:30m"
+            ["silver-dim-dates"]="silver_fantasy.dim_dates:1Gi:1:30m"
+            ["silver-dim-league-events"]="silver_fantasy.dim_league_events:1Gi:1:30m"
+            ["silver-staging-asset-alignment"]="silver_fantasy._staging.asset_alignment:4Gi:2:30m"
+            ["silver-fact-asset-values"]="silver_fantasy.fact_asset_values:2Gi:1:30m"
+            ["silver-fact-roster-membership"]="silver_fantasy.fact_roster_membership:2Gi:1:30m"
+            ["silver-fact-pick-values"]="silver_fantasy.fact_pick_values:2Gi:1:30m"
+            ["silver-fact-player-week"]="silver_fantasy.fact_player_week:2Gi:1:30m"
+            ["silver-fact-player-season"]="silver_fantasy.fact_player_season:1Gi:1:30m"
+          )
+
+          for job_name in "${!jobs[@]}"; do
+            IFS=':' read -r module mem cpu timeout <<< "${jobs[$job_name]}"
+            echo "Deploying ${job_name} -> python -m ${module} (mem=${mem}, cpu=${cpu}, timeout=${timeout})"
+            gcloud run jobs deploy "${job_name}" \
+              --image=${IMAGE}:latest \
+              --region=us-central1 \
+              --memory="${mem}" \
+              --cpu="${cpu}" \
+              --max-retries=1 \
+              --task-timeout="${timeout}" \
+              --command=python \
+              --args=-m,"${module}" \
+              --set-env-vars=GCS_BUCKET_NAME=nfl-data-bronze \
+              --project=fantasy-football-473418
+          done

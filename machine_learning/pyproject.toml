@@ -1,0 +1,21 @@
+[project]
+name = "dynasty-value"
+version = "0.1.0"
+description = "Dynasty Intrinsic Value Model"
+requires-python = ">=3.11"
+dependencies = [
+    "polars>=1.33",
+    "google-cloud-storage>=2.18",
+    "python-dotenv>=1.0",
+    "xgboost>=2.1",       # device='cuda'|'cpu' -> portable local-GPU / GCP training
+    "scikit-learn>=1.5",  # metrics / utilities
+    "numpy>=2.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+# src/ holds the modules; tests and scripts import them directly (no packaging step).
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

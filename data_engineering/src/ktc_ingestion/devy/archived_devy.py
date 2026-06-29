@@ -1,0 +1,3 @@
+# NOTE This load will only be possible if KTC serves old player data again, they stopped recently. 
+import sys
+from pathlib import Path

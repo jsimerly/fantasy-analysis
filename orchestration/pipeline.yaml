@@ -52,9 +52,11 @@ main:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
               - "silver-dim-league-events"      # needs dim-league-meta + dim-league-settings + bronze drafts/schedules
               - "silver-fact-asset-values"      # needs staging-asset-alignment + dim-player-master
+              - "silver-fact-player-week"       # needs dim-league-settings (scoring) + bronze nflverse player_stats/schedules
           # --- SILVER T3: read T2 outputs ---
           - silver_t3_jobs:
               - "silver-fact-roster-membership" # SCD2 ledger; needs dim-league-meta (T1) + bronze snapshots/events
+              - "silver-fact-player-season"     # season rollup of fact-player-week (T2)
 
     - bronze:
         parallel:
