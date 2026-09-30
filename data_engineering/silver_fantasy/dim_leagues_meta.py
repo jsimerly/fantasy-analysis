@@ -5,7 +5,7 @@ import os
 import polars as pl
 from dotenv import load_dotenv
 
-from utils import get_latest_bronze_path, merge_full_and_incremental
+from utils import get_latest_bronze_path, merge_full_and_incremental, read_latest_incremental_by_key
 
 load_dotenv()
 
@@ -13,10 +13,13 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
 
     full_leagues_path = get_latest_bronze_path(bucket_name, "league/leagues/full_load")
-    daily_leagues_path = get_latest_bronze_path(bucket_name, "league/leagues/incremental")
-
     full_leagues_df = pl.read_parquet(full_leagues_path)
-    daily_leagues_df = pl.read_parquet(daily_leagues_path)
+    # Latest observation per league across ALL incremental partitions -- not just the newest
+    # file, which only holds the leagues that were still active when it was written (a league
+    # leaves the daily feed the day after it's first seen `complete`; see utils).
+    daily_leagues_df = read_latest_incremental_by_key(
+        bucket_name, "league/leagues/incremental", join_key='league_id'
+    )
     
     leagues_df = merge_full_and_incremental(
         full_leagues_df,
@@ -49,13 +52,13 @@ def transform_dim_leagues_meta() -> pl.DataFrame:
     )
 
     # settings: status / leg only
-    full_settings_path = get_latest_bronze_path(bucket_name, "league/settings/full_load")
-    daily_settings_path = get_latest_bronze_path(bucket_name, "league/settings/incremental")
-
-    full_settings_df = pl.read_parquet(full_settings_path)
-    daily_settings_df = pl.read_parquet(daily_settings_path)
-
     status_cols = ['league_id', 'leg', 'last_scored_leg']
+
+    full_settings_path = get_latest_bronze_path(bucket_name, "league/settings/full_load")
+    full_settings_df = pl.read_parquet(full_settings_path)
+    daily_settings_df = read_latest_incremental_by_key(
+        bucket_name, "league/settings/incremental", join_key='league_id', columns=status_cols
+    )
     
     settings_df = merge_full_and_incremental(
         full_settings_df.select([c for c in status_cols if c in full_settings_df.columns]),

@@ -21,9 +21,17 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
 | `fact_pick_values.py` | `silver-fact-pick-values` | pick **tier** value over time (ownership-independent) |
 | `fact_roster_membership.py` | `silver-fact-roster-membership` | SCD2 ownership ledger (players + picks), back to 2021 |
 | `_pick_projection.py` | — (analysis helper) | reverse-standings tier projection (the measure layer, not a fact) |
-| `utils.py` | — | shared `get_latest_bronze_path` etc. |
+| `utils.py` | — | shared `get_latest_bronze_path`, `merge_full_and_incremental`, `read_latest_incremental_by_key` |
 
 ## The big gotchas
+- **Incremental feeds only carry the leagues that were active when they ran.** A league leaves the
+  daily `league/*/incremental` feed the day after it is first observed `complete`, so "merge full_load
+  with the *newest* incremental partition" silently falls back to the stale full_load row for it
+  (`in_season` again) — which re-activates it, re-ingests it, and flips it back: `dim_leagues_meta`
+  oscillated every other day in 2026-09. `dim_leagues_meta` therefore overlays the **latest observation
+  per league across all partitions** (`utils.read_latest_incremental_by_key`). `dim_league_settings_scd2`
+  still reads only the newest partition (its inputs rarely change for completed leagues) — apply the same
+  helper if that ever flaps.
 - **"Current league" scoping (non-obvious, will bite again).** To scope a *current*-state fact to the
   leagues we track, filter to leagues present in **`dim_franchises_meta`** — do **NOT** use
   `status`/`is_active` from `dim_leagues_meta`. In the offseason every league reads `status=complete`

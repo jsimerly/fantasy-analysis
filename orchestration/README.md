@@ -60,10 +60,12 @@ edit the overrides).
 deploys the workflow and creates/updates the single scheduler (`fantasy-pipeline-daily`,
 10:00 UTC) on push to `main` under `orchestration/**`, or via `workflow_dispatch`.
 
-## Migration: retire the old triggers
+## Migration: retire the old triggers (done 2026-09-30)
 
-After the new `fantasy-pipeline-daily` trigger is confirmed working, **delete the 14
-legacy per-job schedulers** so jobs don't double-run:
+The 14 legacy per-job Cloud Scheduler triggers were **deleted on 2026-09-30** — until then
+they had kept firing alongside the workflow, so every bronze job and the T1/T2 dims ran
+twice a day (and every KTC failure showed up twice). `fantasy-pipeline-daily` is now the
+only trigger. Kept for reference, these were the deleted schedulers:
 
 ```
 silver-dim-leagues-scheduler-trigger          silver-dim-league-scoring-scheduler-trigger
