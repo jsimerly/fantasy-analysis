@@ -8,6 +8,8 @@ import pytest
 import silver_fantasy.utils as mod
 get_latest_bronze_path = mod.get_latest_bronze_path
 merge_full_and_incremental = mod.merge_full_and_incremental
+read_latest_incremental_by_key = mod.read_latest_incremental_by_key
+list_bronze_partitions = mod.list_bronze_partitions
 
 
 class _Blob:
@@ -92,3 +94,65 @@ class TestMergeFullAndIncremental:
         row = out.to_dicts()[0]
         assert row["val"] == 99
         assert row["league_lineage_id"] == "ROOT"
+
+
+class TestReadLatestIncrementalByKey:
+    """dim_leagues_meta must see the latest observation per league across ALL incremental
+    partitions. The daily league ingestion only writes the leagues active at run time, so a
+    league leaves the feed the day after it is first seen `complete`; reading only the newest
+    partition then falls back to the stale full_load row and the dim's status/is_active
+    oscillated every other day (2026-09)."""
+
+    BASE = "gs://b/bronze/sleeper/league/leagues/incremental"
+
+    def _seed(self, monkeypatch, fake_gcs):
+        names = [
+            "bronze/sleeper/league/leagues/incremental/load_date=2026-09-27/data.parquet",
+            "bronze/sleeper/league/leagues/incremental/load_date=2026-09-26/data.parquet",
+        ]
+        monkeypatch.setattr(mod, "storage", _fake_storage(names))
+        # 09-26: both leagues; the 2025 one observed complete (bracket_id Int64)
+        fake_gcs[f"{self.BASE}/load_date=2026-09-26/data.parquet"] = pl.DataFrame({
+            "league_id": ["L2025", "L2026"], "status": ["complete", "in_season"],
+            "bracket_id": [1304399188498333697, None], "leg": [17, 3],
+        })
+        # 09-27: only the still-active league; bracket_id all-null -> Null dtype in bronze
+        fake_gcs[f"{self.BASE}/load_date=2026-09-27/data.parquet"] = pl.DataFrame({
+            "league_id": ["L2026"], "status": ["in_season"], "leg": [4],
+        }).with_columns(pl.lit(None).alias("bracket_id"))
+
+    def test_lists_partitions_oldest_first(self, monkeypatch):
+        names = [
+            "bronze/sleeper/league/leagues/incremental/load_date=2026-09-27/data.parquet",
+            "bronze/sleeper/league/leagues/incremental/load_date=2026-09-26/data.parquet",
+            "bronze/sleeper/league/leagues/incremental/_SUCCESS",
+        ]
+        monkeypatch.setattr(mod, "storage", _fake_storage(names))
+        parts = list_bronze_partitions("b", "league/leagues/incremental")
+        assert [d for d, _ in parts] == ["2026-09-26", "2026-09-27"]
+        assert parts[0][1] == f"{self.BASE}/load_date=2026-09-26/data.parquet"
+
+    def test_league_absent_from_newest_partition_keeps_last_observation(self, monkeypatch, fake_gcs):
+        self._seed(monkeypatch, fake_gcs)
+        out = read_latest_incremental_by_key("b", "league/leagues/incremental", join_key="league_id")
+        by_id = {r["league_id"]: r for r in out.to_dicts()}
+        assert by_id["L2025"]["status"] == "complete"     # not lost -> no fallback to full_load
+        assert by_id["L2026"]["leg"] == 4                 # newest partition wins for present keys
+        assert out.height == 2
+
+    def test_relaxes_null_vs_int_dtype_drift_across_partitions(self, monkeypatch, fake_gcs):
+        self._seed(monkeypatch, fake_gcs)
+        out = read_latest_incremental_by_key("b", "league/leagues/incremental")
+        assert out.schema["bracket_id"] == pl.Int64
+        assert "_load_date" not in out.columns
+
+    def test_columns_projection(self, monkeypatch, fake_gcs):
+        self._seed(monkeypatch, fake_gcs)
+        out = read_latest_incremental_by_key("b", "league/leagues/incremental",
+                                             columns=["league_id", "leg"])
+        assert set(out.columns) == {"league_id", "leg"}
+
+    def test_raises_when_no_partitions(self, monkeypatch):
+        monkeypatch.setattr(mod, "storage", _fake_storage([]))
+        with pytest.raises(ValueError):
+            read_latest_incremental_by_key("b", "league/leagues/incremental")

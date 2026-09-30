@@ -9,6 +9,7 @@ import polars as pl
 import silver_fantasy._staging.asset_alignment as mod
 melt_ktc_values = mod.melt_ktc_values
 standardize_simple = mod.standardize_simple
+clip_future_dates = mod.clip_future_dates
 
 
 class TestMeltKtcValues:
@@ -87,3 +88,14 @@ class TestStandardizeSimple:
         assert row["value"] == 5000
         assert out.schema["valuation_date"] == pl.Date
         assert out.schema["source_id"] == pl.Utf8
+
+
+class TestClipFutureDates:
+    def test_drops_rows_valued_after_today(self):
+        from datetime import date
+        lf = pl.DataFrame({
+            "valuation_date": [date(2026, 9, 30), date(2027, 5, 31), date(2026, 10, 1)],
+            "value": [1, 2, 3],
+        }).lazy()
+        out = clip_future_dates(lf, today=date(2026, 9, 30)).collect()
+        assert out["value"].to_list() == [1]      # the KTC local_load archive's dirty future rows

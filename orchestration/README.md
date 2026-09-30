@@ -63,10 +63,26 @@ edit the overrides).
 deploys the workflow and creates/updates the single scheduler (`fantasy-pipeline-daily`,
 10:00 UTC) on push to `main` under `orchestration/**`, or via `workflow_dispatch`.
 
-## Migration: retire the old triggers
+## Migration: retire the old triggers (STILL PENDING as of 2026-09-30)
 
-After the new `fantasy-pipeline-daily` trigger is confirmed working, **delete the 14
-legacy per-job schedulers** so jobs don't double-run:
+The 14 legacy per-job Cloud Scheduler triggers are **still enabled** and fire alongside the
+workflow every morning, so every bronze job and the T1/T2 dims run twice a day (and every
+failure shows up twice). `fantasy-pipeline-daily` covers all of them. Delete them (their full
+configs were exported first, in case one is ever needed again):
+
+```
+for s in silver-dim-leagues-scheduler-trigger sleeper-incremental-league-scheduler-trigger \
+         silver-dim-league-scoring-scheduler-trigger fantasycalc-daily-scheduler-trigger \
+         sleeper-incremental-players-scheduler-trigger ktc-incremental-devy-scheduler-trigger \
+         ktc-dynasty-incremental-daily ktc-incremental-redraft-scheduler-trigger \
+         silver-dim-franchise-meta-scheduler-trigger sleeper-incremental-users-scheduler-trigger \
+         nflverse-daily-scheduler-trigger silver-dim-player-master-scheduler-trigger \
+         sleeper-incremental-rosters-scheduler-trigger sleeper-incremental-transactions-scheduler-trigger; do
+  gcloud scheduler jobs delete "$s" --location us-central1 --project fantasy-football-473418 --quiet
+done
+```
+
+The 14, for reference:
 
 ```
 silver-dim-leagues-scheduler-trigger          silver-dim-league-scoring-scheduler-trigger

@@ -1,6 +1,9 @@
-"""ktc_ingestion/utils.py: historic transform, daily flatten, dtype casting."""
-import polars as pl
+"""ktc_ingestion/utils.py: page parsing, historic transform, daily flatten, dtype casting."""
+import json
 
+import polars as pl
+import pytest
+from bs4 import BeautifulSoup
 
 import ktc_ingestion.utils as mod
 transform_player_data = mod.transform_player_data
@@ -94,3 +97,88 @@ class TestSetDtypes:
         df = pl.DataFrame({"positionID": [1]})
         out = set_dtypes(df)   # must not raise on the many missing columns
         assert out.schema["positionID"] == pl.Int32
+
+
+def _soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, "html.parser")
+
+
+class TestRankingsPageParsing:
+    """KTC changed the rankings pages on ~2026-09-08: `playersArray` now ships as a JSON blob in
+    <script type="application/json" id="ktc-players"> which the inline JS JSON.parse()s, so the
+    old `playersArray = [...]` regex can never match again (the three ktc-incremental-* jobs
+    failed every day from 2026-09-08). The parser must read the element first and keep the
+    legacy inline layout as a fallback."""
+
+    PLAYERS = [{
+        "playerName": "Josh Allen", "playerID": 365, "slug": "josh-allen-365",
+        "position": "QB", "positionID": 1, "isTrending": False,
+        "oneQBValues": {"value": 7806}, "superflexValues": {"value": 9994},
+    }]
+
+    def test_reads_json_element_layout(self):
+        html = f"""<html><body>
+        <script type="application/json" id="ktc-players">{json.dumps(self.PLAYERS)}</script>
+        <script>var leagueType = 1;
+        var playersArray = JSON.parse(document.getElementById('ktc-players').textContent);
+        var oneQBPlayers = [{{"playerName": "Other"}}];</script></body></html>"""
+        assert mod.parse_rankings_players(_soup(html)) == self.PLAYERS
+
+    def test_legacy_inline_layout_still_parses(self):
+        html = ("<html><script>var leagueType = 1;\n    var playersArray = "
+                f"{json.dumps(self.PLAYERS)};\n    var oneQBSC = false;</script></html>")
+        assert mod.parse_rankings_players(_soup(html)) == self.PLAYERS
+
+    def test_inline_reference_without_element_raises(self):
+        # the exact production failure mode: a script *mentions* playersArray but the data
+        # element is missing -> must raise, not return garbage
+        html = ("<html><script>var playersArray = JSON.parse("
+                "document.getElementById('ktc-players').textContent);</script></html>")
+        with pytest.raises(ValueError):
+            mod.parse_rankings_players(_soup(html))
+
+    def test_raises_when_neither_layout_present(self):
+        with pytest.raises(ValueError):
+            mod.parse_rankings_players(_soup("<html><script>var x = 1;</script></html>"))
+
+    def test_get_dynasty_playersArray_fetches_then_parses(self, monkeypatch):
+        html = f'<html><script type="application/json" id="ktc-players">{json.dumps(self.PLAYERS)}</script></html>'
+        seen = []
+        monkeypatch.setattr(mod, "fetch_soup", lambda url: seen.append(url) or _soup(html))
+        assert mod.get_dynasty_playersArray("https://keeptradecut.com/devy-rankings") == self.PLAYERS
+        assert seen == ["https://keeptradecut.com/devy-rankings"]
+
+
+class TestPlayerPageParsing:
+    """Per-player pages moved the value history the same way: id="pd-oneqb" / id="pd-superflex"
+    JSON elements instead of inline `var playerOneQB = {...}` (used by the ktc-full-* backfills)."""
+
+    ONEQB = {"overallValue": [{"d": "260930", "v": 7806}],
+             "overallRankHistory": [{"d": "260930", "v": 7}],
+             "positionalRankHistory": [{"d": "260930", "v": 1}]}
+    SF = {"overallValue": [{"d": "260930", "v": 9994}],
+          "overallRankHistory": [{"d": "260930", "v": 3}],
+          "positionalRankHistory": [{"d": "260930", "v": 1}]}
+
+    def test_reads_json_element_layout(self):
+        html = f"""<html>
+        <script type="application/json" id="pd-superflex">{json.dumps(self.SF)}</script>
+        <script type="application/json" id="pd-oneqb">{json.dumps(self.ONEQB)}</script>
+        <script>var playerSuperflex = JSON.parse(document.getElementById('pd-superflex').textContent);
+        var playerOneQB = JSON.parse(document.getElementById('pd-oneqb').textContent);
+        var leagueType = 1;</script></html>"""
+        assert mod.parse_historic_1QBplayer_data(_soup(html)) == self.ONEQB
+        assert mod.parse_historic_SFplayer_data(_soup(html)) == self.SF
+
+    def test_legacy_inline_layout_still_parses(self):
+        html = (f"<html><script>var playerSuperflex = {json.dumps(self.SF)};\n"
+                f"    var playerOneQB = {json.dumps(self.ONEQB)};\n"
+                "    var leagueType = 1;</script></html>")
+        assert mod.parse_historic_1QBplayer_data(_soup(html)) == self.ONEQB
+        assert mod.parse_historic_SFplayer_data(_soup(html)) == self.SF
+
+    def test_raises_when_absent(self):
+        with pytest.raises(ValueError):
+            mod.parse_historic_1QBplayer_data(_soup("<html></html>"))
+        with pytest.raises(ValueError):
+            mod.parse_historic_SFplayer_data(_soup("<html></html>"))

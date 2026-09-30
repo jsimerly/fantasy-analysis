@@ -16,7 +16,8 @@ def _league(with_scoring=True):
     league = {
         "league_id": "L1", "name": "My League", "season": "2024",
         "status": "in_season", "season_type": "regular", "total_rosters": 12,
-        "draft_id": "D1", "bracket_id": "B1", "previous_league_id": None,
+        # bracket_id is an int in the Sleeper API / full_load bronze (null until playoffs)
+        "draft_id": "D1", "bracket_id": 1306906374357147648, "previous_league_id": None,
         "settings": {"leg": 3, "last_scored_leg": 2, "taxi_slots": 4, "reserve_slots": 2},
         "roster_positions": ["QB", "RB", "RB", "WR", "WR", "FLEX", "BN", "BN"],
     }
@@ -190,3 +191,69 @@ class TestDiscoverNewSeasonLeagues:
         self._patch(monkeypatch, user_leagues)
         ids = sorted(l["league_id"] for l in mod.discover_new_season_leagues(self.KNOWN))
         assert ids == ["C", "D"]
+
+
+class TestLeaguesFrameSchemaPinned:
+    """2026-09 regression: `bracket_id` is null for an in-season league (no playoff bracket
+    yet) but an Int64 for a completed one, so the per-league frames concat'd in main()
+    disagreed on dtype whenever a null-bracket league happened to come first (polars: "type
+    Int64 is incompatible with expected type Null"). Every column of the leagues frame is now
+    pinned (LEAGUES_SCHEMA) so a None-only column is never a Null-dtype column."""
+
+    def _in_season(self):
+        lg = _league()
+        lg["bracket_id"] = None
+        lg["status"] = "in_season"
+        return lg
+
+    def _complete(self):
+        lg = _league()
+        lg["bracket_id"] = 1306906374357147648
+        lg["status"] = "complete"
+        return lg
+
+    def test_null_bracket_id_is_nullable_int64(self):
+        leagues_df, _, _, _ = flatten_league_to_parquets(self._in_season())
+        assert leagues_df.schema["bracket_id"] == pl.Int64
+        assert leagues_df["bracket_id"].to_list() == [None]
+
+    def test_whole_frame_matches_pinned_schema(self):
+        leagues_df, _, _, _ = flatten_league_to_parquets(self._in_season())
+        assert dict(leagues_df.schema) == mod.LEAGUES_SCHEMA
+
+    def test_null_ids_are_utf8(self):
+        lg = self._in_season()
+        lg["previous_league_id"] = None
+        lg["draft_id"] = None
+        leagues_df, _, _, _ = flatten_league_to_parquets(lg)
+        assert leagues_df.schema["previous_league_id"] == pl.Utf8
+        assert leagues_df.schema["draft_id"] == pl.Utf8
+
+    def test_concat_null_bracket_first_then_int(self):
+        # the failing production order: in-season league (null bracket) processed first
+        a, _, _, _ = flatten_league_to_parquets(self._in_season())
+        b, _, _, _ = flatten_league_to_parquets(self._complete())
+        out = pl.concat([a, b])
+        assert out["bracket_id"].to_list() == [None, 1306906374357147648]
+
+    def test_main_concats_mixed_leagues_and_saves(self, monkeypatch):
+        # end-to-end through main(): two active leagues, null-bracket one first
+        monkeypatch.setenv("GCS_BUCKET_NAME", "test-bucket")
+        known = pl.DataFrame({
+            "league_id": ["IN", "DONE"], "status": ["in_season", "post_season"],
+            "source_system": ["sleeper", "sleeper"],
+        })
+        payloads = {"IN": self._in_season(), "DONE": self._complete()}
+        payloads["IN"]["league_id"] = "IN"
+        payloads["DONE"]["league_id"] = "DONE"
+        monkeypatch.setattr(mod, "get_fantasy_leagues", lambda: known)
+        monkeypatch.setattr(mod, "discover_new_season_leagues", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "get_league", lambda league_id: payloads[league_id])
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        saved = {}
+        monkeypatch.setattr(mod, "save_df_to_gcs",
+                            lambda df, bucket, date, entity: saved.__setitem__(entity, df))
+        mod.main()
+        assert set(saved) == {"leagues", "settings", "scoring", "roster_slots"}
+        assert saved["leagues"]["bracket_id"].to_list() == [None, 1306906374357147648]
+        assert saved["leagues"].schema["bracket_id"] == pl.Int64
