@@ -40,10 +40,15 @@ def attach_lags_and_target(df: pl.DataFrame, drop_no_target: bool = True) -> pl.
 
     Leakage-safe by construction: lag columns come only from seasons < T (joined via a
     +1/+2 season shift), and ``target_*`` columns come only from season T+1 (a −1 shift).
+
+    Only a COMPLETE season may serve as a target: the lake also carries the in-progress season
+    (the daily job writes it), and a 3-week partial total would otherwise become the "next
+    season" outcome for every current player. ``fact_player_season.season_complete`` marks it.
     """
     lag1 = _shift(df, 1, LAG1_COLS, "lag1_")
     lag2 = _shift(df, 2, LAG2_COLS, "lag2_")
-    target = df.select(
+    target_src = df.filter(pl.col("season_complete")) if "season_complete" in df.columns else df
+    target = target_src.select(
         ["player_id", (pl.col("season") - 1).alias("season"),
          pl.col("fpts").alias("target_fpts_next"),
          pl.col("ppg").alias("target_ppg_next"),

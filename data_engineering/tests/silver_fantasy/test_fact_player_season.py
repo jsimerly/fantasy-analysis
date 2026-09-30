@@ -40,3 +40,26 @@ class TestRollup:
         wk = _wk([{"week": 1, "fpts": 5.0}, {"week": 2, "fpts": 7.0},
                   {"player_id": "p2", "week": 1, "fpts": 3.0}])
         assert fps.rollup_to_season(wk).height == 2
+
+
+class TestSeasonComplete:
+    """Season-level flag: the final regular-season week has been played (18 since 2021, 17
+    before). The in-progress season is in the lake too and must not become a T+1 target."""
+
+    def test_flagged_by_final_week_of_the_season(self):
+        wk = pl.concat([
+            _wk([{"season": 2020, "week": 17, "fpts": 1.0}]),
+            _wk([{"season": 2024, "week": 18, "fpts": 1.0}]),
+            _wk([{"season": 2024, "week": 5, "fpts": 1.0, "player_id": "p2"}]),   # played fewer weeks
+            _wk([{"season": 2026, "week": 3, "fpts": 1.0}]),                       # in progress
+        ])
+        out = fps.rollup_to_season(wk)
+        by = {(r["player_id"], r["season"]): r["season_complete"] for r in out.to_dicts()}
+        assert by[("p1", 2020)] is True
+        assert by[("p1", 2024)] is True
+        assert by[("p2", 2024)] is True        # season-level, not per player
+        assert by[("p1", 2026)] is False
+
+    def test_2021_plus_needs_week_18(self):
+        wk = _wk([{"season": 2022, "week": 17, "fpts": 1.0}])
+        assert fps.rollup_to_season(wk)["season_complete"][0] is False

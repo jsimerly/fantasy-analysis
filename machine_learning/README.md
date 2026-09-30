@@ -24,7 +24,9 @@ Buckets, by ownership:
 ## Phase 0 — player-season feature table (current)
 
 One leakage-safe row per player-season: features as of year **T**, target = next-season
-(**T+1**) fantasy points (re-scored upstream under the owner's superflex scoring).
+(**T+1**) fantasy points (re-scored upstream under the owner's superflex scoring). Only a
+**complete** season can be a target (`fact_player_season.season_complete`): the lake also
+carries the in-progress season, which must not become anyone's "next season" outcome.
 
 ```
 src/

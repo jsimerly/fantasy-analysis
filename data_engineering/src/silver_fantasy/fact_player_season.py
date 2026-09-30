@@ -29,8 +29,14 @@ def rollup_to_season(wk: pl.DataFrame) -> pl.DataFrame:
     """Aggregate the player-week fact to one row per (player_id, season).
 
     Output schema matches the historical ``fact_player_season`` (the machine_learning side
-    reads it unchanged): season fantasy total, volume sums, ppg/efficiency, and bio.
-    ``games`` = weeks with a recorded stat line (bye/inactive weeks have no row).
+    reads it unchanged): season fantasy total, volume sums, ppg/efficiency, and bio, plus
+    ``season_complete``. ``games`` = weeks with a recorded stat line (bye/inactive weeks have
+    no row).
+
+    ``season_complete`` is season-level: True once the final regular-season week has been
+    played (week 18 since 2021, week 17 before). The daily nflverse job writes the in-progress
+    season to bronze too, so a partial season shows up here with a few games; it must never be
+    used as a next-season *target* downstream (the ML feature builder checks this flag).
     """
     season = wk.group_by(["player_id", "season"]).agg(
         pl.col("player_name").first().alias("player_name"),
@@ -76,6 +82,11 @@ def rollup_to_season(wk: pl.DataFrame) -> pl.DataFrame:
         .alias("yds_per_touch"),
         pl.lit(datetime.now()).alias("loaded_at"),
     )
+    final_week = wk.group_by("season").agg(pl.col("week").max().alias("_max_week"))
+    season = season.join(final_week, on="season", how="left").with_columns(
+        (pl.col("_max_week") >= pl.when(pl.col("season") >= 2021).then(18).otherwise(17))
+        .alias("season_complete")
+    ).drop("_max_week")
     return season.sort(["season", "fpts"], descending=[False, True])
 
 

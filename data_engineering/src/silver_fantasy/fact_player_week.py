@@ -135,10 +135,15 @@ def resolve_league_scoring(settings_df: pl.DataFrame, league_id: str | None = No
 
 # ----------------------------------------------------------------------- transforms
 def filter_offense_weeks(weeks: pl.DataFrame) -> pl.DataFrame:
-    """Keep regular-season offense rows (QB/RB/WR/TE) and normalize season/week dtypes."""
-    return weeks.filter(
-        (pl.col("season_type") == "REG") & pl.col("position").is_in(POSITIONS)
-    ).with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
+    """Keep regular-season offense rows (QB/RB/WR/TE), normalize season/week dtypes, and keep
+    ONE row per player-week. Bronze can carry the same week twice (a season folder holding a
+    full-load file and the daily job's file -- the 2025 season was doubled that way, giving
+    players 29 "games"); the reader prefers the newest file, and this is the belt-and-braces."""
+    return (
+        weeks.filter((pl.col("season_type") == "REG") & pl.col("position").is_in(POSITIONS))
+        .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
+        .unique(subset=["player_id", "season", "week"], keep="first", maintain_order=True)
+    )
 
 
 def _canon_team(col: str) -> pl.Expr:
@@ -235,10 +240,29 @@ def _read_gcs(name: str) -> pl.DataFrame:
     return pl.read_parquet(io.BytesIO(storage.Client().bucket(_bucket()).blob(name).download_as_bytes()))
 
 
-def _read_prefix(prefix: str) -> pl.DataFrame:
+def _read_prefix(prefix: str, dedupe_on: list[str] | None = None) -> pl.DataFrame:
+    """Read every parquet under ``prefix``, NEWEST object first, and concat.
+
+    A season folder can hold more than one file: ``full_ingestion`` writes
+    ``season=YYYY/player_stats.parquet`` and the daily job writes ``season=YYYY/data.parquet``
+    for the current season. The 2025 folder held a partial full-load file (2025-11-30) AND the
+    complete daily file, and every 2025 player-week was counted twice. With ``dedupe_on`` the
+    newest file wins for any key more than one file carries (columns absent from the frame are
+    ignored).
+    """
     cl = storage.Client()
-    names = sorted(b.name for b in cl.list_blobs(_bucket(), prefix=prefix) if b.name.endswith(".parquet"))
-    return pl.concat([_read_gcs(n) for n in names], how="diagonal_relaxed")
+    blobs = sorted(
+        (b for b in cl.list_blobs(_bucket(), prefix=prefix) if b.name.endswith(".parquet")),
+        key=lambda b: (b.updated, b.name), reverse=True,
+    )
+    df = pl.concat([_read_gcs(b.name) for b in blobs], how="diagonal_relaxed")
+    keys = [c for c in (dedupe_on or []) if c in df.columns]
+    if keys:
+        before = df.height
+        df = df.unique(subset=keys, keep="first", maintain_order=True)
+        if df.height != before:
+            print(f"  de-duplicated {before - df.height} rows under {prefix} on {keys} (newest file wins)")
+    return df
 
 
 def load_bio() -> pl.DataFrame:
@@ -263,7 +287,9 @@ def main() -> None:
     if cfg["unmodeled_keys"]:
         print("!! unmodeled nonzero scoring keys:", cfg["unmodeled_keys"])
     fact = build_fact_player_week(
-        _read_prefix(PLAYER_STATS_PREFIX), _read_prefix(SCHEDULES_PREFIX), load_bio(),
+        _read_prefix(PLAYER_STATS_PREFIX, dedupe_on=["player_id", "season", "week", "season_type"]),
+        _read_prefix(SCHEDULES_PREFIX, dedupe_on=["game_id"]),
+        load_bio(),
         cfg["scoring"], cfg["league_id"],
     )
     save_df_to_gcs(fact, bucket)

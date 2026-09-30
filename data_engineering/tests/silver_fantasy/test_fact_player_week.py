@@ -110,3 +110,84 @@ class TestBuild:
         assert abs(r1["fpts"] - (10 + 6 + 1.5)) < 1e-9     # 100*.1 + 1*6 + 3*.5
         assert r1["game_date"] == date(2023, 9, 10)
         assert abs(r1["age_at_season"] - 24.0) < 0.05 and r1["is_rookie"] is True
+
+
+class TestDuplicateWeeks:
+    """Bronze can hold two files for one season (full-load + daily job); a player-week must be
+    counted once. Regression for the doubled 2025 season (players with 29 games, 632 fpts)."""
+
+    def _sched_bio(self):
+        sched = pl.DataFrame({
+            "season": [2023, 2023], "game_type": ["REG", "REG"], "week": [1, 2],
+            "gameday": ["2023-09-10", "2023-09-17"], "home_team": ["KC", "KC"], "away_team": ["DET", "JAX"],
+        })
+        bio = pl.DataFrame({"gsis_id": ["p1"], "birth_date": ["1999-09-01"], "draft_round": [1],
+                            "draft_pick": [5], "rookie_season": [2023], "college_name": ["X"]})
+        return sched, bio
+
+    def test_build_counts_each_player_week_once(self):
+        weeks = _weeks([{"week": 1, "rushing_yards": 100}, {"week": 1, "rushing_yards": 100},
+                        {"week": 2, "rushing_yards": 50}])
+        sched, bio = self._sched_bio()
+        out = fpw.build_fact_player_week(weeks, sched, bio, {"rush_yd": 0.1})
+        assert out.height == 2
+        assert abs(out.filter(pl.col("week") == 1)["fpts"][0] - 10.0) < 1e-9
+
+    def test_read_prefix_newest_file_wins(self, monkeypatch):
+        import io
+
+        def _pq(df):
+            buf = io.BytesIO(); df.write_parquet(buf); return buf.getvalue()
+
+        stale = _pq(pl.DataFrame({"player_id": ["p1"], "season": [2025], "week": [1],
+                                  "season_type": ["REG"], "rushing_yards": [50]}))
+        fresh = _pq(pl.DataFrame({"player_id": ["p1", "p1"], "season": [2025, 2025], "week": [1, 2],
+                                  "season_type": ["REG", "REG"], "rushing_yards": [100, 30]}))
+
+        class _Blob:
+            def __init__(self, name, updated, data):
+                self.name, self.updated, self._data = name, updated, data
+            def download_as_bytes(self):
+                return self._data
+
+        blobs = [
+            _Blob("bronze/nflverse/player_stats/season=2025/player_stats.parquet",
+                  datetime(2025, 11, 30), stale),                       # partial full-load file
+            _Blob("bronze/nflverse/player_stats/season=2025/data.parquet",
+                  datetime(2026, 9, 9), fresh),                         # complete daily file
+        ]
+
+        class _Bucket:
+            def blob(self, name):
+                return next(b for b in blobs if b.name == name)
+
+        class _Client:
+            def list_blobs(self, bucket, prefix=None):
+                return [b for b in blobs if b.name.startswith(prefix)]
+            def bucket(self, name):
+                return _Bucket()
+
+        monkeypatch.setattr(fpw.storage, "Client", lambda: _Client())
+        out = fpw._read_prefix("bronze/nflverse/player_stats/",
+                               dedupe_on=["player_id", "season", "week", "season_type"])
+        assert out.height == 2                                          # week 1 once, week 2 once
+        assert out.filter(pl.col("week") == 1)["rushing_yards"][0] == 100   # newest file's row
+
+    def test_read_prefix_ignores_absent_dedupe_columns(self, monkeypatch):
+        import io
+        buf = io.BytesIO(); pl.DataFrame({"a": [1, 1]}).write_parquet(buf)
+
+        class _Blob:
+            name, updated = "x/season=2025/data.parquet", datetime(2026, 1, 1)
+            def download_as_bytes(self):
+                return buf.getvalue()
+
+        class _Client:
+            def list_blobs(self, bucket, prefix=None): return [_Blob()]
+            def bucket(self, name):
+                class _B:
+                    def blob(self, n): return _Blob()
+                return _B()
+
+        monkeypatch.setattr(fpw.storage, "Client", lambda: _Client())
+        assert fpw._read_prefix("x/", dedupe_on=["game_id"]).height == 2

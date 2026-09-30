@@ -48,3 +48,15 @@ def test_missing_lags_are_null_not_dropped():
 def test_keep_all_when_drop_disabled():
     out = features.attach_lags_and_target(_toy(), drop_no_target=False)
     assert out.height == 5
+
+
+def test_incomplete_next_season_is_never_a_target():
+    # 2022 is in progress (season_complete=False): rows that would target it get no target and
+    # are dropped; A2020 (targets the complete 2021) survives.
+    df = _toy().with_columns(pl.Series("season_complete", [True, True, False, True, False]))
+    out = features.attach_lags_and_target(df)
+    assert out.select("player_id", "season").rows() == [("A", 2020)]
+
+
+def test_frames_without_the_flag_still_work():
+    assert features.attach_lags_and_target(_toy()).height == 3
