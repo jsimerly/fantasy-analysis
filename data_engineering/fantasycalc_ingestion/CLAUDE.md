@@ -6,7 +6,12 @@ into `bronze/fantasycalc/values/daily/load_date=*/data.parquet`.
 
 ## What it fetches
 All league-setting combinations (dynasty): `numQbs` ∈ {1,2} × `numTeams` ∈ {8,10,12,14} × `ppr` ∈
-{0,.5,1} — each row tagged with `n_qb`/`n_teams`/`ppr`. `flatten_player_data` flattens the nested
+{0,.5,1} (`SETTINGS_COMBINATIONS`, fetch order) — each row tagged with `n_qb`/`n_teams`/`ppr`.
+**Rows written before 2026-10 carry no tags** (the flatten dropped them), so the 24 rows per
+player-day in those files are indistinguishable; on 81 of those 353 days some combinations
+failed to fetch, so a row's combination cannot be reconstructed from its position either.
+Silver staging selects one combination for tagged rows and keeps legacy rows as-is (see
+[../silver_fantasy/_staging/CLAUDE.md](../silver_fantasy/_staging/CLAUDE.md)). `flatten_player_data` flattens the nested
 `player` object (rich ids: `sleeper_id`, `espn_id`, `mfl_id`, `fleaflicker_id` + bio) plus value metrics
 (`value`, `redraft_value`, `combined_value`, `overall_rank`, `tier`, `adp`, `trade_frequency`, moving
 std-dev). Feeds silver staging ([../silver_fantasy/_staging/](../silver_fantasy/_staging/)).
