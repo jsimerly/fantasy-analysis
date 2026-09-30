@@ -71,6 +71,9 @@ jobs:
             ["ktc-incremental-devy"]="ktc_ingestion.devy.incremental_devy:512Mi:1:30m"
             ["ktc-full-redraft"]="ktc_ingestion.redraft.full_redraft:512Mi:1:30m"
             ["ktc-incremental-redraft"]="ktc_ingestion.redraft.incremental_redraft:512Mi:1:30m"
+            # manual: rebuild missing daily_load partitions from per-player history pages
+            # (~1000 pages at the polite 2-6s spacing -> hours, not minutes)
+            ["ktc-backfill-daily"]="ktc_ingestion.backfill_daily_from_history:512Mi:1:3h"
             # --- fantasycalc (1Gi, 45m) ---
             ["fantasycalc-daily"]="fantasycalc_ingestion.daily_ingestion:1Gi:1:45m"
             # --- nflverse (1Gi) ---
