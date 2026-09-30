@@ -9,7 +9,16 @@ import random
 from dotenv import load_dotenv
 
 load_dotenv()
-    
+
+# The league-setting combinations fetched each day, in fetch order. Every row is tagged with
+# its combination (n_qb / n_teams / ppr) so silver can pick ONE setting per value series --
+# without the tags the 24 rows per player-day are indistinguishable (they were, until 2026-09:
+# fetch_all_combinations tagged the items but flatten_player_data dropped the tags).
+N_QB_VALUES = ['1', '2']
+N_TEAM_VALUES = ['8', '10', '12', '14']
+PPR_VALUES = ['0', '.5', '1']
+SETTINGS_COMBINATIONS = list(product(N_QB_VALUES, N_TEAM_VALUES, PPR_VALUES))
+
 def flatten_player_data(player_data: list[dict]) -> pl.DataFrame:
     flattened_data = []
 
@@ -50,18 +59,27 @@ def flatten_player_data(player_data: list[dict]) -> pl.DataFrame:
             'moving_std_dev': item.get('maybeMovingStandardDeviation'),
             'moving_std_dev_perc': item.get('maybeMovingStandardDeviationPerc'),
             'moving_std_dev_adjusted': item.get('maybeMovingStandardDeviationAdjusted'),
+
+            # League settings this row was fetched under (tagged in fetch_all_combinations)
+            'n_qb': item.get('n_qb'),
+            'n_teams': item.get('n_teams'),
+            'ppr': item.get('ppr'),
         }
 
         flattened_data.append(flattened_record)
 
-    return pl.DataFrame(flattened_data)
+    df = pl.DataFrame(flattened_data)
+    if df.is_empty():
+        return df
+    # pin the tag dtypes so every partition agrees (a None-only column would be Null dtype)
+    return df.with_columns(
+        pl.col('n_qb').cast(pl.Int64),
+        pl.col('n_teams').cast(pl.Int64),
+        pl.col('ppr').cast(pl.Float64),
+    )
 
 def fetch_all_combinations() -> pl.DataFrame:
-    n_qb_values = ['1', '2']
-    n_team_values = ['8', '10', '12', '14']
-    ppr_values = ['0', '.5', '1']
-
-    combinations = list(product(n_qb_values, n_team_values, ppr_values))
+    combinations = SETTINGS_COMBINATIONS
     total_combinations = len(combinations)
     
     all_data = []

@@ -13,6 +13,7 @@ mod = load_de_module(
 melt_ktc_values = mod.melt_ktc_values
 standardize_simple = mod.standardize_simple
 clip_future_dates = mod.clip_future_dates
+select_fc_settings = mod.select_fc_settings
 
 
 class TestMeltKtcValues:
@@ -102,3 +103,28 @@ class TestClipFutureDates:
         }).lazy()
         out = clip_future_dates(lf, today=date(2026, 9, 30)).collect()
         assert out["value"].to_list() == [1]      # the KTC local_load archive's dirty future rows
+
+
+class TestSelectFcSettings:
+    def _lf(self):
+        return pl.DataFrame({
+            "source_id": ["1", "1", "1", "2"],
+            "n_qb":    [2,    1,    2,    None],
+            "n_teams": [12,   12,   14,   None],
+            "ppr":     [1.0,  1.0,  1.0,  None],
+            "value":   [100,  90,   80,   70],
+        }).with_columns(
+            pl.col("n_qb").cast(pl.Int64), pl.col("n_teams").cast(pl.Int64), pl.col("ppr").cast(pl.Float64)
+        ).lazy()
+
+    def test_keeps_only_the_requested_combination_for_tagged_rows(self):
+        out = select_fc_settings(self._lf(), n_qb=2, n_teams=12, ppr=1.0).collect()
+        assert out.filter(pl.col("source_id") == "1")["value"].to_list() == [100]
+
+    def test_untagged_legacy_rows_are_kept(self):
+        out = select_fc_settings(self._lf(), n_qb=2, n_teams=12, ppr=1.0).collect()
+        assert out.filter(pl.col("source_id") == "2")["value"].to_list() == [70]
+
+    def test_dynasty_and_redraft_defaults_differ_only_in_qb_count(self):
+        assert mod.FC_DYNASTY_SETTINGS == {"n_qb": 2, "n_teams": 12, "ppr": 1.0}
+        assert mod.FC_REDRAFT_SETTINGS == {"n_qb": 1, "n_teams": 12, "ppr": 1.0}

@@ -12,6 +12,19 @@ BUCKET_ROOT = f"gs://{BUCKET_NAME}"
 MAIN_STAGING_PATH = f"{BUCKET_ROOT}/silver/fantasy/_staging/asset_values_long"
 DEVY_STAGING_PATH = f"{BUCKET_ROOT}/silver/fantasy/_staging/devy_values.parquet"
 
+# FantasyCalc publishes a separate value set per league-setting combination (1QB/2QB x 8-14
+# teams x 0/.5/1 PPR), all in one daily bronze file. Pick ONE combination per series here --
+# otherwise the dedupe below keeps an arbitrary one. 12 teams / full PPR is the closest match
+# to the tracked leagues; superflex ~ 2QB for the dynasty series, 1QB for the redraft series.
+FC_DYNASTY_SETTINGS = {"n_qb": 2, "n_teams": 12, "ppr": 1.0}
+FC_REDRAFT_SETTINGS = {"n_qb": 1, "n_teams": 12, "ppr": 1.0}
+# The bronze columns staging needs. Files written before the tags existed lack the last three,
+# so the scan reconciles schemas (missing -> null, extra -> ignored) instead of erroring.
+FC_SCHEMA = {
+    "id": pl.Int64, "name": pl.String, "value": pl.Int64, "redraft_value": pl.Int64,
+    "n_qb": pl.Int64, "n_teams": pl.Int64, "ppr": pl.Float64,
+}
+
 def melt_ktc_values(lf: pl.LazyFrame , market_type):
     return (
         lf
@@ -61,6 +74,18 @@ def standardize_simple(lf: pl.LazyFrame , source, market, qb_fmt, te_prem, val_c
         ])
     )
 
+def select_fc_settings(lf: pl.LazyFrame, n_qb: int, n_teams: int, ppr: float) -> pl.LazyFrame:
+    """Keep the FantasyCalc rows fetched under one league-setting combination.
+
+    Untagged (legacy) rows are kept as-is: bronze before 2026-10 has no settings columns, and
+    on 81 of those 353 days some combinations failed to fetch, so a row's combination cannot
+    be reconstructed from its position. For those rows the downstream dedupe keeps the last
+    one fetched (2QB / 14 teams / 1 PPR when all 24 succeeded), exactly as before.
+    """
+    tagged = pl.col("n_qb").is_not_null()
+    wanted = (pl.col("n_qb") == n_qb) & (pl.col("n_teams") == n_teams) & (pl.col("ppr") == ppr)
+    return lf.filter(~tagged | wanted)
+
 def clip_future_dates(lf: pl.LazyFrame, today: date | None = None) -> pl.LazyFrame:
     """Drop rows valued after today. The KTC local_load archive carries erroneous future-dated
     rows (into 2027) and nothing here can legitimately be valued in the future; fact_pick_values
@@ -108,11 +133,15 @@ def main():
 
     # FantasyCalc (the helper casts its string dates -> Date)
     fc_base = (
-        pl.scan_parquet(f"{BUCKET_ROOT}/bronze/fantasycalc/values/daily/load_date=*/data.parquet")
+        pl.scan_parquet(f"{BUCKET_ROOT}/bronze/fantasycalc/values/daily/load_date=*/data.parquet",
+                        hive_partitioning=True, schema=FC_SCHEMA,
+                        extra_columns="ignore", missing_columns="insert")
         .rename({"load_date": "valuation_date", "id": "source_id", "name": "asset_name"})
     )
-    lf_fc_dyn = standardize_simple(fc_base, "FANTASYCALC", "DYNASTY", "SF", "Standard", "value")
-    lf_fc_red = standardize_simple(fc_base, "FANTASYCALC", "REDRAFT", "1QB", "Standard", "redraft_value")
+    fc_dyn = select_fc_settings(fc_base, **FC_DYNASTY_SETTINGS)
+    fc_red = select_fc_settings(fc_base, **FC_REDRAFT_SETTINGS)
+    lf_fc_dyn = standardize_simple(fc_dyn, "FANTASYCALC", "DYNASTY", "SF", "Standard", "value")
+    lf_fc_red = standardize_simple(fc_red, "FANTASYCALC", "REDRAFT", "1QB", "Standard", "redraft_value")
 
     print("Stacking Main Fantasy Data...")
     main_lf = pl.concat([
