@@ -50,3 +50,31 @@ class TestFlattenPlayerData:
         assert row["id"] == 2
         assert row["sleeper_id"] is None
         assert row["adp"] is None
+
+
+class TestSettingsTags:
+    """Each daily file holds all 24 league-setting combinations; the tags fetch_all_combinations
+    puts on every item must survive flattening (they were dropped until 2026-09, which left the
+    24 rows per player-day indistinguishable for silver)."""
+
+    def test_tags_flattened_with_pinned_dtypes(self):
+        item = _item()
+        item.update({"n_qb": 2, "n_teams": 12, "ppr": 1.0})
+        df = flatten_player_data([item])
+        row = df.to_dicts()[0]
+        assert (row["n_qb"], row["n_teams"], row["ppr"]) == (2, 12, 1.0)
+        assert df.schema["n_qb"] == pl.Int64
+        assert df.schema["n_teams"] == pl.Int64
+        assert df.schema["ppr"] == pl.Float64
+
+    def test_untagged_items_keep_the_columns_as_typed_nulls(self):
+        df = flatten_player_data([_item()])
+        assert df["n_qb"].to_list() == [None]
+        assert df.schema["n_qb"] == pl.Int64      # never a Null-dtype column
+        assert df.schema["ppr"] == pl.Float64
+
+    def test_combinations_are_the_documented_grid_in_fetch_order(self):
+        combos = flatten_player_data.__globals__["SETTINGS_COMBINATIONS"]
+        assert len(combos) == 24
+        assert combos[0] == ("1", "8", "0")
+        assert combos[-1] == ("2", "14", "1")

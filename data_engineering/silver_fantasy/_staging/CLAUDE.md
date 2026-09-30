@@ -30,10 +30,12 @@ the per-source cast blocks, not decoration.
   collected in memory; at 4Gi the job was OOM-killed most days in 2026-09 (Cloud Run reports it as
   "configured memory limit was reached", exit code 0), so it runs at **8Gi** (deploy yaml). A streaming
   sink is the real follow-up.
-- **FantasyCalc rows are not unique per player-day.** The FC ingestion fetches 24 league-setting
-  combinations (1QB/2QB × 8–14 teams × 0/.5/1 PPR) but drops the setting labels before writing, so
-  the `unique(keep="last")` here keeps an arbitrary-but-consistent combination (the last one fetched:
-  2QB / 14 teams / 1 PPR) for *both* the SF-dynasty and 1QB-redraft rows. Fix pending: label the
-  settings in bronze and select one combination here.
+- **FantasyCalc rows are not unique per player-day.** Each FC daily file holds 24 league-setting
+  combinations (1QB/2QB × 8–14 teams × 0/.5/1 PPR). `select_fc_settings` keeps one per series
+  (`FC_DYNASTY_SETTINGS` = 2QB/12/1 PPR for the SF-dynasty rows, `FC_REDRAFT_SETTINGS` = 1QB/12/1 PPR
+  for the redraft rows) — change the constants if the leagues' settings change. Rows written before
+  2026-10 carry no tags and are kept as-is, so for them the `unique(keep="last")` still keeps the
+  last combination fetched (2QB / 14 teams / 1 PPR when all 24 succeeded) for *both* series; the FC
+  scan reconciles the two file schemas (`FC_SCHEMA` + `missing_columns="insert"`).
 - This is a `main()`-guarded job (added so it's deployable). See [../CLAUDE.md](../CLAUDE.md) for the
   pick-value precedence (`daily > full_load > local_load`) and the ownership-independent fact design.
