@@ -11,6 +11,7 @@ here, not in three near-identical child docs). Shared scrape/parse helpers live 
 | `incremental_<market>.py` | `ktc-incremental-<market>` (daily) | current snapshot: the page's `playersArray` flattened (all value formats) → `<market>/daily_load/load_date=*` |
 | `full_<market>.py` | `ktc-full-<market>` (manual backfill) | per-player pages → the value **time series** (`ranking_date`,`sf_value`,`one_qb_value`,ranks) → `<market>/full_load/` (one parquet per player) |
 | `dynasty/local_archive_to_cloud.py` | — (one-time) | imports an old local archive → `dynasty/local_load` |
+| `backfill_daily_from_history.py` | `ktc-backfill-daily` (manual) | rebuilds **missing** `<market>/daily_load` partitions (all three markets) from the per-player history pages — see gotchas |
 | `utils.py` | — | `fetch_soup` (rate-limited), `playersArray`/per-player parsers, `flatten_player_data`, `transform_player_data`, `set_dtypes` |
 
 ## Value formats (the columns)
@@ -20,6 +21,14 @@ market signals (adp, trade counts, liquidity). The silver staging
 ([../silver_fantasy/_staging/](../silver_fantasy/_staging/)) melts these into the long value schema.
 
 ## Data quirks / gotchas
+- **Gaps in `daily_load` are self-healable.** When the incrementals are down (2026-09-08 → 2026-09-30),
+  run `ktc-backfill-daily` (or `python backfill_daily_from_history.py` locally): it lists the missing
+  days per market up to yesterday, walks every player/pick on the rankings page, and writes each
+  missing partition with the **exact snapshot schema** (from the newest real partition) so the hive
+  scans stay uniform. Only 1QB/SF `value`, `rank`, `positionalRank` (+ identity) are recoverable —
+  TE-premium values, trends, liquidity, adp, kept/traded/cut and `isTrending` are null in rebuilt
+  days, and players not on the rankings page at run time are absent. Each rebuilt partition carries a
+  `_RECONSTRUCTED.json` sidecar; existing partitions are never overwritten (idempotent re-runs).
 - **Page layout changed 2026-09-08.** The rankings pages no longer inline `var playersArray = [...]`;
   the data ships as a JSON element (`<script type="application/json" id="ktc-players">`) that the
   page's JS `JSON.parse`s, and per-player pages likewise moved the value history into `id="pd-oneqb"`

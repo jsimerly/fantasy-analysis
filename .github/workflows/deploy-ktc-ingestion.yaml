@@ -58,10 +58,18 @@ jobs:
             ["ktc-incremental-devy"]="devy/incremental_devy.py"
             ["ktc-full-redraft"]="redraft/full_redraft.py"
             ["ktc-incremental-redraft"]="redraft/incremental_redraft.py"
+            # manual: rebuild missing daily_load partitions from per-player history pages
+            ["ktc-backfill-daily"]="backfill_daily_from_history.py"
+          )
+          # Per-job task timeout (default 30m). The backfill walks every player page of every
+          # market (~1000 pages at the polite 2-6s spacing), so it needs a few hours.
+          declare -A timeout=(
+            ["ktc-backfill-daily"]="3h"
           )
 
           for job_name in "${!jobs[@]}"; do
             script_path="${jobs[$job_name]}"
+            job_timeout="${timeout[$job_name]:-30m}"
             
             echo "Deploying ${job_name} with script ${script_path}..."
             
@@ -71,7 +79,7 @@ jobs:
               --memory=512Mi \
               --cpu=1 \
               --max-retries=1 \
-              --task-timeout=30m \
+              --task-timeout=${job_timeout} \
               --command=python \
               --args=${script_path} \
               --set-env-vars=GCS_BUCKET_NAME=nfl-data-bronze \
