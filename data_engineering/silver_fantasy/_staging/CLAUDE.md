@@ -24,6 +24,16 @@ the per-source cast blocks, not decoration.
 - **Output is a tidy "long" frame**: one row per `(valuation_date, source_id, asset_name, qb_format,
   te_premium, market_type, source_system, asset_type)` → `value`. `fact_asset_values` pivots it.
 - The KTC historic/local naming differs ("Season Tier Round" vs reversed "Tier Season Round") and
-  `local_load` carries dirty future dates — handled in the parse, but watch it if you add a source.
+  `local_load` carries dirty future dates (into 2027) — `clip_future_dates` drops anything after today
+  from the union; watch it if you add a source.
+- **Memory.** The union is ~10M long rows (FantasyCalc alone is ~3.8M and grows ~11k/day) and is
+  collected in memory; at 4Gi the job was OOM-killed most days in 2026-09 (Cloud Run reports it as
+  "configured memory limit was reached", exit code 0), so it runs at **8Gi** (deploy yaml). A streaming
+  sink is the real follow-up.
+- **FantasyCalc rows are not unique per player-day.** The FC ingestion fetches 24 league-setting
+  combinations (1QB/2QB × 8–14 teams × 0/.5/1 PPR) but drops the setting labels before writing, so
+  the `unique(keep="last")` here keeps an arbitrary-but-consistent combination (the last one fetched:
+  2QB / 14 teams / 1 PPR) for *both* the SF-dynasty and 1QB-redraft rows. Fix pending: label the
+  settings in bronze and select one combination here.
 - This is a `main()`-guarded job (added so it's deployable). See [../CLAUDE.md](../CLAUDE.md) for the
   pick-value precedence (`daily > full_load > local_load`) and the ownership-independent fact design.

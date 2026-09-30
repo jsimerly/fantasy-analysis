@@ -10,6 +10,31 @@ env_path = sys.path.insert(0, str(Path(__file__).parent.parent))
 from _utils import get_fantasy_leagues
 from api.league import get_league, get_rosters, get_user_leagues_for_year, get_sport_state
 
+# Pinned dtypes for the per-league `leagues` frame. Sleeper nulls/omits several of these
+# depending on season phase (`bracket_id` is null until the playoff bracket exists,
+# `last_scored_leg` is absent until the first game is scored, `previous_league_id` is null
+# for a lineage root, ...). A column that is None for every row of a one-league frame comes
+# out of pl.DataFrame as the Null dtype, and the vertical concat across leagues in main() then
+# fails ("type Int64 is incompatible with expected type Null") whenever the first league in the
+# batch carries the null and a later one a real value -- an order that depends on the
+# non-deterministic row order of dim_leagues_meta, hence the every-other-day flakiness of
+# sleeper-incremental-league in 2026-09. Pin every column instead of one at a time
+# (leg/last_scored_leg were pinned in PR #18; bracket_id was the next to bite). Dtypes match
+# the full_load bronze so silver's diagonal merge stays uniform.
+LEAGUES_SCHEMA = {
+    'league_id': pl.Utf8,
+    'league_name': pl.Utf8,
+    'season': pl.Utf8,
+    'status': pl.Utf8,
+    'season_type': pl.Utf8,
+    'total_rosters': pl.Int64,
+    'draft_id': pl.Utf8,
+    'bracket_id': pl.Int64,
+    'leg': pl.Int64,
+    'last_scored_leg': pl.Int64,
+    'previous_league_id': pl.Utf8,
+}
+
 def flatten_league_to_parquets(league: dict):
     leagues_records = []
     settings_records = []
@@ -69,9 +94,9 @@ def flatten_league_to_parquets(league: dict):
     }
     rosters_records.append(roster_record)
     
-    # pin leg cols to nullable Int64 so unscored + scored leagues still vstack (see ./CLAUDE.md)
+    # Pin every column (see LEAGUES_SCHEMA): a None-only column must not come out as Null dtype.
     leagues_df = pl.DataFrame(leagues_records).with_columns(
-        pl.col("leg").cast(pl.Int64), pl.col("last_scored_leg").cast(pl.Int64)
+        [pl.col(col).cast(dtype) for col, dtype in LEAGUES_SCHEMA.items()]
     )
     settings_df = pl.DataFrame(settings_records)
     scoring_df = pl.DataFrame(scoring_records)
@@ -202,7 +227,8 @@ def main():
         all_roster_slots.append(rosters_df)
         print(f"✅ Processed (new) {league_data['league_id']} season {league_data.get('season')}")
 
-    combined_leagues = pl.concat(all_leagues)
+    # relaxed: widen compatible dtypes (Null -> Int64 etc.) rather than fail the daily run
+    combined_leagues = pl.concat(all_leagues, how='vertical_relaxed')
     combined_settings = pl.concat(all_settings, how='align')
     combined_scoring = pl.concat(all_scoring, how='align')
     combined_roster_slots = pl.concat(all_roster_slots, how='align')

@@ -8,17 +8,43 @@ from datetime import datetime, timezone
 import polars as pl
 from bs4 import BeautifulSoup, Tag
 
+# KTC page layout (since ~2026-09-08): the data the old inline `var playersArray = [...]`
+# carried now ships as a JSON blob in <script type="application/json" id="ktc-players">, which
+# the page's own JS reads with JSON.parse(document.getElementById('ktc-players').textContent).
+# Per-player pages did the same for the value history: id="pd-oneqb" / id="pd-superflex".
+# The parsers read those elements first and keep the legacy inline-regex layout as a fallback,
+# so a KTC rollback doesn't break the daily jobs again.
+RANKINGS_JSON_ELEMENT_ID = 'ktc-players'
+PLAYER_ONEQB_JSON_ELEMENT_ID = 'pd-oneqb'
+PLAYER_SF_JSON_ELEMENT_ID = 'pd-superflex'
+
+
 def fetch_soup(url: str) -> BeautifulSoup:
     time.sleep(random.uniform(2,6))
-    resp = requests.get(url)
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()   # a 4xx/5xx page would otherwise surface as a confusing parse error
     return BeautifulSoup(resp.text, 'html.parser')
 
-def get_dynasty_playersArray(url: str = None) -> list[dict]:
-    url = 'https://keeptradecut.com/dynasty-rankings' if not url else url
 
-    soup = fetch_soup(url)
+def _json_from_element(soup: BeautifulSoup, element_id: str):
+    """Parse the JSON body of the element with ``id=element_id``; None when it isn't there."""
+    element = soup.find(id=element_id)
+    if element is None:
+        return None
+    content = element.string if element.string else element.get_text()
+    if not content or not content.strip():
+        return None
+    return json.loads(content)
+
+
+def parse_rankings_players(soup: BeautifulSoup) -> list[dict]:
+    """The rankings page's player array (dynasty / redraft / devy pages share the layout)."""
+    players = _json_from_element(soup, RANKINGS_JSON_ELEMENT_ID)
+    if players is not None:
+        return players
+
+    # Legacy layout (pre 2026-09): `var playersArray = [...];` inline in a <script>.
     scripts = soup.find_all('script')
-
     players_array_str = find_content_in_tags(scripts, 'playersArray')
 
     if not players_array_str:
@@ -30,14 +56,20 @@ def get_dynasty_playersArray(url: str = None) -> list[dict]:
         return json.loads(json_str)
     else:
         raise ValueError("Could not extract playersArray data from script content")
-    
+
+
+def get_dynasty_playersArray(url: str = None) -> list[dict]:
+    url = 'https://keeptradecut.com/dynasty-rankings' if not url else url
+    return parse_rankings_players(fetch_soup(url))
+
+
 def find_content_in_tags(tags: list[Tag], search_str: str) -> str | None:
     for tag in tags:
         content = tag.string if tag.string else tag.get_text()
         if content and search_str in content:
             return content
-        
-    
+
+
 def get_dynasty_urls() -> list[str]:
     ''' This returns a list of all of the top 500 players urls for ktc'''
     playersArray = get_dynasty_playersArray()
@@ -49,34 +81,42 @@ def get_dynasty_urls() -> list[str]:
     return urls
 
 
+def _parse_player_page_values(soup: BeautifulSoup, element_id: str, var_name: str,
+                              legacy_pattern: str) -> dict:
+    """One of the two value-history blobs on a per-player page (1QB or Superflex)."""
+    data = _json_from_element(soup, element_id)
+    if data is not None:
+        return data
+
+    # Legacy layout: `var playerOneQB = {...};` inline in a <script>.
+    scripts = soup.find_all('script')
+    player_array_str = find_content_in_tags(scripts, f'var {var_name}')
+
+    if not player_array_str:
+        raise ValueError('player not found in any script tag')
+
+    match = re.search(legacy_pattern, player_array_str, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+        return json.loads(json_str)
+    else:
+        raise ValueError("Could not extract player data from script content: No match returned")
+
+
 def parse_historic_1QBplayer_data(soup: BeautifulSoup) -> dict:
-    scripts = soup.find_all('script')
-    player_array_str = find_content_in_tags(scripts, 'var playerOneQB')
+    return _parse_player_page_values(
+        soup, PLAYER_ONEQB_JSON_ELEMENT_ID, 'playerOneQB',
+        r'var playerOneQB = (\{.*?\});\s+var leagueType',
+    )
 
-    if not player_array_str:
-        raise ValueError('player not found in any script tag')
-    
-    match = re.search(r'var playerOneQB = (\{.*?\});\s+var leagueType', player_array_str, re.DOTALL)
-    if match:
-        json_str = match.group(1)
-        return json.loads(json_str)
-    else:
-        raise ValueError("Could not extract player data from script content: No match returned")
-    
+
 def parse_historic_SFplayer_data(soup: BeautifulSoup) -> dict:
-    scripts = soup.find_all('script')
-    player_array_str = find_content_in_tags(scripts, 'var playerSuperflex')
+    return _parse_player_page_values(
+        soup, PLAYER_SF_JSON_ELEMENT_ID, 'playerSuperflex',
+        r'var playerSuperflex = (\{.*?\});\s+var playerOneQB',
+    )
 
-    if not player_array_str:
-        raise ValueError('player not found in any script tag')
-    
-    match = re.search(r'var playerSuperflex = (\{.*?\});\s+var playerOneQB', player_array_str, re.DOTALL)
-    if match:
-        json_str = match.group(1)
-        return json.loads(json_str)
-    else:
-        raise ValueError("Could not extract player data from script content: No match returned")
-    
+
 def transform_player_data(data: dict, scrape_date: str) -> pl.DataFrame:
     player_id = data.get('player_id')
     player_name = data.get("player_name")

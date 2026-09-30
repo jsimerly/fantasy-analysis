@@ -20,6 +20,15 @@ market signals (adp, trade counts, liquidity). The silver staging
 ([../silver_fantasy/_staging/](../silver_fantasy/_staging/)) melts these into the long value schema.
 
 ## Data quirks / gotchas
+- **Page layout changed 2026-09-08.** The rankings pages no longer inline `var playersArray = [...]`;
+  the data ships as a JSON element (`<script type="application/json" id="ktc-players">`) that the
+  page's JS `JSON.parse`s, and per-player pages likewise moved the value history into `id="pd-oneqb"`
+  / `id="pd-superflex"`. `utils.parse_rankings_players` / `parse_historic_*` read those elements first
+  and fall back to the legacy inline regex. The three `ktc-incremental-*` jobs failed every day from
+  2026-09-08 until this landed, so `daily_load` has a gap from 2026-09-08: backfill the **dynasty**
+  market by running `ktc-full-dynasty` (the per-player history covers the gap; staging unions
+  `full_load`). The redraft/devy daily gaps are not recoverable from staging's inputs (it only
+  reads `dynasty/full_load` as history).
 - **`full_load` is the good historical source** — continuous per-player series 2020→2025-10-01.
   `local_load` is an older archive whose **player** values end ~2024-08-02 (a 14-month gap), kept only
   as a coverage fallback for players `full_load` lacks. `daily_load` carries 2025-10-01→present.

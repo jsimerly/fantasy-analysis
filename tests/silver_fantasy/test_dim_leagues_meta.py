@@ -16,6 +16,11 @@ def seeded(monkeypatch, fake_gcs):
         return f"path::{entity_path}"
     monkeypatch.setattr(mod, "get_latest_bronze_path", fake_path)
 
+    def fake_latest(bucket, entity_path, join_key="league_id", source="sleeper", columns=None, **kw):
+        df = fake_gcs[f"path::{entity_path}"]
+        return df.select([c for c in columns if c in df.columns]) if columns else df
+    monkeypatch.setattr(mod, "read_latest_incremental_by_key", fake_latest)
+
     leagues = pl.DataFrame({
         "league_id": ["L1", "L2"],
         "league_lineage_id": ["L1", "ROOT"],
@@ -64,3 +69,28 @@ class TestDimLeaguesMeta:
         df = transform_dim_leagues_meta()
         assert set(["source_system", "loaded_at"]).issubset(df.columns)
         assert df["source_system"].unique().to_list() == ["sleeper"]
+
+
+class TestStatusFromLatestObservation:
+    def test_incremental_overlay_beats_stale_full_load(self, seeded):
+        # full_load still says L1 in_season (a 2025 snapshot); the incremental overlay --
+        # the latest observation across all partitions -- says complete. The dim must not
+        # fall back to the snapshot (that fallback was the 2026-09 status oscillation).
+        seeded["path::league/leagues/incremental"] = seeded["path::league/leagues/incremental"].with_columns(
+            pl.when(pl.col("league_id") == "L1").then(pl.lit("complete"))
+              .otherwise(pl.col("status")).alias("status")
+        )
+        df = transform_dim_leagues_meta()
+        by_id = {r["league_id"]: r for r in df.to_dicts()}
+        assert by_id["L1"]["status"] == "complete"
+        assert by_id["L1"]["is_active"] is False
+
+    def test_reads_all_partitions_not_newest_file(self, seeded, monkeypatch):
+        calls = []
+        real = mod.read_latest_incremental_by_key
+        def spy(bucket, entity_path, **kw):
+            calls.append(entity_path)
+            return real(bucket, entity_path, **kw)
+        monkeypatch.setattr(mod, "read_latest_incremental_by_key", spy)
+        transform_dim_leagues_meta()
+        assert calls == ["league/leagues/incremental", "league/settings/incremental"]

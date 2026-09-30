@@ -1,4 +1,6 @@
 import os
+from datetime import date, datetime, timezone
+
 import polars as pl
 from dotenv import load_dotenv
 
@@ -59,6 +61,13 @@ def standardize_simple(lf: pl.LazyFrame , source, market, qb_fmt, te_prem, val_c
         ])
     )
 
+def clip_future_dates(lf: pl.LazyFrame, today: date | None = None) -> pl.LazyFrame:
+    """Drop rows valued after today. The KTC local_load archive carries erroneous future-dated
+    rows (into 2027) and nothing here can legitimately be valued in the future; fact_pick_values
+    clips these itself but the staging frame leaked them to every other consumer."""
+    today = today or datetime.now(timezone.utc).date()
+    return lf.filter(pl.col("valuation_date") <= pl.lit(today))
+
 def main():
     # KTC daily (dynasty + redraft) — cast inside the helper since hive may not infer Date
     ktc_dyn_daily = pl.scan_parquet(f"{BUCKET_ROOT}/bronze/ktc/dynasty/daily_load/load_date=*/player_data.parquet", hive_partitioning=True).rename({"load_date": "valuation_date"})
@@ -118,6 +127,7 @@ def main():
         subset=["valuation_date", "source_id", "market_type", "qb_format", "te_premium", "source_system"],
         keep="last"
     )
+    main_lf = clip_future_dates(main_lf)
 
     print(f"Collecting and Writing Main Data to {MAIN_STAGING_PATH}...")
     # Use collect() + write_parquet to support partition_by safely

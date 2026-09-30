@@ -66,12 +66,14 @@ jobs:
           )
 
           # Per-job memory/cpu overrides (default 1Gi/1). staging-asset-alignment
-          # rescans + melts all historical valuations and collect()s them in
-          # memory, so it needs more headroom; the fact jobs are also heavier than
-          # the dims. NOTE: the staging job's full-history collect grows over time
-          # -- a streaming sink_parquet / incremental rebuild is a follow-up.
+          # rescans + melts all historical valuations (~10M long rows, growing
+          # ~11k/day from FantasyCalc) and collect()s them in memory: at 4Gi it was
+          # OOM-killed ("configured memory limit was reached", signal 9) most days
+          # in 2026-09, so it runs at 8Gi. The fact jobs are also heavier than the
+          # dims. NOTE: the full-history collect keeps growing -- a streaming
+          # sink_parquet / incremental rebuild is the real follow-up.
           declare -A mem=(
-            ["silver-staging-asset-alignment"]="4Gi"
+            ["silver-staging-asset-alignment"]="8Gi"
             ["silver-fact-asset-values"]="2Gi"
             ["silver-fact-roster-membership"]="2Gi"
             ["silver-fact-pick-values"]="2Gi"
