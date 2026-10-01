@@ -37,8 +37,11 @@ TD_COLS = ["week", "td_games", "td_fpts", "td_ppg", "td_targets_pg", "td_touches
            "td_target_share", "td_wopr", "last3_ppg", "td_missed", "td_form"]
 BIO_COLS = ["age_at_season", "exp_at_season", "draft_round", "draft_pick"]
 FLAG_COLS = ["is_undrafted", "is_rookie"]
+# depth-chart standing entering the snapshot week (fact_depth_chart_week): rank within position on his
+# team (1 = starter), its change since three weeks earlier (+ = moved up), starter flag; null = not listed
+DEPTH_COLS = ["td_depth_rank", "td_depth_change", "td_is_starter"]
 POSITIONS = ["QB", "RB", "WR", "TE"]
-FEATURES = TD_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS + FLAG_COLS + [f"pos_{p}" for p in POSITIONS]
+FEATURES = TD_COLS + DEPTH_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS + FLAG_COLS + [f"pos_{p}" for p in POSITIONS]
 
 DEFAULT_PARAMS = {**career.DEFAULT_PARAMS}
 
@@ -72,6 +75,19 @@ def to_date_features(wk: pl.DataFrame, week: int) -> pl.DataFrame:
     ).drop("_tg", "_ra", "_rc", "_pa")
 
 
+def depth_features(depth: pl.DataFrame, week: int) -> pl.DataFrame:
+    """Per (player, season): the latest depth-chart listing at week <= ``week`` (regular season),
+    the rank three weeks earlier for the change, and the starter flag. Players without a listing
+    get no row (null features), which the trees read as 'not on a chart'."""
+    d = depth.filter((pl.col("week") <= week) & ((pl.col("game_type") == "REG") if "game_type" in depth.columns else True))
+    d = d.select(pl.col("gsis_id").alias("player_id"), "season", "week", "depth_rank", "is_starter").sort("week")
+    now = d.group_by("player_id", "season").agg(pl.col("depth_rank").last().alias("td_depth_rank"),
+                                                pl.col("is_starter").last().cast(pl.Int8).alias("td_is_starter"))
+    prev = d.filter(pl.col("week") <= max(week - 3, 1)).group_by("player_id", "season").agg(pl.col("depth_rank").last().alias("_prev"))
+    return (now.join(prev, on=["player_id", "season"], how="left")
+            .with_columns((pl.col("_prev") - pl.col("td_depth_rank")).alias("td_depth_change")).drop("_prev"))
+
+
 def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
     """Season-level rows re-keyed to the NEXT season so they join a snapshot as 'prior season'."""
     cols = [c for c in PREV_COLS if c in season_df.columns]
@@ -81,9 +97,11 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS) -> pl.DataFrame:
+def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
+                    depth: pl.DataFrame | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
-    features + ROS / next-season targets (null where not observable)."""
+    features (+ depth-chart standing when ``depth`` is given) + ROS / next-season targets
+    (null where not observable)."""
     prev = prior_season_features(season_df)
     done = season_df.filter(pl.col("season_complete")) if "season_complete" in season_df.columns else season_df
     complete = set(done["season"].unique().to_list())
@@ -93,6 +111,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
     out = []
     for w in weeks:
         snap = to_date_features(wk, w).join(prev, on=["player_id", "season"], how="left")
+        if depth is not None:
+            snap = snap.join(depth_features(depth, w), on=["player_id", "season"], how="left")
         ros = wk.filter(pl.col("week") > w).group_by("player_id", "season").agg(
             pl.len().alias("ros_games"), pl.col("fpts").sum().alias("ros_fpts"))
         snap = snap.join(ros, on=["player_id", "season"], how="left").join(nxt, on=["player_id", "season"], how="left")
@@ -115,7 +135,7 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
 
 def feature_frame(df: pl.DataFrame) -> pl.DataFrame:
     cols = []
-    for c in TD_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS:
+    for c in TD_COLS + DEPTH_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS:
         cols.append(pl.col(c).cast(pl.Float64, strict=False) if c in df.columns else pl.lit(None, pl.Float64).alias(c))
     for b in FLAG_COLS:
         cols.append((pl.col(b).cast(pl.Int8) if b in df.columns else pl.lit(0, pl.Int8)).alias(b))

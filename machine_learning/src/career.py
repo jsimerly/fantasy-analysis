@@ -77,6 +77,9 @@ def last_complete_season(df: pl.DataFrame) -> int:
     return int(df["season"].max())
 
 
+OPPORTUNITY_COLS = ["targets", "rush_att", "pass_att"]     # an opportunity: a target, a carry or a pass attempt
+
+
 def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.DataFrame:
     """For each horizon k add ``h{k}_fpts`` / ``h{k}_games`` / ``h{k}_ppg`` / ``h{k}_played``
     (season T+k outcomes) and ``h{k}_observable`` (T+k is a complete season).
@@ -87,11 +90,13 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
     done = df.filter(pl.col("season_complete")) if "season_complete" in df.columns else df
     last = last_complete_season(df)
     out = df
+    opp_cols = [c for c in OPPORTUNITY_COLS if c in done.columns]
     for k in horizons:
         fut = done.select(
             "player_id", (pl.col("season") - k).alias("season"),
             pl.col("fpts").alias(f"h{k}_fpts"), pl.col("games").alias(f"h{k}_games"),
             pl.col("ppg").alias(f"h{k}_ppg"),
+            (pl.sum_horizontal([pl.col(c).fill_null(0) for c in opp_cols]) if opp_cols else pl.lit(None, pl.Float64)).cast(pl.Float64).alias(f"h{k}_opp"),
         )
         observable = (pl.col("season") + k) <= last
         out = (
@@ -101,6 +106,7 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
                 pl.when(observable).then(pl.col(f"h{k}_fpts").fill_null(0.0)).otherwise(None).alias(f"h{k}_fpts"),
                 pl.when(observable).then(pl.col(f"h{k}_games").fill_null(0).cast(pl.Int64)).otherwise(None).alias(f"h{k}_games"),
                 pl.when(observable).then(pl.col(f"h{k}_ppg")).otherwise(None).alias(f"h{k}_ppg"),
+                pl.when(observable).then(pl.col(f"h{k}_opp")).otherwise(None).alias(f"h{k}_opp"),
             )
             .with_columns(
                 pl.when(observable).then(pl.col(f"h{k}_games") > 0).otherwise(None).alias(f"h{k}_played")
@@ -115,7 +121,8 @@ class HorizonModels:
 
     def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0,
                  features: list[str] | None = None, calibrate: bool = False, holdout: int = 3,
-                 quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84), **params):
+                 quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84),
+                 target: str = "level", weight: str | None = None, **params):
         self.horizons = list(horizons)
         self.device = device
         self.seed = seed
@@ -133,8 +140,22 @@ class HorizonModels:
         self.quantiles = quantiles
         self.quantile_models: dict[int, tuple[XGBRegressor, XGBRegressor]] = {}
         self.params = {**DEFAULT_PARAMS, **params}
+        # target: "level" fits h{k}_ppg directly; "residual" fits h{k}_ppg - ppg (this season's rate) and adds
+        # it back, so the ensemble's default is "stays the same" and any regression to the mean is learnt.
+        # weight: None | "ppg" (1 + ppg / 10) | "ppg2" (its square): relevance weights so the loss is dominated
+        # by the players whose ordering matters rather than the long tail of near-zero rows.
+        # "opportunity": ppg = (opportunities per game) x (points per opportunity), each its own model —
+        # volume persists, efficiency regresses, and the product does not shrink a high-volume player's
+        # rate the way one model of the level does.
+        if target not in ("level", "residual", "opportunity"):
+            raise ValueError(f"target must be level, residual or opportunity, got {target!r}")
+        if weight not in (None, "ppg", "ppg2"):
+            raise ValueError(f"weight must be None, ppg or ppg2, got {weight!r}")
+        self.target, self.weight = target, weight
         self.ppg_models: dict[int, XGBRegressor] = {}
         self.games_models: dict[int, XGBRegressor] = {}
+        self.opp_models: dict[int, XGBRegressor] = {}
+        self.eff_models: dict[int, XGBRegressor] = {}
 
     def _new(self) -> XGBRegressor:
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed,
@@ -170,9 +191,18 @@ class HorizonModels:
             if rows.height == 0 or played.height == 0:
                 raise ValueError(f"horizon {k}: no observable training outcomes (as_of={as_of_season})")
             g = self._new().fit(self.feature_frame(rows).to_numpy(),
-                                rows[f"h{k}_games"].to_numpy().astype(float))
-            p = self._new().fit(self.feature_frame(played).to_numpy(),
-                                played[f"h{k}_ppg"].to_numpy().astype(float))
+                                rows[f"h{k}_games"].to_numpy().astype(float), sample_weight=self._weights(rows))
+            y = played[f"h{k}_ppg"].to_numpy().astype(float)
+            if self.target == "residual":
+                y = y - played["ppg"].fill_null(0.0).to_numpy().astype(float)
+            if self.target == "opportunity":
+                if f"h{k}_opp" not in played.columns or played[f"h{k}_opp"].null_count() == played.height:
+                    raise ValueError("opportunity target needs h{k}_opp (targets / rush_att / pass_att in the season table)")
+                opp = played.with_columns((pl.col(f"h{k}_opp") / pl.col(f"h{k}_games")).alias("_opp_pg"))
+                used = opp.filter(pl.col(f"h{k}_opp") > 0)
+                self.opp_models[k] = self._new().fit(self.feature_frame(opp).to_numpy(), opp["_opp_pg"].to_numpy().astype(float), sample_weight=self._weights(opp))
+                self.eff_models[k] = self._new().fit(self.feature_frame(used).to_numpy(), (used[f"h{k}_fpts"] / used[f"h{k}_opp"]).to_numpy().astype(float), sample_weight=self._weights(used))
+            p = self._new().fit(self.feature_frame(played).to_numpy(), y, sample_weight=self._weights(played))
             self.games_models[k], self.ppg_models[k] = g, p
             if self.quantile_sigma:
                 Xp, yp = self.feature_frame(played).to_numpy(), played[f"h{k}_ppg"].to_numpy().astype(float)
@@ -187,6 +217,20 @@ class HorizonModels:
             self._fit_calibration(train, as_of_season)
         return self
 
+    def _weights(self, rows: pl.DataFrame) -> np.ndarray | None:
+        if not self.weight:
+            return None
+        w = 1.0 + np.clip(rows["ppg"].fill_null(0.0).to_numpy().astype(float), 0.0, None) / 10.0
+        return w * w if self.weight == "ppg2" else w
+
+    def _ppg_hat(self, k: int, X: np.ndarray, df: pl.DataFrame) -> np.ndarray:
+        if self.target == "opportunity" and k in self.opp_models:
+            return np.clip(self.opp_models[k].predict(X), 0.0, None) * np.clip(self.eff_models[k].predict(X), 0.0, None)
+        raw = self.ppg_models[k].predict(X)
+        if self.target == "residual":
+            raw = raw + df["ppg"].fill_null(0.0).to_numpy().astype(float)
+        return np.clip(raw, 0.0, None)
+
     @staticmethod
     def _tier_expr() -> pl.Expr:
         """Prior-season tier from ppg rank within (season, position) among players with >= 8 games."""
@@ -197,7 +241,7 @@ class HorizonModels:
     def _fit_tier_adjust(self, train: pl.DataFrame, as_of_season: int | None, min_n: int = 15) -> None:
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - self.holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, target=self.target, weight=self.weight, **self.params).fit(train, as_of_season=cut)
         adj: dict[int, dict[tuple[str, str], float]] = {}
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
@@ -225,7 +269,7 @@ class HorizonModels:
         undoes that shrinkage where the holdout says it exists, position by position."""
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - self.holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, target=self.target, weight=self.weight, **self.params).fit(train, as_of_season=cut)
         cal: dict[int, dict[str, tuple]] = {}
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
@@ -297,7 +341,7 @@ class HorizonModels:
         sigma = getattr(self, "sigma", None)
         for k in self.horizons:
             games = np.clip(self.games_models[k].predict(X), 0.0, MAX_GAMES)
-            ppg = np.clip(self.ppg_models[k].predict(X), 0.0, None)
+            ppg = self._ppg_hat(k, X, df)
             if self.calibration:
                 games, ppg = self._apply_calibration(df, k, games, ppg)
             if self.tier_adjust:

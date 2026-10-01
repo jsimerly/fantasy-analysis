@@ -158,3 +158,52 @@ class TestWalkForward:
         assert set(agg["horizon"].to_list()) == {1, 2}
         # test season 2021's h2 (2023) is censored -> fewer h2 folds than h1 folds
         assert per_fold.filter(pl.col("horizon") == 2)["test_season"].max() <= 2020
+
+
+class TestTargetAndWeights:
+    def test_residual_target_adds_this_seasons_rate_back(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        m = career.HorizonModels([1], target="residual", n_estimators=20, max_depth=2).fit(df, as_of_season=2020)
+        rows = df.filter(pl.col("season") == 2019)
+        out = m.predict(rows)
+        assert (out["h1_ppg_hat"] >= 0).all() and out["h1_ppg_hat"].is_finite().all()
+        # the ensemble learns a change from this season's rate, so the projection moves with it
+        assert float(np.corrcoef(out["h1_ppg_hat"].to_numpy(), out["ppg"].to_numpy())[0, 1]) > 0.3
+
+    def test_weights_are_relevance_shaped_and_change_the_fit(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        rows = df.filter(pl.col("season") == 2015)
+        w = career.HorizonModels([1], weight="ppg")._weights(rows)
+        assert w is not None and w.min() >= 1.0 and float(w[int(rows["ppg"].arg_max())]) == w.max()
+        assert career.HorizonModels([1])._weights(rows) is None
+        a = career.HorizonModels([1], n_estimators=20, max_depth=2).fit(df, as_of_season=2020).predict(rows)["h1_ppg_hat"]
+        b = career.HorizonModels([1], weight="ppg2", n_estimators=20, max_depth=2).fit(df, as_of_season=2020).predict(rows)["h1_ppg_hat"]
+        assert float((a - b).abs().max()) > 1e-6
+
+    def test_opportunity_target_multiplies_volume_and_efficiency(self):
+        base = _big_table()
+        rng = np.random.default_rng(1)
+        base = base.with_columns(pl.Series("targets", rng.integers(20, 160, base.height)), pl.Series("rush_att", rng.integers(0, 250, base.height)),
+                                 pl.Series("pass_att", rng.integers(0, 600, base.height)))
+        df = career.attach_horizon_targets(career.career_features(base), [1])
+        assert "h1_opp" in df.columns and (df.filter(pl.col("h1_played"))["h1_opp"] > 0).all()
+        m = career.HorizonModels([1], target="opportunity", n_estimators=20, max_depth=2).fit(df, as_of_season=2020)
+        rows = df.filter(pl.col("season") == 2019)
+        out = m.predict(rows)
+        X = m.feature_frame(rows).to_numpy()
+        prod = np.clip(m.opp_models[1].predict(X), 0, None) * np.clip(m.eff_models[1].predict(X), 0, None)
+        assert np.allclose(out["h1_ppg_hat"].to_numpy(), prod) and (out["h1_ppg_hat"] >= 0).all()
+
+    def test_opportunity_target_without_volume_columns_raises(self):
+        import pytest
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], target="opportunity", n_estimators=5, max_depth=2).fit(df, as_of_season=2020)
+
+    def test_bad_options_raise(self):
+        import pytest
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], target="delta")
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], weight="fpts")
+

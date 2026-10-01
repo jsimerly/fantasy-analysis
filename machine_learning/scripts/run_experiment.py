@@ -58,6 +58,9 @@ def main() -> None:
     ap.add_argument("--realized-replacement", choices=["share", "fill", "weekly"], default=None,
                     help="score realized value on a different replacement level (ledger shows projected/realized)")
     ap.add_argument("--fixed-scale", default="", help="fixed value scale per position, e.g. QB=0.8,TE=1.1 (applied to iv / war / par)")
+    ap.add_argument("--target", choices=["level", "residual", "opportunity"], default="level",
+                    help="ppg target: the level, the change from this season's rate, or opportunities per game x points per opportunity")
+    ap.add_argument("--weight", choices=["ppg", "ppg2"], default=None, help="relevance sample weights for the career models")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
     ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games", "tier"],
                     help="walk-forward recalibration per position and horizon: both (default when given), ppg or games")
@@ -133,7 +136,8 @@ def main() -> None:
         cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device,
                                   params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve,
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
-                                  fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)})
+                                  fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
+                                  target=args.target, weight=args.weight)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):

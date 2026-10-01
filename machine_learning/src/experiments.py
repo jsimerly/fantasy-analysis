@@ -49,6 +49,8 @@ class ExperimentConfig:
     replacement: str = "share"       # how rep_for was built: share | fill | weekly (recorded in the ledger; the harness picks rep_for)
     realized_replacement: str | None = None   # score realized WAR on a different replacement (cross-check that a rep change helps the ORDERING, not just the metric)
     fixed_scale: dict = field(default_factory=dict)   # position -> factor on value (iv / war / par), a fixed cross-position calibration to test
+    target: str = "level"            # career.HorizonModels target: level | residual | opportunity
+    weight: str | None = None        # career.HorizonModels relevance weights: None | ppg | ppg2
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -88,7 +90,7 @@ def position_scales(df: pl.DataFrame, models, rep: dict, H: list[int], T: int, c
     position's distribution under-count that position's PAR)."""
     cut = T - holdout
     tmp = career.HorizonModels(H, device=cfg.device, features=fg.feature_columns(fg.resolve(cfg.groups)), calibrate=cfg.calibrate,
-                               quantile_sigma=cfg.quantile_sigma, **cfg.params).fit(df, as_of_season=cut)
+                               quantile_sigma=cfg.quantile_sigma, target=cfg.target, weight=cfg.weight, **cfg.params).fit(df, as_of_season=cut)
     tmp.estimate_sigma(df, as_of_season=cut)
     out = {}
     for k in H:
@@ -130,7 +132,7 @@ def run_experiment(
         rep = rep_for(T)
         rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
-                                      **cfg.params).fit(df, as_of_season=T)
+                                      target=cfg.target, weight=cfg.weight, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
@@ -207,6 +209,7 @@ def run_experiment(
                "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
                "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
+               "target": cfg.target, "weight": cfg.weight or "",
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -216,7 +219,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players
@@ -242,7 +245,7 @@ def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str |
         lb = lb.filter(pl.col("horizon") == horizon)
     if cohorts is not None:
         lb = lb.filter(pl.col("cohorts") == cohorts)
-    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "params", "horizon", "cohorts",
+    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "params", "horizon", "cohorts",
                         "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                         "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "edge_corr", "edge_spread", "timestamp", "commit"] if c in lb.columns]
     key = next((c for c in (PRIMARY, "spearman_iv_vs_realized_all", "spearman_iv_vs_realized")
