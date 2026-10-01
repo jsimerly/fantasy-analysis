@@ -143,3 +143,12 @@ look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).
     harness — the trees already had draft pick and experience and were using them. The remaining
     lead is inputs the model does not have (college production) and the in-season rookie prior,
     not more combinations of what it has.
+
+Item 9, refined (2026-10-01, Bijan check): the games model is too low for prime RBs at 2–3 years
+out, but the ppg decay is too mild, and the PAR path nets out close to history. Elite young RBs
+(28 seasons 2006–2022: age 23–25, ≥ 17 ppg, ≥ 14 games) averaged 74 / 65 / 48 / 37 / 21 PAR over
+the next five seasons (0.77 / 0.67 / 0.50 / 0.38 / 0.22 wins), 2.9 wins over ten years
+undiscounted, 2.0 at 20 %; only 46 % were still a 15-ppg player a year later, 29 % three years
+later, none seven. The model gives Bijan 4.0 undiscounted / 3.4 at 20 % (full-season scaled), i.e.
+above the base rate. Calibrate games and ppg decay JOINTLY by position × age × horizon so the
+pieces are right, not just the total.
