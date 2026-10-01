@@ -40,7 +40,7 @@ scripts/backtest_inseason.py --current  # project the in-progress season; writes
 Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced that week):
 - **Rest of season**: rank correlation with realized ROS ppg, model **0.78 vs KTC 0.70** at week 3,
   widening to 0.69 vs 0.57 by week 13 (to-date ppg alone: 0.70; last season alone: 0.60).
-- **Next season**: in-season IV **0.565 vs KTC 0.555** (W3) … 0.588 vs 0.581 (W13); a 50/50
+- **Next season**: in-season IV **0.565 vs KTC 0.555** (W3) … 0.598 vs 0.581 (W13); a 50/50
   last-season/to-date blend is nearly as good (0.55–0.59), so the gain over a sensible heuristic is thin.
 - **Market lag**: the gap between the *next-season* projection and KTC at week W predicts KTC's move
   to February (Spearman −0.19 at W3): the third the market priced cheap vs fundamentals gained ~+6 %,
