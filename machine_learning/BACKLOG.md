@@ -175,3 +175,23 @@ wins (`mae_war_*`, `bias_war_*`, `bias_war_top12`); top-decile hit rate. The lea
 `spearman_war_top`. Market columns (KTC's agreement on priced players, edge corr/spread) are
 context only: what a manager would have done without a model, and whether our disagreement with
 the market predicted its error. Agreement with KTC itself is not tracked as a goal.
+
+## Rounds 2–4 (2026-10-01): what was tested and why nothing was adopted
+Primary metric: rank agreement of projected WAR with realized WAR among the top 150 by projected
+WAR, cohorts 2015–2022 (market-free). Current model 0.580.
+- calibrated (ppg+games lines on projection): 0.573; top-12 bias worse (+8 → +17 pts) — the games
+  line through a 0-or-14 target drags starters down. Rejected.
+- calibrated_ppg: 0.573; bias +8 → +11. The line conditions on the projection, where the model is
+  slightly over-confident at its own top, not on prior tier. Rejected.
+- deep trees (depth 6, mcw 1): ordering 0.654 vs 0.671 on the priced set. Rejected.
+- quantile sigma (per-player spread): 0.571; no bias change. Rejected for now (item 6 stays open;
+  the spread model may matter more for the roster/title-equity layer than for ordering).
+- tier_calibrated (holdout residual per position × prior tier): 0.570; h1 top-12 bias +8 → +6 but
+  h3 +13 → +16. Rejected.
+- position_scale (holdout realized/projected PAR share per position): 0.580 (tie), edge 0.306 vs
+  0.299, BUT the scales are regime-dependent: the 2023–25 holdout says RB ×1.40 / QB ×0.82 /
+  WR ×0.91, which pushes the WR share further from the 2017–22 realized share (38 %), not toward
+  it. Not adopted; item 13 needs a longer window and a stability test before it is a calibration.
+Net: the current model stands; the top-tier shrinkage (item 18) is real but none of the post-hoc
+fixes improved the held-out ordering. Next candidates are inputs, not corrections: opportunity /
+efficiency split (5), college production (17), and the in-season model's own tier bias.
