@@ -123,3 +123,17 @@ look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).
     mostly the market's rookie premium; the model's rookie prior is close to unbiased. Open
     question worth a test: whether the premium is rational as resale value (rookies hold price
     for a year even when they underperform), which an intrinsic measure will never show.
+
+17. **Rookie evaluation: college production + experience-scaled draft capital.** Draft capital's
+    pull on next-season points fades with experience exactly as the owner guessed (Spearman of
+    draft pick vs next-season points, 2010+): rookie year −0.52, year 2 −0.46, year 3 −0.45,
+    years 4–6 −0.38, years 7–10 −0.28, year 11+ −0.27; after controlling for this season's ppg the
+    residual pull is −0.19 for rookies vs −0.09 for veterans. Draft round/pick and experience are
+    already base features, so the trees can learn the interaction, but rookie rows are few
+    (~70 a year) and the in-season model sees a rookie with only his draft slot and a few games.
+    Plan: (a) a `rookie` feature group: draft pick × (experience == 0) and × (experience ≤ 2),
+    NFL draft capital tiers; (b) college production via nflverse draft_picks (cfb ids) + CFBD
+    (receiving/rushing yards per team play, breakout age, final-season dominator) — a DE
+    ingestion first; (c) an explicit rookie prior in the in-season model (draft slot → expected
+    rookie-year ppg curve by position) that the to-date games update. Accept only through the
+    harness (rank agreement) and the rookie residual test (BACKLOG 16).
