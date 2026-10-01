@@ -1,7 +1,19 @@
-"""Export the latest intrinsic-value run as JSON for a browsable table (page data file).
+"""Export a value run as JSON for the browsable projections table (page data file).
+
+Two sources:
+
+* ``--source inseason`` (default): the in-season run written by ``backtest_inseason.py --current``
+  (``inseason/season=S/week=W/run_date=D/projections.parquet``). Value components are exported in
+  the order the page discounts them -- [rest of THIS season, next season, season + 2, ...] -- and
+  the page weights component k by (1 - rate)^(k-1), so the rest of this season is never
+  discounted and a 100 % rate means "rest of this season only". Includes this season's games to
+  date and players without a complete prior season (rookies).
+* ``--source career``: the preseason career run (``intrinsic_value/as_of_season=S/run_date=D``),
+  components [season 1, season 2, ...] off the last complete season.
 
 Usage (from machine_learning/):
-    uv run python scripts/export_projections.py --run-date 2026-10-01 --out projections.json
+    uv run python scripts/export_projections.py --season 2026 --week 3 --run-date 2026-10-01 --out projections.json
+    uv run python scripts/export_projections.py --source career --run-date 2026-10-01 --out projections.json
 """
 from __future__ import annotations
 
@@ -20,70 +32,122 @@ import market  # noqa: E402
 import value  # noqa: E402
 
 
+def _r(x, d=1):
+    return None if x is None else round(x, d)
+
+
+def fantasycalc_values() -> pl.DataFrame:
+    """Same-day FantasyCalc SF dynasty value per player_key (a second market reference)."""
+    fav = gcs_io.read_lake(market.FACT_ASSET_VALUES_PATH)
+    day = fav["valuation_date"].max()
+    return (fav.filter((pl.col("valuation_date") == day) & (pl.col("market_type") == "DYNASTY")
+                       & (pl.col("qb_format") == "SF") & (pl.col("te_premium") == "Standard") & (pl.col("fc_value") > 0))
+            .group_by("player_id").agg(pl.col("fc_value").max()).rename({"player_id": "player_key"}))
+
+
+def within_position(proj: pl.DataFrame, iv_col: str) -> pl.DataFrame:
+    """The market's premium for a whole position factored out: fair value fitted per position."""
+    within, _ = value.compare_to_market(proj, iv_col=iv_col, group_col="position")
+    return proj.join(within.select("player_id", pl.col("fair_value").alias("fair_pos"), pl.col("mispricing_pct").alias("mis_pct_pos")),
+                     on="player_id", how="left")
+
+
+def _common(r: dict) -> dict:
+    return {
+        "name": r["player_name"], "pos": r["position"], "team": r.get("team"), "age": _r(r.get("age_at_season")),
+        "ktc": r.get("ktc_value"), "market_rank": r.get("market_rank"), "iv_rank": r.get("iv_rank"), "rank_gap": r.get("rank_gap"),
+        "fair": _r(r.get("fair_value"), 0), "mis_pct": _r(r.get("mispricing_pct"), 3),
+        "fair_pos": _r(r.get("fair_pos"), 0), "mis_pct_pos": _r(r.get("mis_pct_pos"), 3),
+        "match": r.get("market_match"), "fc": r.get("fc_value"),
+    }
+
+
+def rows_career(proj: pl.DataFrame, horizons: list[int]) -> list[dict]:
+    out = []
+    for r in proj.sort("iv", descending=True).iter_rows(named=True):
+        out.append({**_common(r),
+                    "fpts": _r(r["fpts"], 0), "games": r["games"],
+                    "iv": _r(r["iv"]), "iv_rank_all": int(r["iv_rank_all"]),
+                    "h": [_r(r[f"h{k}_fpts_hat"], 0) for k in horizons],
+                    # undiscounted points above replacement per season: the page recomputes IV for any discount
+                    "v": [_r(r[f"h{k}_vorp_hat"], 2) for k in horizons],
+                    "h1_ppg": _r(r["h1_ppg_hat"]), "h1_games": _r(r["h1_games_hat"])})
+    return out
+
+
+def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
+    out = []
+    for r in proj.sort("iv_inseason", descending=True).iter_rows(named=True):
+        h = [_r(r["ros_ppg_hat"] * r["ros_games_hat"], 0), _r(r["next_fpts_hat"], 0)]
+        v = [_r(r["vorp_ros"], 2), _r(r["vorp_next"], 2)]
+        for k in tail:                                              # career tail: seasons + 2 and on
+            ppg, g = r.get(f"h{k}_ppg_hat"), r.get(f"h{k}_games_hat")
+            h.append(_r(ppg * g, 0) if ppg is not None and g is not None else 0)
+            v.append(_r(r.get(f"h{k}_vorp_hat") or 0.0, 2))
+        out.append({**_common(r),
+                    "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
+                    "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
+                    "iv": _r(r["iv_inseason"]), "iv_pre": _r(r.get("iv_preseason")), "iv_rank_all": int(r["iv_rank_all"]),
+                    "h": h, "v": v,
+                    "h1_ppg": _r(r["ros_ppg_hat"]), "h1_games": _r(r["ros_games_hat"])})
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--as-of-season", type=int, default=2025)
+    ap.add_argument("--source", choices=["inseason", "career"], default="inseason")
+    ap.add_argument("--season", type=int, default=None, help="in-season: the season in progress")
+    ap.add_argument("--week", type=int, default=None, help="in-season: snapshot week")
+    ap.add_argument("--as-of-season", type=int, default=2025, help="career run (replacement level; the data for --source career)")
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
-    base = ("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}")
 
-    proj = gcs_io.read_ml_parquet(*base, "projections.parquet")
-    meta = gcs_io.read_ml_json(*base, "metrics.json")
-    if "fair_value" not in proj.columns:                      # older runs: derive the comparison here
-        cmp, summary = value.compare_to_market(proj)
-        proj = proj.join(
-            cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"),
-            on="player_id", how="left",
-        ).with_columns(pl.col("iv").rank(method="ordinal", descending=True).alias("iv_rank_all"))
-        meta["spearman_iv_vs_ktc"] = summary["spearman"]
+    career_base = ("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}")
+    meta = gcs_io.read_ml_json(*career_base, "metrics.json")
+    rate = meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2))
+    fc = fantasycalc_values()
 
-    # within-position comparison: the market's premium for a whole position factored out
-    within, _ = value.compare_to_market(proj, group_col="position")
-    proj = proj.join(
-        within.select("player_id", pl.col("fair_value").alias("fair_pos"), pl.col("mispricing_pct").alias("mis_pct_pos")),
-        on="player_id", how="left",
-    )
+    if args.source == "career":
+        proj = gcs_io.read_ml_parquet(*career_base, "projections.parquet")
+        if "fair_value" not in proj.columns:                      # older runs: derive the comparison here
+            cmp, summary = value.compare_to_market(proj)
+            proj = proj.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"),
+                             on="player_id", how="left")
+            meta["spearman_iv_vs_ktc"] = summary["spearman"]
+        if "iv_rank_all" not in proj.columns:
+            proj = proj.with_columns(pl.col("iv").rank(method="ordinal", descending=True).alias("iv_rank_all"))
+        proj = within_position(proj, "iv").join(fc, on="player_key", how="left")
+        horizons = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_fpts_hat"))
+        rows = rows_career(proj, horizons)
+        first = args.as_of_season + 1
+        labels = [f"’{(first + i) % 100:02d}" for i in range(len(horizons))]
+        as_of = f"preseason, projected from the {args.as_of_season} season"
+        spearman = meta.get("spearman_iv_vs_ktc")
+    else:
+        if args.season is None or args.week is None:
+            ap.error("--season and --week are required for --source inseason")
+        proj = gcs_io.read_ml_parquet("inseason", f"season={args.season}", f"week={args.week}", f"run_date={args.run_date}", "projections.parquet")
+        proj = (within_position(proj, "iv_inseason")
+                .with_columns(pl.col("iv_inseason").rank(method="ordinal", descending=True).alias("iv_rank_all"),
+                              (pl.col("iv_rank").cast(pl.Int64) - pl.col("market_rank").cast(pl.Int64)).alias("rank_gap")))
+        proj = proj.join(fc, on="player_key", how="left") if "player_key" in proj.columns else proj.with_columns(pl.lit(None).alias("fc_value"))
+        tail = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_vorp_hat"))
+        rows = rows_inseason(proj, tail)
+        labels = [f"ROS ’{args.season % 100:02d}"] + [f"’{(args.season + i) % 100:02d}" for i in range(1, len(tail) + 2)]
+        as_of = f"in-season, {args.season} through week {args.week}"
+        priced = proj.filter(pl.col("ktc_value").is_not_null())
+        spearman = float(value.spearman(priced["iv_inseason"].to_numpy(), priced["ktc_value"].to_numpy())) if priced.height else None
 
-    # FantasyCalc (trade-derived) value on the same day, as a second market reference
-    fav = gcs_io.read_lake(market.FACT_ASSET_VALUES_PATH)
-    day = fav["valuation_date"].max()
-    fc = (fav.filter((pl.col("valuation_date") == day) & (pl.col("market_type") == "DYNASTY")
-                     & (pl.col("qb_format") == "SF") & (pl.col("te_premium") == "Standard") & (pl.col("fc_value") > 0))
-          .group_by("player_id").agg(pl.col("fc_value").max()).rename({"player_id": "player_key"}))
-    proj = proj.join(fc, on="player_key", how="left")
-
-    hcols = [c for c in proj.columns if c.startswith("h") and c.endswith("_fpts_hat")]
-    horizons = sorted(int(c[1:].split("_")[0]) for c in hcols)
-    rows = []
-    for r in proj.sort("iv", descending=True).iter_rows(named=True):
-        rows.append({
-            "name": r["player_name"], "pos": r["position"], "team": r.get("team"),
-            "age": round(r["age_at_season"], 1) if r.get("age_at_season") is not None else None,
-            "fpts": round(r["fpts"]), "games": r["games"],
-            "iv": round(r["iv"], 1), "iv_rank_all": int(r["iv_rank_all"]),
-            "ktc": r.get("ktc_value"), "market_rank": r.get("market_rank"), "iv_rank": r.get("iv_rank"),
-            "rank_gap": r.get("rank_gap"),
-            "fair": round(r["fair_value"]) if r.get("fair_value") is not None else None,
-            "mis_pct": round(r["mispricing_pct"], 3) if r.get("mispricing_pct") is not None else None,
-            "fair_pos": round(r["fair_pos"]) if r.get("fair_pos") is not None else None,
-            "mis_pct_pos": round(r["mis_pct_pos"], 3) if r.get("mis_pct_pos") is not None else None,
-            "match": r.get("market_match"),
-            "h": [round(r[f"h{k}_fpts_hat"]) for k in horizons],
-            # undiscounted points above replacement per horizon: the page recomputes IV for any discount
-            "v": [round(r[f"h{k}_vorp_hat"], 2) for k in horizons],
-            "fc": r.get("fc_value"),
-            "h1_ppg": round(r["h1_ppg_hat"], 1), "h1_games": round(r["h1_games_hat"], 1),
-        })
     out = {
-        "as_of_season": meta["as_of_season"], "run_date": meta["run_date"], "horizon": meta["horizon"],
-        "horizons": horizons, "discount_rate": meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2)), "replacement_ppg": meta["replacement_ppg"],
-        "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
-        "spearman": meta.get("spearman_iv_vs_ktc"), "rows": rows,
+        "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
+        "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
+        "replacement_ppg": meta["replacement_ppg"], "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
+        "spearman": spearman, "rows": rows,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
-    print(f"wrote {args.out} ({args.out.stat().st_size // 1024} KB, {len(rows)} players, {out['n_priced']} priced)")
+    print(f"wrote {args.out} ({args.out.stat().st_size // 1024} KB, {len(rows)} players, {out['n_priced']} priced; {as_of})")
 
 
 if __name__ == "__main__":

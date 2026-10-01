@@ -53,3 +53,25 @@ games / ppg / fpts / age / experience / touches, fantasy-relevant players, 2013�
 
 Context: next-season variance splits roughly a quarter to a third availability, about half
 per-game rate, the rest covariance — rate projection is the bigger lever, availability second.
+
+## Added 2026-10-01 (after the Washington / Watson / Walker review)
+
+9. **Games-model calibration by position × age × horizon.** For RBs aged 24–26 coming off a
+   15+ game, 200+ touch season, the career model projects 12.8 / 9.5 / 6.8 games at 1 / 2 / 3
+   years out; the same profile in 2012–2022 actually averaged 12.0 / 10.6 / 9.8 (median 14 /
+   14 / 13). Three games low at year 3 compounds through the discounting and is a candidate
+   reason RBs look "overvalued" on the market. Check every position; fix with a monotone or
+   calibrated availability model if it holds.
+
+10. **Prior-season trend inputs for the preseason model.** Season totals hide late-season
+    role changes: Watson went from GB WR7 to WR1 between weeks 1 and 12 of 2025, Washington from
+    JAX WR4 to WR2/3 at week 9. Add second-half vs first-half targets/touches per game and the
+    depth-chart movement from `fact_depth_chart_week` as T−1 features.
+
+11. **Depth chart entering week 1 as a feature.** Walker was KC's RB1 on the week-1 chart after
+    the move from Seattle's two-back split; the preseason projection could not see it, the
+    in-season model only after three games. Same source table.
+
+Done 2026-10-01: the table now runs off the in-season model (ROS at full weight, next season at
+1 − rate, this season's games included, rookies in). The three cases moved from IV ranks
+126 / 85 / 116 preseason to 50 / 33 / 68 in-season against market ranks 52 / 16 / 32.
