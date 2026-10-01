@@ -27,6 +27,7 @@ def main() -> None:
     ap.add_argument("--horizons", type=int, default=5)
     ap.add_argument("--start-season", type=int, default=2010)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--no-write", action="store_true", help="do not persist the summary to the ML bucket")
     args = ap.parse_args()
     horizons = list(range(1, args.horizons + 1))
 
@@ -44,8 +45,17 @@ def main() -> None:
     with pl.Config(tbl_rows=-1, float_precision=2):
         print(table)
     print("\nRMSE by horizon:")
+    rmse = agg.pivot(values="rmse", index="horizon", on="method").sort("horizon")
     with pl.Config(tbl_rows=-1, float_precision=2):
-        print(agg.pivot(values="rmse", index="horizon", on="method").sort("horizon"))
+        print(rmse)
+    if not args.no_write:                       # persist for the performance panel / later comparison
+        from datetime import datetime, timezone
+        import gcs_io
+        run = datetime.now(timezone.utc).date().isoformat()
+        p = gcs_io.write_ml_json({"run_date": run, "horizons": horizons, "start_season": args.start_season,
+                                  "mae": table.to_dicts(), "rmse": rmse.to_dicts()},
+                                 "backtests", "career_eval", f"run_date={run}", "summary.json")
+        print("\nwrote", p)
 
 
 if __name__ == "__main__":

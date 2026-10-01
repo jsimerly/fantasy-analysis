@@ -38,6 +38,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--horizon", type=int, default=3)
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
+    ap.add_argument("--no-write", action="store_true", help="do not persist the summary to the ML bucket")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--first-cohort", type=int, default=2020)
     args = ap.parse_args()
@@ -113,6 +114,19 @@ def main() -> None:
           "(realized_rank = where they actually finished):")
     with pl.Config(tbl_rows=-1, tbl_width_chars=170, fmt_str_lengths=24):
         print(pl.concat(examples))
+    if not args.no_write:                       # persist for the performance panel / later comparison
+        from datetime import datetime, timezone
+        run = datetime.now(timezone.utc).date().isoformat()
+        summary = {
+            "run_date": run, "horizon": args.horizon, "first_cohort": args.first_cohort, "discount_rate": args.discount_rate,
+            "per_cohort": out.with_columns(pl.col("ktc_as_of").cast(pl.Utf8)).to_dicts(),
+            "mean": out.select(pl.col("^spearman_.*$").mean()).to_dicts()[0],
+            "bootstrap": {"iv_minus_ktc": float(np.mean(boot_all)), "ci90_lo": float(np.percentile(boot_all, 5)), "ci90_hi": float(np.percentile(boot_all, 95))},
+            "terciles": tc.group_by("tercile").agg(pl.col("n").sum().alias("n"), pl.col("beat_market_by").mean().alias("mean_beat_market_by"))
+                          .with_columns(pl.col("tercile").cast(pl.Utf8)).sort("tercile").to_dicts(),
+        }
+        p = gcs_io.write_ml_json(summary, "backtests", "value", f"run_date={run}", "summary.json")
+        print("\nwrote", p)
 
 
 if __name__ == "__main__":

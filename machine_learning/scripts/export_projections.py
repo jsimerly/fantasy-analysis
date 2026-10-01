@@ -180,6 +180,19 @@ def main() -> None:
                            "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2)] for x in trade.iter_rows(named=True)],
                            "free": [[x["player_name"], x["position"], _r(x["m_war"], 2)] for x in free.iter_rows(named=True)]})
             teams[lid] = tl
+    # ---- model performance: latest persisted backtest summaries + the experiment leaderboard
+    def latest_summary(name: str):
+        paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
+        return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
+    performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason")}
+    try:
+        import experiments
+        led = experiments.load_ledger()
+        performance["experiments"] = experiments.leaderboard(led, horizon=3).to_dicts() if led is not None else None
+    except Exception as e:  # noqa: BLE001
+        print("experiment ledger unavailable:", str(e)[:80]); performance["experiments"] = None
+    print("performance summaries:", {k: (v is not None) for k, v in performance.items()})
+
     default_league = next((l["id"] for l in leagues if l["primary"]), leagues[0]["id"] if leagues else None)
     if default_league:
         rows.sort(key=lambda x: -(sum(w * (1 - rate) ** i for i, w in enumerate(x["L"][default_league]["w"])) if default_league in x.get("L", {}) else -1))
@@ -189,7 +202,7 @@ def main() -> None:
 
     out = {
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
-        "leagues": leagues, "default_league": default_league, "teams": teams,
+        "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
         "replacement_ppg": meta["replacement_ppg"], "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
         "spearman": spearman, "rows": rows,

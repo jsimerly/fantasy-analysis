@@ -50,6 +50,16 @@ Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced th
 Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
 oldest ages (see the age-survival prior); one lineup.
 
+## Model performance panel
+
+The three backtests persist a summary to the ML bucket (`backtests/{career_eval,value,inseason}/run_date=D/summary.json`,
+skip with `--no-write`), and `export_projections.py` folds the latest of each, plus the experiment
+leaderboard, into the table's data file. The page's "How the model performs" section renders them:
+in-season rest-of-season and next-season rank agreement vs KTC / this-season / last-season / blend
+baselines by checkpoint week, multi-year intrinsic value vs KTC with a paired bootstrap and the
+mispricing terciles, career projection MAE vs carry-forward and age decay by horizon, the
+feature-group leaderboard, and dated one-off checks.
+
 ## Intrinsic value v2 — wins above replacement (WAR), league-dependent
 
 `src/league.py`, `src/lineup.py`, `src/war.py`, `scripts/build_war.py`. Value in **wins**, built

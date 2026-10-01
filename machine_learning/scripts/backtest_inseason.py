@@ -73,6 +73,7 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
+    ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     args = ap.parse_args()
     weeks = [int(w) for w in args.weeks.split(",")]
 
@@ -177,6 +178,20 @@ def main() -> None:
         print(lagdf.group_by("signal", "W").agg(pl.col("n").sum(), pl.col("^spearman.*$").mean(), pl.col("^move\\|.*$").mean()).sort("signal", "W"))
         print("\n== per cohort x week (in-season IV signal) ==")
         print(lagdf.filter(pl.col("signal") == "iv").sort("T", "W"))
+    if not args.no_write:                       # persist for the performance panel / later comparison
+        run = datetime.now(timezone.utc).date().isoformat()
+        lag_mean = lagdf.group_by("signal", "W").agg(pl.col("n").sum(), pl.col("^spearman.*$").mean(), pl.col("^move\\|.*$").mean()).sort("signal", "W")
+        w3 = lag_mean.filter((pl.col("signal") == "next_pts") & (pl.col("W") == weeks[0])).to_dicts()
+        note = (f"at week {weeks[0]} the gap between the next-season projection and KTC predicts KTC's move to February "
+                f"(Spearman {w3[0]['spearman(mispricing, move)']:+.2f}; the third priced cheapest vs the model moved {w3[0]['move|cheap']:+.1%}, "
+                f"the richest third {w3[0]['move|rich']:+.1%}); the multi-year gap does not") if w3 else ""
+        summary = {"run_date": run, "first_cohort": args.first_cohort, "last_cohort": last_complete - 1, "weeks": weeks,
+                   "cohorts": f"{args.first_cohort}-{last_complete - 1}",
+                   "next": res.group_by("W").agg(pl.col("n").sum(), pl.col("^next\\|.*$").mean()).sort("W").to_dicts(),
+                   "ros": res.group_by("W").agg(pl.col("n").sum(), pl.col("^ros\\|.*$").mean()).sort("W").to_dicts(),
+                   "market_lag": lag_mean.to_dicts(), "market_lag_note": note}
+        p = gcs_io.write_ml_json(summary, "backtests", "inseason", f"run_date={run}", "summary.json")
+        print("\nwrote", p)
 
 
 if __name__ == "__main__":
