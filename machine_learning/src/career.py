@@ -198,8 +198,12 @@ class HorizonModels:
             if self.target == "opportunity":
                 if f"h{k}_opp" not in played.columns or played[f"h{k}_opp"].null_count() == played.height:
                     raise ValueError("opportunity target needs h{k}_opp (targets / rush_att / pass_att in the season table)")
-                opp = played.with_columns((pl.col(f"h{k}_opp") / pl.col(f"h{k}_games")).alias("_opp_pg"))
-                used = opp.filter(pl.col(f"h{k}_opp") > 0)
+                # rows whose opportunities were recorded (the season fact has no targets / attempts for a quarter
+                # of 2000-09 rows: those read as 0 and would teach both models nonsense); >= 1 per game for efficiency
+                opp = played.with_columns((pl.col(f"h{k}_opp") / pl.col(f"h{k}_games")).alias("_opp_pg")).filter(pl.col(f"h{k}_opp") > 0)
+                used = opp.filter(pl.col("_opp_pg") >= 1.0)
+                if opp.height < 50 or used.height < 50:
+                    raise ValueError(f"horizon {k}: too few rows with recorded opportunities for the opportunity target")
                 self.opp_models[k] = self._new().fit(self.feature_frame(opp).to_numpy(), opp["_opp_pg"].to_numpy().astype(float), sample_weight=self._weights(opp))
                 self.eff_models[k] = self._new().fit(self.feature_frame(used).to_numpy(), (used[f"h{k}_fpts"] / used[f"h{k}_opp"]).to_numpy().astype(float), sample_weight=self._weights(used))
             p = self._new().fit(self.feature_frame(played).to_numpy(), y, sample_weight=self._weights(played))
