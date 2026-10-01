@@ -113,10 +113,12 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
 class HorizonModels:
     """One (ppg, games) model pair per horizon. ``fit`` then ``predict``."""
 
-    def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0, **params):
+    def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0,
+                 features: list[str] | None = None, **params):
         self.horizons = list(horizons)
         self.device = device
         self.seed = seed
+        self.features = list(features) if features is not None else None   # None = FEATURES (production)
         self.params = {**DEFAULT_PARAMS, **params}
         self.ppg_models: dict[int, XGBRegressor] = {}
         self.games_models: dict[int, XGBRegressor] = {}
@@ -124,6 +126,25 @@ class HorizonModels:
     def _new(self) -> XGBRegressor:
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed,
                             n_jobs=-1, **self.params)
+
+    def feature_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        """The design matrix. Default: the production feature set (``horizon_feature_frame``).
+        With an explicit ``features`` list (experiment variants, see ``feature_groups``) every
+        named column is taken from the standard frame if it lives there (so position one-hots
+        work), else from ``df``, else all-null -- a group whose source has no coverage still
+        trains, as nulls."""
+        if self.features is None:
+            return horizon_feature_frame(df)
+        std = horizon_feature_frame(df)
+        cols = []
+        for c in self.features:
+            if c in std.columns:
+                cols.append(std[c].cast(pl.Float64, strict=False).alias(c))
+            elif c in df.columns:
+                cols.append(df[c].cast(pl.Float64, strict=False).alias(c))
+            else:
+                cols.append(pl.Series(c, [None] * df.height, dtype=pl.Float64))
+        return pl.DataFrame(cols)
 
     def fit(self, train: pl.DataFrame, as_of_season: int | None = None) -> "HorizonModels":
         """Train every horizon. ``as_of_season`` restricts outcomes to those observed by the end
@@ -135,9 +156,9 @@ class HorizonModels:
             played = rows.filter(pl.col(f"h{k}_played"))
             if rows.height == 0 or played.height == 0:
                 raise ValueError(f"horizon {k}: no observable training outcomes (as_of={as_of_season})")
-            g = self._new().fit(horizon_feature_frame(rows).to_numpy(),
+            g = self._new().fit(self.feature_frame(rows).to_numpy(),
                                 rows[f"h{k}_games"].to_numpy().astype(float))
-            p = self._new().fit(horizon_feature_frame(played).to_numpy(),
+            p = self._new().fit(self.feature_frame(played).to_numpy(),
                                 played[f"h{k}_ppg"].to_numpy().astype(float))
             self.games_models[k], self.ppg_models[k] = g, p
         return self
@@ -155,7 +176,7 @@ class HorizonModels:
         """
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
         sigma: dict[int, dict[str, float]] = {}
         for k in self.horizons:
             rows = train.filter(
@@ -175,7 +196,7 @@ class HorizonModels:
     def predict(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add ``h{k}_games_hat`` / ``h{k}_ppg_hat`` / ``h{k}_fpts_hat`` for every horizon
         (plus ``h{k}_ppg_sigma`` when ``estimate_sigma`` has run)."""
-        X = horizon_feature_frame(df).to_numpy()
+        X = self.feature_frame(df).to_numpy()
         cols = []
         sigma = getattr(self, "sigma", None)
         for k in self.horizons:

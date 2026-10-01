@@ -50,6 +50,36 @@ Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced th
 Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
 oldest ages (see the age-survival prior); one lineup.
 
+## Experiments — mix and match feature groups
+
+Every modelling angle is kept as a named **feature group** (`src/feature_groups.py`) and any
+combination can be trained and scored through the same walk-forward backtest
+(`src/experiments.py`, `scripts/run_experiment.py`). A group adds columns to the career matrix
+using only information known by the end of season T, so every variant is comparable and
+leak-free against KTC the following February:
+
+| group | source | what it adds |
+|---|---|---|
+| `base` | fact_player_season (+ lags) | production, volume, bio — the production model's inputs |
+| `career` | fact_player_season | cumulative seasons / points / games, best ppg |
+| `injury` | fact_player_injury_week | weeks out / listed / on reserve, by class (soft tissue, structural, concussion), plus last year's |
+| `role` | fact_depth_chart_week | depth entering / leaving the season, best depth, starter share, moves, overall position rank |
+| `trend` | fact_player_week | second-half vs first-half ppg / targets / touches, last-4 form |
+| `situation` | fact_player_season | changed team this season / last season |
+
+```
+scripts/run_experiment.py --list-groups
+scripts/run_experiment.py --variants "current=base,career;injury=base,career,injury;all=base,career,injury,role,trend,situation" --horizon 3 --first-cohort 2015
+scripts/run_experiment.py --leaderboard --horizon 3
+```
+
+Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
+the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,
+top-decile precision, and points MAE per horizon. Summaries append to
+`gs://fantasy-football-ml/dynasty-value/experiments/ledger.parquet` with the group list and git
+commit, so the leaderboard compares like for like (same horizon, same cohorts). A change to the
+production feature set is accepted only when it wins there.
+
 ## Phase 2 — intrinsic value
 
 What no site publishes: a value built from **fundamentals** (projected career production) rather
