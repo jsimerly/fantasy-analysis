@@ -45,6 +45,7 @@ class ExperimentConfig:
     quantile_sigma: bool = False     # player-specific spread from quantile models instead of one sigma per position
     curve: object = None             # league.WinCurve for WAR units; None = the owner's league's known curve
     top_n: int = 150                 # "relevant players" cut for the market-free metrics: top N by projected WAR
+    position_scale: bool = False     # scale each position's value by (realized / projected) PAR share on the holdout seasons
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -73,6 +74,32 @@ def market_edge(model: np.ndarray, market: np.ndarray, realized: np.ndarray) -> 
     third = max(1, n // 3)
     cheap, rich = gr[order[:third]].mean(), gr[order[-third:]].mean()
     return {"edge_corr": value.spearman(gm, gr), "edge_cheap": float(cheap), "edge_rich": float(rich), "edge_spread": float(cheap - rich)}
+
+
+def position_scales(df: pl.DataFrame, models, rep: dict, H: list[int], T: int, cfg: "ExperimentConfig",
+                    holdout: int = 3, lo: float = 0.6, hi: float = 1.6) -> dict[str, float]:
+    """Walk-forward position calibration of VALUE: on the holdout seasons (outcomes in (T-holdout, T]),
+    temporary models' projected PAR share by position vs the realized PAR share; the ratio scales
+    that position's value for cohort T. Targets the gap the points projections do not have but the
+    value construction does (shrunk projections + a replacement line in the dense part of a
+    position's distribution under-count that position's PAR)."""
+    cut = T - holdout
+    tmp = career.HorizonModels(H, device=cfg.device, features=fg.feature_columns(fg.resolve(cfg.groups)), calibrate=cfg.calibrate,
+                               quantile_sigma=cfg.quantile_sigma, **cfg.params).fit(df, as_of_season=cut)
+    tmp.estimate_sigma(df, as_of_season=cut)
+    out = {}
+    for k in H:
+        rows = df.filter(pl.col(f"h{k}_observable") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= T))
+        if rows.height < 50:
+            continue
+        pred = value.intrinsic_value(tmp.predict(rows), rep, [k], cfg.discount_rate)
+        pred = value.realized_value(pred, rep, [k], cfg.discount_rate)
+        g = pred.group_by("position").agg(pl.col(f"h{k}_vorp_hat").sum().alias("p"), pl.col(f"h{k}_vorp").sum().alias("r"))
+        tp, tr = g["p"].sum(), g["r"].sum()
+        for pos, p_, r_ in g.iter_rows():
+            if p_ > 0 and tp > 0 and tr > 0:
+                out.setdefault(pos, []).append((r_ / tr) / (p_ / tp))
+    return {pos: float(min(max(np.mean(v), lo), hi)) for pos, v in out.items()}
 
 
 def git_commit() -> str | None:
@@ -108,6 +135,10 @@ def run_experiment(
         curve = cfg.curve or WinCurve.normal(*OWNER_CURVE_FALLBACK)
         cohort = _war.wins_above_replacement(cohort, rep, curve, _war.career_components(H), cfg.discount_rate, sigma=getattr(models, "sigma", None))
         cohort = _war.realized_wins(cohort, rep, curve, H, cfg.discount_rate)
+        if cfg.position_scale:
+            scales = position_scales(df, models, rep, H, T, cfg)
+            sc = pl.col("position").replace_strict(scales, default=1.0, return_dtype=pl.Float64)
+            cohort = cohort.with_columns((pl.col("iv") * sc).alias("iv"), (pl.col("war") * sc).alias("war"), (pl.col("par") * sc).alias("par"))
         cohort = market_for(cohort, T)
         obs = cohort.filter(pl.col("realized_iv").is_not_null())
         priced = obs.filter(pl.col("ktc_value").is_not_null())
@@ -155,7 +186,7 @@ def run_experiment(
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
                "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
-               "quantile_sigma": cfg.quantile_sigma,
+               "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -165,7 +196,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all",
                # context: the market on the same (priced) players

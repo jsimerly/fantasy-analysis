@@ -60,3 +60,16 @@ def test_quantile_sigma_is_per_player_positive_and_overrides_position_sigma():
     plain.estimate_sigma(m, as_of_season=2021)
     s0 = plain.predict(m.filter(pl.col("season") == 2021))["h1_ppg_sigma"].to_numpy()
     assert len(np.unique(s0)) <= 4                                # position-level sigma: at most one value per position
+
+
+def test_tier_calibration_adds_per_tier_ppg_adjustments():
+    H = [1]
+    m = career.attach_horizon_targets(career.career_features(features.attach_lags_and_target(_fact(), drop_no_target=False)), H)
+    tier = career.HorizonModels(H, n_estimators=20, max_depth=2, calibrate="tier").fit(m, as_of_season=2021)
+    assert tier.calibrate == "tier" and tier.tier_adjust and 1 in tier.tier_adjust
+    test = m.filter(pl.col("season") == 2021)
+    plain = career.HorizonModels(H, n_estimators=20, max_depth=2).fit(m, as_of_season=2021).predict(test)["h1_ppg_hat"].to_numpy()
+    adj = tier.predict(test)["h1_ppg_hat"].to_numpy()
+    assert (adj >= 0).all() and not np.allclose(plain, adj)
+    tiers = test.with_columns(career.HorizonModels._tier_expr().alias("t"))["t"].to_list()
+    assert set(tiers) <= {"1-5", "6-12", "13-24", "25-36", "37+"}

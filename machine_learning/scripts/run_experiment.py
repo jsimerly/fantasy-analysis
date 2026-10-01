@@ -55,9 +55,10 @@ def main() -> None:
     ap.add_argument("--replacement", choices=["share", "fill"], default="share",
                     help="replacement level: production flex-share line, or an explicit fill of the league's lineup (lineup.league_fill)")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
-    ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games"],
+    ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games", "tier"],
                     help="walk-forward recalibration per position and horizon: both (default when given), ppg or games")
     ap.add_argument("--quantile-sigma", action="store_true", help="player-specific projection spread from quantile models")
+    ap.add_argument("--position-scale", action="store_true", help="scale each position's value by its holdout realized/projected PAR share")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
@@ -119,7 +120,8 @@ def main() -> None:
                 params[k] = v
     for name, groups in variants:
         cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device,
-                                  params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve)
+                                  params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve,
+                                  position_scale=args.position_scale)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):

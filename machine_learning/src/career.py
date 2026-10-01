@@ -122,9 +122,13 @@ class HorizonModels:
         self.features = list(features) if features is not None else None   # None = FEATURES (production)
         # True / "both": ppg and games lines; "ppg": ppg only (games lines hurt: a least-squares line
         # through a 0-or-14 target pulls starters' games down); "games": games only; False: none
+        # "tier": additive ppg adjustment per position x prior-season tier (rank by ppg within position),
+        # keyed on what the player WAS rather than on the projection -- the conditioning under which the
+        # shrinkage of good players shows up out of sample
         self.calibrate = "both" if calibrate is True else (calibrate or False)
         self.holdout = holdout
         self.calibration: dict | None = None
+        self.tier_adjust: dict | None = None
         self.quantile_sigma = quantile_sigma         # per-player spread from quantile models (else per position)
         self.quantiles = quantiles
         self.quantile_models: dict[int, tuple[XGBRegressor, XGBRegressor]] = {}
@@ -177,9 +181,40 @@ class HorizonModels:
                 hi = XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1,
                                   objective="reg:quantileerror", quantile_alpha=self.quantiles[1], **self.params).fit(Xp, yp)
                 self.quantile_models[k] = (lo, hi)
-        if self.calibrate:
+        if self.calibrate == "tier":
+            self._fit_tier_adjust(train, as_of_season)
+        elif self.calibrate:
             self._fit_calibration(train, as_of_season)
         return self
+
+    @staticmethod
+    def _tier_expr() -> pl.Expr:
+        """Prior-season tier from ppg rank within (season, position) among players with >= 8 games."""
+        r = pl.when(pl.col("games") >= 8).then(pl.col("ppg")).otherwise(None).rank(descending=True).over(["season", "position"])
+        return (pl.when(r <= 5).then(pl.lit("1-5")).when(r <= 12).then(pl.lit("6-12")).when(r <= 24).then(pl.lit("13-24"))
+                  .when(r <= 36).then(pl.lit("25-36")).otherwise(pl.lit("37+")))
+
+    def _fit_tier_adjust(self, train: pl.DataFrame, as_of_season: int | None, min_n: int = 15) -> None:
+        as_of = as_of_season if as_of_season is not None else last_complete_season(train)
+        cut = as_of - self.holdout
+        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
+        adj: dict[int, dict[tuple[str, str], float]] = {}
+        for k in self.horizons:
+            rows = train.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
+            if rows.height < min_n:
+                continue
+            pred = tmp.predict(rows).with_columns(self._tier_expr().alias("_tier"), (pl.col(f"h{k}_ppg") - pl.col(f"h{k}_ppg_hat")).alias("_r"))
+            g = pred.group_by("position", "_tier").agg(pl.len().alias("n"), pl.col("_r").mean().alias("m")).filter(pl.col("n") >= min_n)
+            adj[k] = {(pos, tier): float(m) for pos, tier, _, m in g.iter_rows()}
+        self.tier_adjust = adj
+
+    def _apply_tier_adjust(self, df: pl.DataFrame, k: int, ppg: np.ndarray) -> np.ndarray:
+        per = (self.tier_adjust or {}).get(k)
+        if not per:
+            return ppg
+        tiers = df.with_columns(self._tier_expr().alias("_tier")).select("position", "_tier").rows()
+        delta = np.array([per.get((pos, tier), 0.0) for pos, tier in tiers])
+        return np.clip(ppg + delta, 0.0, None)
 
     def _fit_calibration(self, train: pl.DataFrame, as_of_season: int | None) -> None:
         """Walk-forward recalibration. Temporary models fit as of (as_of - holdout) are scored on
@@ -265,6 +300,8 @@ class HorizonModels:
             ppg = np.clip(self.ppg_models[k].predict(X), 0.0, None)
             if self.calibration:
                 games, ppg = self._apply_calibration(df, k, games, ppg)
+            if self.tier_adjust:
+                ppg = self._apply_tier_adjust(df, k, ppg)
             cols += [pl.Series(f"h{k}_games_hat", games), pl.Series(f"h{k}_ppg_hat", ppg),
                      pl.Series(f"h{k}_fpts_hat", games * ppg)]
             if k in self.quantile_models:
