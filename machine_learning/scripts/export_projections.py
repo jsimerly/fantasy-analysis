@@ -84,11 +84,13 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
             ppg, g = r.get(f"h{k}_ppg_hat"), r.get(f"h{k}_games_hat")
             h.append(_r(ppg * g, 0) if ppg is not None and g is not None else 0)
             v.append(_r(r.get(f"h{k}_vorp_hat") or 0.0, 2))
+        pg = [_r(r["ros_ppg_hat"], 2), _r(r["next_ppg_hat"], 2)] + [_r(r.get(f"h{k}_ppg_hat") or 0.0, 2) for k in tail]
+        g = [_r(r["ros_games_hat"], 2), _r(r["next_games_hat"], 2)] + [_r(r.get(f"h{k}_games_hat") or 0.0, 2) for k in tail]
         out.append({**_common(r),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
                     "iv": _r(r["iv_inseason"]), "iv_pre": _r(r.get("iv_preseason")), "iv_rank_all": int(r["iv_rank_all"]),
-                    "h": h, "v": v,
+                    "h": h, "v": v, "pg": pg, "g": g,                        # per-span projected rate / games (primary scoring)
                     "h1_ppg": _r(r["ros_ppg_hat"]), "h1_games": _r(r["ros_games_hat"])})
     return out
 
@@ -155,18 +157,21 @@ def main() -> None:
             row = by_name.get(r["player_name"])
             if row is None:
                 continue
-            row.setdefault("L", {})[lid] = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks]}
+            base = row["pg"][0] if row.get("pg") else None
+            scale = (r["ros_ppg_hat"] / base) if base and r.get("ros_ppg_hat") is not None and base > 0 else 1.0
+            row.setdefault("L", {})[lid] = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks], "s": _r(scale, 4)}
         curve = meta_l["win_curve"]
         p0 = 1 / (1 + 2.718281828 ** (-(curve["a"] + curve["b"] * curve["mean_points"])))
-        leagues.append({"id": lid, "name": meta_l.get("display_name", lid), "teams": meta_l["league"]["teams"], "slots": meta_l["league"]["slots"],
-                        "replacement": {k: _r(v, 1) for k, v in meta_l["replacement_ppg"].items()}, "starters": meta_l.get("starters"),
-                        "curve": {"mean": _r(curve["mean_points"], 1), "sd": _r(curve["sd_points"], 1), "n": curve.get("n", 0),
-                                  "per10": _r(10 * curve["b"] * p0 * (1 - p0), 3)},
-                        "note": meta_l.get("note", ""), "primary": meta_l.get("lineage_id") == "730630605066371072"})
         try:
             td = gcs_io.read_ml_parquet(*parts[:-1], "teams.parquet")
         except Exception:  # noqa: BLE001
             td = None
+        offset = float(td["lineup_offset"][0]) if td is not None and "lineup_offset" in td.columns else 0.0
+        leagues.append({"id": lid, "name": meta_l.get("display_name", lid), "teams": meta_l["league"]["teams"], "slots": meta_l["league"]["slots"],
+                        "replacement": {k: _r(v, 1) for k, v in meta_l["replacement_ppg"].items()}, "starters": meta_l.get("starters"),
+                        "curve": {"mean": _r(curve["mean_points"], 1), "sd": _r(curve["sd_points"], 1), "n": curve.get("n", 0),
+                                  "per10": _r(10 * curve["b"] * p0 * (1 - p0), 3), "a": curve["a"], "b": curve["b"]},
+                        "offset": _r(offset, 2), "note": meta_l.get("note", ""), "primary": meta_l.get("lineage_id") == "730630605066371072"})
         if td is not None:
             tl = []
             for rid, tname in td.select("roster_id", "team_name").unique().sort("roster_id").iter_rows():
@@ -176,8 +181,8 @@ def main() -> None:
                 free = t.filter(~pl.col("rostered") & pl.col("owned_by").is_null()).sort("m_war", descending=True).head(6)
                 tl.append({"rid": rid, "name": tname, "owner": bool(t["is_owner"][0]) if "is_owner" in t.columns else False,
                            "ppg": _r(t["lineup_ppg_now"][0]), "wp": _r(t["win_prob_now"][0], 3),
-                           "players": [[x["player_name"], x["position"], _r(x["m_war"], 2), _r(x["m_par"], 0), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2)] for x in own.iter_rows(named=True)],
-                           "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2)] for x in trade.iter_rows(named=True)],
+                           "players": [[x["player_name"], x["position"], _r(x["m_war"], 2), _r(x["m_par"], 0), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2), x.get("status") or "active"] for x in own.iter_rows(named=True)],
+                           "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2), x.get("status") or "active"] for x in trade.iter_rows(named=True)],
                            "free": [[x["player_name"], x["position"], _r(x["m_war"], 2)] for x in free.iter_rows(named=True)]})
             teams[lid] = tl
     # ---- model performance: latest persisted backtest summaries + the experiment leaderboard

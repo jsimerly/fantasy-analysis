@@ -134,14 +134,17 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
 
     teams_df = None
     if rosters is not None:
-        rosters = rosters.filter(~pl.col("is_taxi") & pl.col("player_id").is_not_null())
-        owner_of = rosters.select("player_id", pl.col("team_name").alias("owned_by")).unique("player_id")
+        rosters = rosters.filter(pl.col("player_id").is_not_null()).with_columns(
+            pl.when(pl.col("is_taxi")).then(pl.lit("taxi")).when(pl.col("is_reserve")).then(pl.lit("IR")).otherwise(pl.lit("active")).alias("status"))
+        # ownership counts every roster spot (taxi and IR players are owned and tradeable); only active players can start
+        owner_of = rosters.select("player_id", pl.col("team_name").alias("owned_by"), "status").unique("player_id")
         pool = out.join(owner_of, on="player_id", how="left")
         teams_list = rosters.select("roster_id", "team_name", "owner_id").unique().sort("roster_id").rows()
         per_team = {}
         for roster_id, name, oid in teams_list:
             mine = rosters.filter(pl.col("roster_id") == roster_id)["player_id"].implode()
-            r = pool.filter(pl.col("player_id").is_in(mine))
+            active = rosters.filter((pl.col("roster_id") == roster_id) & (pl.col("status") == "active"))["player_id"].implode()
+            r = pool.filter(pl.col("player_id").is_in(active))
             if r.height:
                 per_team[roster_id] = (name, oid, mine, r, war.roster_total(r, spec, comps[0].ppg))
         # projected lineups vs the curve: centre the curve on the league's average projected lineup
@@ -151,13 +154,19 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
         for roster_id, (name, oid, mine, r, total) in per_team.items():
             cands = pool.filter(~pl.col("player_id").is_in(mine)).sort("war", descending=True).head(80)
             t = war.team_marginal_war(r, spec, curve, comps, rate, candidates=cands, offset=offset)
+            # taxi / IR players of this roster: owned, not in the lineup, no marginal wins
+            bench = pool.filter(pl.col("player_id").is_in(mine) & ~pl.col("player_id").is_in(r["player_id"].implode()))
+            if bench.height:
+                t = pl.concat([t, bench.select("player_id", "player_name", "position", pl.lit(True).alias("rostered")).with_columns(
+                    [pl.lit(0.0).alias(c) for c in t.columns if c.startswith("m_")])], how="diagonal_relaxed")
             t = (t.join(cands.select("player_id", "owned_by"), on="player_id", how="left")
+                   .join(owner_of.select("player_id", "status"), on="player_id", how="left")
                    .join(out.select("player_id", pl.col("war").alias("league_war"), "ktc_value"), on="player_id", how="left")
                    .with_columns(pl.lit(roster_id).alias("roster_id"), pl.lit(name).alias("team_name"), pl.lit(total).alias("lineup_ppg_now"),
                                  pl.lit(float(curve.win_prob(total + offset))).alias("win_prob_now"), pl.lit(offset).alias("lineup_offset"),
                                  pl.lit(bool(owner_id and oid == owner_id)).alias("is_owner")))
             rows.append(t)
-        teams_df = pl.concat(rows)
+        teams_df = pl.concat(rows, how="diagonal_relaxed")
         print(f"  mean win probability across rosters: {teams_df.group_by('roster_id').agg(pl.col('win_prob_now').first())['win_prob_now'].mean():.3f}")
         with pl.Config(tbl_rows=14, tbl_width_chars=180, fmt_str_lengths=24, float_precision=2):
             print(teams_df.group_by("roster_id", "team_name", "is_owner").agg(pl.col("lineup_ppg_now").first(), pl.col("win_prob_now").first())
