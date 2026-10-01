@@ -29,6 +29,7 @@ import polars as pl  # noqa: E402
 
 import gcs_io  # noqa: E402
 import market  # noqa: E402
+import picks  # noqa: E402
 import value  # noqa: E402
 
 
@@ -223,7 +224,16 @@ def main() -> None:
             x["iv_rank_all"] = i + 1
     print(f"leagues with WAR: {[l['name'] for l in leagues]}; roster views: {list(teams)}")
 
+    try:
+        now_season = int(args.season or args.as_of_season + 1)
+        pick_tab, pick_meta = picks.build_from_lake(now_season, [now_season + 1, now_season + 2, now_season + 3], rate=rate)
+        pick_rows = [[int(r["season"]), int(r["round"]), r["tier"], int(r["n_slots"]), _r(r["wins_undiscounted"], 3), r.get("ktc")] for r in pick_tab.iter_rows(named=True)]
+        picks_out = {"now": now_season, "rows": pick_rows, "meta": pick_meta}
+        print(f"picks: curve a={pick_meta['a']:.2f} b={pick_meta['b']:.2f} on {pick_meta['n_players']} drafted players, {pick_meta['n_rookie_picks']} league rookie picks")
+    except Exception as e:  # noqa: BLE001
+        print("picks: skipped:", str(e)[:200]); picks_out = None
     out = {
+        "picks": picks_out,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,

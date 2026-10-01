@@ -114,6 +114,15 @@ model gives QBs ~33 % of league value where QBs delivered ~26 %, and WRs ~29 % w
 delivered ~38 %; QB projection spread (sigma 5.2 vs 2.5 for WR) inflates QB upside credit. A
 position-level calibration is a value-definition experiment, not a feature one (BACKLOG 13).
 
+## Draft picks in wins
+
+`src/picks.py` prices a rookie pick as the expected wins of the player taken there: realized WAR
+by NFL draft pick over ten seasons for every drafted QB / RB / WR / TE (classes with a full
+window, never-played counted as zero), a monotone log-log curve through it, and the leagues' own
+rookie drafts for which NFL picks actually go at each slot tier (Early / Mid / Late thirds of a
+round, KTC's tiers). The export carries the table (`picks`), the Rosters tab shows it discounted
+at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG item 15.
+
 ## Weekly refresh (Cloud Run)
 
 `scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress

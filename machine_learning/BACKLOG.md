@@ -140,6 +140,22 @@ look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).
     players by slot; current picks come from `fact_pick_values` (standings-projected slot tier).
     Separate model from the player projection; likely a compound (slot -> expected rookie
     profile -> WAR).
+    **Done 2026-10-01 (first cut, `src/picks.py`, Rosters tab "Draft picks in wins").** Two
+    steps with real samples: (1) realized WAR by NFL draft pick for every drafted QB/RB/WR/TE of
+    the 2010–16 classes (539 players, ten seasons, never-played = 0, weekly line of each season,
+    owner's curve), fitted log(wins + 0.05) = 1.00 − 0.71·log(pick): NFL pick 1 ≈ 2.7 wins
+    (10-year, 20 % discounted), 6 ≈ 0.7, 12 ≈ 0.4, 24 ≈ 0.23, 48 ≈ 0.12, 96 ≈ 0.05; (2) the
+    three leagues' rookie drafts (258 picks) say which NFL picks go at each slot (early 1sts
+    median NFL pick 6, mid 20, late 25, 2nd round 62, 3rd 93), so a slot tier's value is the
+    curve averaged over the picks actually taken there. 2027 picks (one year of discount):
+    early 1st 0.80 wins, mid 0.42, late 0.21, 2nd 0.08–0.14, 3rd 0.03–0.07; per 1,000 KTC
+    0.11 / 0.07 / 0.04 / 0.02–0.04 / 0.01–0.03 against 0.15–0.27 for the owner's players, i.e.
+    the market pays two to four times more per expected win for picks than for players, most of
+    all for late firsts and seconds. Caveats: the curve is one class era; option value (the
+    chance a slot lands a pick-1 talent) is in the mean, not priced separately; the leagues'
+    own 2022–23 picks delivered 1.4 three-year wins per early / mid 1st (n = 6 each). Next:
+    standings-projected tier per owned pick (which slot each team's pick is likely to be) and
+    picks as pieces in the trade builder.
 
 16. **Rookie premium: market, not model (tested 2026-10-01).** Out of sample (in-season model fit
     as of T-1; cohorts 2022-2024, weeks 3/6/9, KTC-priced players): the market's rookies finished
@@ -259,14 +275,30 @@ default and regression to the mean has to be learnt) and relevance weights (1 + 
 | weights (ppg) | 0.604 | | 0.684 | 0.306 |
 | residual + weights | 0.599 | | 0.675 | 0.309 |
 
+| 600 trees at 0.03 | 0.595 | 0.624 | 0.684 | 0.303 |
+| depth 5, mcw 3 | 0.589 | 0.622 | 0.684 | 0.301 |
+| lambda 0.1, mcw 2 | 0.593 | | 0.682 | 0.303 |
+| residual + trend | 0.618 | 0.623 | 0.686 | 0.300 |
+| opportunity × efficiency (item 5) | 0.589 | 0.617 | 0.651 | 0.373 |
+
 Trend (second-half vs first-half usage, last-4 form) and the residual target are the two
-positive signals, each worth under 0.01; injury and situation hurt as inputs to the career
-model (their information is already in games / usage, and the extra columns cost the small
-cohorts more than they add). Per-cohort results are now persisted per run and `--paired A B`
-gives the mean difference, its standard error over the eight cohorts and the cohort wins, so a
-0.007 can be told from noise. Pending in this round: hyperparameters (600 trees at 0.03,
-depth 5, low regularisation), residual + trend, the opportunity × efficiency target (item 5),
-and the paired tests of the winners.
+positive signals; injury and situation hurt as inputs to the career model (their information
+is already in games / usage, and the extra columns cost the small cohorts more than they add);
+every hyperparameter move away from the defaults loses. Per-cohort results are now persisted
+per run and `--paired A B` gives the mean difference, its standard error over the cohorts and
+the cohorts won. Paired, residual + trend vs current: +0.015 on the top-150 agreement
+(t = 1.6, 6 of 8 cohorts), −0.006 wins MAE (t = −1.4); over twelve cohorts (2011–2022)
++0.006 (t = 0.7, 7 of 12), top decile +0.007 (t = 1.1), top-12 bias −0.007 (t = −1.9).
+Consistent in sign on every metric, never past the 2.4 line: **not adopted**; the production
+model stays `base,career`, level target, default trees. The honest reading of round 5 is that
+training-side changes are worth at most a hundredth on this objective; what is left of item 18
+is inputs the model does not have.
+
+Item 5 (opportunity × efficiency), tested: a first run scored 0.386 because a quarter of the
+2000–09 rows carry no targets / attempts in the season fact (opportunities read as zero); with
+the models restricted to rows with recorded opportunities it scores 0.589 vs 0.603, top decile
+0.651 vs 0.686 (t = −4.1), top-12 bias worse. Projecting volume and efficiency separately and
+multiplying loses to projecting the rate directly: the product compounds two errors. Rejected.
 
 ## Objective, restated (2026-10-01, final)
 Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
