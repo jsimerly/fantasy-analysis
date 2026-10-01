@@ -48,6 +48,7 @@ class ExperimentConfig:
     position_scale: bool = False     # scale each position's value by (realized / projected) PAR share on the holdout seasons
     replacement: str = "share"       # how rep_for was built: share | fill | weekly (recorded in the ledger; the harness picks rep_for)
     realized_replacement: str | None = None   # score realized WAR on a different replacement (cross-check that a rep change helps the ORDERING, not just the metric)
+    fixed_scale: dict = field(default_factory=dict)   # position -> factor on value (iv / war / par), a fixed cross-position calibration to test
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -144,10 +145,22 @@ def run_experiment(
             scales = position_scales(df, models, rep, H, T, cfg)
             sc = pl.col("position").replace_strict(scales, default=1.0, return_dtype=pl.Float64)
             cohort = cohort.with_columns((pl.col("iv") * sc).alias("iv"), (pl.col("war") * sc).alias("war"), (pl.col("par") * sc).alias("par"))
+        if cfg.fixed_scale:
+            sc = pl.col("position").replace_strict({k: float(v) for k, v in cfg.fixed_scale.items()}, default=1.0, return_dtype=pl.Float64)
+            cohort = cohort.with_columns((pl.col("iv") * sc).alias("iv"), (pl.col("war") * sc).alias("war"), (pl.col("par") * sc).alias("par"))
         cohort = market_for(cohort, T)
         obs = cohort.filter(pl.col("realized_iv").is_not_null())
         priced = obs.filter(pl.col("ktc_value").is_not_null())
         row = {"name": cfg.name, "cohort": T, "n_all": obs.height, "n_priced": priced.height}
+        # position shares of projected vs realized WAR on the observable cohort (cross-position calibration)
+        if "realized_war" in obs.columns and obs["realized_war"].sum() > 0 and obs["war"].sum() > 0:
+            g = obs.group_by("position").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+            tp, tr = g["p"].sum(), g["r"].sum()
+            err = 0.0
+            for pos, p_, r_ in g.iter_rows():
+                row[f"share_proj_{pos}"], row[f"share_real_{pos}"] = p_ / tp, r_ / tr
+                err += abs(p_ / tp - r_ / tr)
+            row["share_abs_err"] = err
         if obs.height:
             row["spearman_iv_vs_realized_all"] = value.spearman(obs["iv"].to_numpy(), obs["realized_iv"].to_numpy())
             # ---- primary, market-free: projected WAR vs realized WAR
@@ -186,13 +199,14 @@ def run_experiment(
                 row[f"bias_top12_h{k}"] = float(res[top].mean()) if top.any() else None
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
-    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_"))]
+    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_", "share_"))]
     # warn when market context is missing entirely (the primary metrics never need it)
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
                "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
                "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
                "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
+               "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -202,9 +216,9 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
-               "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all",
+               "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
                "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread"]
@@ -212,7 +226,7 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
     row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c)
-                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h")))])
+                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h", "share_proj_", "share_real_")))])
     return row if ledger is None or ledger.height == 0 else pl.concat([ledger, row], how="diagonal_relaxed")
 
 
@@ -228,8 +242,8 @@ def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str |
         lb = lb.filter(pl.col("horizon") == horizon)
     if cohorts is not None:
         lb = lb.filter(pl.col("cohorts") == cohorts)
-    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "position_scale", "replacement", "params", "horizon", "cohorts",
-                        "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "top_decile_war_all",
+    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "params", "horizon", "cohorts",
+                        "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                         "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "edge_corr", "edge_spread", "timestamp", "commit"] if c in lb.columns]
     key = next((c for c in (PRIMARY, "spearman_iv_vs_realized_all", "spearman_iv_vs_realized")
                 if c in lb.columns and lb[c].null_count() < lb.height), "name")
