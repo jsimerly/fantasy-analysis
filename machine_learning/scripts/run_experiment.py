@@ -52,8 +52,11 @@ def main() -> None:
     ap.add_argument("--last-cohort", type=int, default=None, help="default: last complete season minus horizon")
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
-    ap.add_argument("--replacement", choices=["share", "fill"], default="share",
-                    help="replacement level: production flex-share line, or an explicit fill of the league's lineup (lineup.league_fill)")
+    ap.add_argument("--replacement", choices=["share", "fill", "weekly"], default="share",
+                    help="replacement level: production flex-share line, an explicit fill of the league's lineup (lineup.league_fill), "
+                         "or the injury-aware weekly fill over players who actually played each week (lineup.replacement_weekly)")
+    ap.add_argument("--realized-replacement", choices=["share", "fill", "weekly"], default=None,
+                    help="score realized value on a different replacement level (ledger shows projected/realized)")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
     ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games", "tier"],
                     help="walk-forward recalibration per position and horizon: both (default when given), ppg or games")
@@ -91,16 +94,23 @@ def main() -> None:
     curve = lg.curve_for_lineage(replacement.PRIMARY_LINEAGE)
     print(f"WAR units: owner's league curve, weekly mean {curve.mean_points:.1f}, spread {curve.sd_points:.1f} ({curve.n} team-weeks)")
 
-    if args.replacement == "fill":
+    if "share" != args.replacement or (args.realized_replacement and args.realized_replacement != "share"):
         import league as lg
         import lineup
         spec = lg.LeagueSpec.from_settings(gcs_io.read_lake(SETTINGS_PATH))
         pool = matrix.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
 
-    def rep_for(T: int) -> dict:
-        if args.replacement == "fill":
+    def rep_by(kind: str, T: int) -> dict:
+        if kind == "fill":
             return lineup.replacement_from_history(pool, spec, list(range(T - 4, T + 1)))
+        if kind == "weekly":
+            return lineup.replacement_weekly(pool, ctx.weeks, spec, list(range(T - 4, T + 1)))
         return replacement.replacement_levels(matrix, starters, seasons=list(range(T - 4, T + 1)))
+
+    def rep_for(T: int) -> dict:
+        return rep_by(args.replacement, T)
+
+    realized_rep_for = (lambda T: rep_by(args.realized_replacement, T)) if args.realized_replacement else None
 
     def market_for(cohort: pl.DataFrame, T: int) -> pl.DataFrame:
         return market.attach_market(cohort, date(T + 1, 2, 15), hist, xw)
@@ -121,8 +131,8 @@ def main() -> None:
     for name, groups in variants:
         cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device,
                                   params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve,
-                                  position_scale=args.position_scale)
-        per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for)
+                                  position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement)
+        per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
             print(f"\n== {name}: {summary['groups']} ({summary['n_features']} features) ==")

@@ -68,6 +68,29 @@ def league_fill(pool: pl.DataFrame, spec: LeagueSpec, ppg_col: str = "ppg", pos_
     return out
 
 
+def replacement_weekly(season_df: pl.DataFrame, weeks_df: pl.DataFrame, spec: LeagueSpec, seasons: list[int],
+                       min_games: int = 8) -> dict[str, float]:
+    """Injury-aware league fill: the replacement in a given week is the best player, by season ppg,
+    left over after the league's starters are drawn from the players who actually PLAYED that week.
+    Starters who are out that week are filled from the bench, so the marginal available player sits
+    deeper than the full-season fill; averaging over regular-season weeks and ``seasons`` reads the
+    injury rate off the data per position instead of assuming one.
+
+    ``weeks_df`` is fact_player_week: a (season, week, player_id) row means the player was active."""
+    acc: dict[str, list[float]] = {}
+    for s in seasons:
+        pool = season_df.filter((pl.col("season") == s) & (pl.col("games") >= min_games)).select("player_id", "position", "ppg")
+        if pool.height == 0:
+            continue
+        reg = 18 if s >= 2021 else 17
+        active = weeks_df.filter((pl.col("season") == s) & (pl.col("week") <= reg)).select("week", "player_id").unique()
+        for (w,), ids in active.group_by("week"):
+            on_field = pool.join(ids.select("player_id"), on="player_id", how="semi")
+            for q, v in league_fill(on_field, spec).items():
+                acc.setdefault(q, []).append(v)
+    return {q: float(np.mean(v)) for q, v in acc.items()}
+
+
 def POSITIONS_OF(spec: LeagueSpec) -> list[str]:
     seen: list[str] = []
     for s in spec.slot_list:

@@ -46,6 +46,8 @@ class ExperimentConfig:
     curve: object = None             # league.WinCurve for WAR units; None = the owner's league's known curve
     top_n: int = 150                 # "relevant players" cut for the market-free metrics: top N by projected WAR
     position_scale: bool = False     # scale each position's value by (realized / projected) PAR share on the holdout seasons
+    replacement: str = "share"       # how rep_for was built: share | fill | weekly (recorded in the ledger; the harness picks rep_for)
+    realized_replacement: str | None = None   # score realized WAR on a different replacement (cross-check that a rep change helps the ORDERING, not just the metric)
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -113,9 +115,11 @@ def run_experiment(
     matrix: pl.DataFrame, cfg: ExperimentConfig, ctx: fg.Context,
     rep_for: Callable[[int], dict[str, float]],
     market_for: Callable[[pl.DataFrame, int], pl.DataFrame],
+    realized_rep_for: Callable[[int], dict[str, float]] | None = None,
 ) -> tuple[pl.DataFrame, dict]:
     """``matrix`` is the career matrix (``career.build_career_matrix``) for the configured horizons;
-    ``rep_for(T)`` gives replacement ppg as of T; ``market_for(cohort, T)`` attaches ``ktc_value``."""
+    ``rep_for(T)`` gives replacement ppg as of T; ``market_for(cohort, T)`` attaches ``ktc_value``.
+    ``realized_rep_for`` scores realized value / WAR on another replacement level (default: the same)."""
     groups = fg.resolve(cfg.groups)
     cols = fg.feature_columns(groups)
     df = fg.assemble(matrix, groups, ctx)
@@ -123,18 +127,19 @@ def run_experiment(
     rows = []
     for T in cfg.cohorts:
         rep = rep_for(T)
+        rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
                                       **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
-        cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep, H, cfg.discount_rate)
+        cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep_real, H, cfg.discount_rate)
         # the same thing in wins: projected WAR and realized WAR on the league's curve
         import war as _war
         from league import WinCurve, OWNER_CURVE_FALLBACK
         curve = cfg.curve or WinCurve.normal(*OWNER_CURVE_FALLBACK)
         cohort = _war.wins_above_replacement(cohort, rep, curve, _war.career_components(H), cfg.discount_rate, sigma=getattr(models, "sigma", None))
-        cohort = _war.realized_wins(cohort, rep, curve, H, cfg.discount_rate)
+        cohort = _war.realized_wins(cohort, rep_real, curve, H, cfg.discount_rate)
         if cfg.position_scale:
             scales = position_scales(df, models, rep, H, T, cfg)
             sc = pl.col("position").replace_strict(scales, default=1.0, return_dtype=pl.Float64)
@@ -187,6 +192,7 @@ def run_experiment(
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
                "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
                "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
+               "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -196,7 +202,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all",
                # context: the market on the same (priced) players
@@ -222,7 +228,7 @@ def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str |
         lb = lb.filter(pl.col("horizon") == horizon)
     if cohorts is not None:
         lb = lb.filter(pl.col("cohorts") == cohorts)
-    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "params", "horizon", "cohorts",
+    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "position_scale", "replacement", "params", "horizon", "cohorts",
                         "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "top_decile_war_all",
                         "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "edge_corr", "edge_spread", "timestamp", "commit"] if c in lb.columns]
     key = next((c for c in (PRIMARY, "spearman_iv_vs_realized_all", "spearman_iv_vs_realized")

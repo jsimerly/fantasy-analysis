@@ -165,6 +165,37 @@ pieces are right, not just the total.
     (n = 50) realized 10.2 ppg vs 9.9 projected next year and only 20 % got back to ≥ 90 % of
     their prior rate, so the model's cold read on a Jefferson-type season is calibrated.
 
+## Replacement level and injuries (2026-10-01)
+19. **Injury-aware replacement (tested 2026-10-01, out of sample, cohorts 2015–2022).** The question:
+    if the league starts 20 QBs but starters get hurt, is the marginal available player the 22nd?
+    Rather than assume a rate, `lineup.replacement_weekly` fills the league's lineups each week from
+    the players who actually played (fact_player_week) and averages the leftover's season ppg over
+    regular-season weeks. Injuries AND byes push the line deeper than a 10 % guess, and by different
+    amounts per position (2021–25, owner's league, effective starters full-season → weekly):
+    QB 20 → 25 (+23 %), RB 28 → 32.5 (+16 %), WR 31 → 39 (+25 %), TE 12 → 16 (+35 %); replacement
+    ppg QB −1.6, RB −0.8, WR −0.9, TE −0.8. TE moves most because its ppg curve is flat past 12.
+    Harness, projected WAR vs realized WAR (`spearman_war_top`), 2 × 2 so the yardstick is held fixed:
+
+    | projected \ realized | share rep | weekly rep |
+    |---|---|---|
+    | share rep (current) | 0.580 | 0.606 |
+    | weekly rep | 0.569 | 0.603 |
+
+    Scoring both sides on the weekly rep reads 0.603 vs 0.580, but that is the yardstick moving, not
+    the ranking: against either fixed realized definition the weekly-rep projection is no better
+    (0.569 vs 0.580; 0.603 vs 0.606). The replacement line is a per-position constant, so it cannot
+    reorder players within a position; it only shifts positions against each other (QBs gain most)
+    and that shift did not help. Verdict: not adopted for valuation; kept as `--replacement weekly`
+    in the harness (and the choice is now recorded in the ledger, with `--realized-replacement` for
+    cross-checks). The honest form of the user's point lives elsewhere: a player's OWN injury risk
+    is already in WAR through projected games; the roster layer (trade builder) enumerates deal
+    players in / out by availability. Where a weekly-fill line would matter is bench valuation —
+    the 25th QB is worth something in a 10-team superflex because he starts 20 % of weeks — which
+    is a roster-construction question (depth value), not a player-ranking one. Open as item 20.
+20. **Depth value for benches.** With weekly availability known per position (item 19), value a
+    bench player as the weeks he would actually start for THIS roster (expected starts × his edge
+    over the next man), rather than 0 below replacement. Needs the roster layer, not the model.
+
 ## Objective, restated (2026-10-01, final)
 Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
 a test set, the model is trained on earlier seasons only, and projected WAR is scored against the

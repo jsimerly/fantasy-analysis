@@ -73,6 +73,16 @@ from the league's own configuration rather than a fixed line:
    24.5 / 34.5 / 11 the fixed flex shares assumed, which moves RB replacement from 10.9 to 9.9 ppg.
    Backtested like for like, fill-based replacement is at least as good as the production line
    (rank agreement with realized value 0.673 vs 0.671).
+   **Injury-aware fill** (`lineup.replacement_weekly`): the same fill, but drawn each week only
+   from the players who actually played (fact_player_week rows), then averaged over regular-season
+   weeks. Starters who are out or on bye are filled from the bench, so the marginal available
+   player sits deeper than the full-season fill, and the depth is read off the data per position
+   rather than assumed: in effective starters the owner's league goes QB 20 → 25, RB 28 → 32.5,
+   WR 31 → 39, TE 12 → 16 (2021–25), i.e. replacement ppg QB −1.6, RB −0.8, WR −0.9, TE −0.8.
+   Selectable in the harness (`--replacement weekly`, with `--realized-replacement` to hold the
+   yardstick fixed). Verdict (BACKLOG item 19): it moves the yardstick, not the ranking — against
+   a fixed realized definition the weekly line is no better (0.569 vs 0.580), so valuation keeps
+   the full-season fill.
 3. **Win curve** (`WinCurve`): P(win a week | points) on the league's own standings
    (`team_weeks_from_standings`); a logistic fit with 300+ team-weeks, otherwise a normal-margin
    curve from the league's weekly mean / spread. Wins are linear-to-concave in points, so there
@@ -123,7 +133,12 @@ leak-free against KTC the following February:
 scripts/run_experiment.py --list-groups
 scripts/run_experiment.py --variants "current=base,career;injury=base,career,injury;all=base,career,injury,role,trend,situation" --horizon 3 --first-cohort 2015
 scripts/run_experiment.py --leaderboard --horizon 3
+scripts/run_experiment.py --groups base,career --name weekly_rep --horizon 3 --first-cohort 2015 --replacement weekly
 ```
+
+`--replacement share|fill|weekly` picks how replacement level is built (production flex-share
+line, explicit league fill, or the injury-aware weekly fill); it is recorded in the ledger so runs
+compare like for like.
 
 Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
 the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,
