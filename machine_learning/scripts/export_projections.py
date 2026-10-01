@@ -139,8 +139,57 @@ def main() -> None:
         priced = proj.filter(pl.col("ktc_value").is_not_null())
         spearman = float(value.spearman(priced["iv_inseason"].to_numpy(), priced["ktc_value"].to_numpy())) if priced.height else None
 
+    # ---- WAR per league (build_war.py outputs): per-player value components per league + roster views
+    leagues, teams = [], {}
+    tail_tag = f"season={args.season or args.as_of_season}/week={args.week or 0}/run_date={args.run_date}"
+    by_name = {r["name"]: r for r in rows}
+    for path in sorted(p for p in gcs_io.list_ml("war") if p.endswith(f"{tail_tag}/meta.json")):
+        parts = path.split("/")
+        lid = parts[1].split("=", 1)[1]
+        meta_l = gcs_io.read_ml_json(*parts[:-1], "meta.json")
+        if "display_name" not in meta_l:                 # output of an older build_war; not a league of the owner's
+            continue
+        wp = gcs_io.read_ml_parquet(*parts[:-1], "projections.parquet")
+        ks = sorted(int(c.split("_")[1]) for c in wp.columns if c.startswith("war_") and c.split("_")[1].isdigit())
+        for r in wp.iter_rows(named=True):
+            row = by_name.get(r["player_name"])
+            if row is None:
+                continue
+            row.setdefault("L", {})[lid] = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks]}
+        curve = meta_l["win_curve"]
+        p0 = 1 / (1 + 2.718281828 ** (-(curve["a"] + curve["b"] * curve["mean_points"])))
+        leagues.append({"id": lid, "name": meta_l.get("display_name", lid), "teams": meta_l["league"]["teams"], "slots": meta_l["league"]["slots"],
+                        "replacement": {k: _r(v, 1) for k, v in meta_l["replacement_ppg"].items()}, "starters": meta_l.get("starters"),
+                        "curve": {"mean": _r(curve["mean_points"], 1), "sd": _r(curve["sd_points"], 1), "n": curve.get("n", 0),
+                                  "per10": _r(10 * curve["b"] * p0 * (1 - p0), 3)},
+                        "note": meta_l.get("note", ""), "primary": meta_l.get("lineage_id") == "730630605066371072"})
+        try:
+            td = gcs_io.read_ml_parquet(*parts[:-1], "teams.parquet")
+        except Exception:  # noqa: BLE001
+            td = None
+        if td is not None:
+            tl = []
+            for rid, tname in td.select("roster_id", "team_name").unique().sort("roster_id").iter_rows():
+                t = td.filter(pl.col("roster_id") == rid)
+                own = t.filter(pl.col("rostered")).sort("m_war", descending=True)
+                trade = t.filter(~pl.col("rostered") & pl.col("owned_by").is_not_null()).sort("m_war", descending=True).head(12)
+                free = t.filter(~pl.col("rostered") & pl.col("owned_by").is_null()).sort("m_war", descending=True).head(6)
+                tl.append({"rid": rid, "name": tname, "owner": bool(t["is_owner"][0]) if "is_owner" in t.columns else False,
+                           "ppg": _r(t["lineup_ppg_now"][0]), "wp": _r(t["win_prob_now"][0], 3),
+                           "players": [[x["player_name"], x["position"], _r(x["m_war"], 2), _r(x["m_par"], 0), _r(x["league_war"], 2), x["ktc_value"]] for x in own.iter_rows(named=True)],
+                           "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"]] for x in trade.iter_rows(named=True)],
+                           "free": [[x["player_name"], x["position"], _r(x["m_war"], 2)] for x in free.iter_rows(named=True)]})
+            teams[lid] = tl
+    default_league = next((l["id"] for l in leagues if l["primary"]), leagues[0]["id"] if leagues else None)
+    if default_league:
+        rows.sort(key=lambda x: -(sum(w * (1 - rate) ** i for i, w in enumerate(x["L"][default_league]["w"])) if default_league in x.get("L", {}) else -1))
+        for i, x in enumerate(rows):
+            x["iv_rank_all"] = i + 1
+    print(f"leagues with WAR: {[l['name'] for l in leagues]}; roster views: {list(teams)}")
+
     out = {
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
+        "leagues": leagues, "default_league": default_league, "teams": teams,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
         "replacement_ppg": meta["replacement_ppg"], "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
         "spearman": spearman, "rows": rows,

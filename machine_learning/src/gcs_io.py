@@ -85,3 +85,9 @@ def read_lake_prefix(prefix: str, partition: str | None = None) -> pl.DataFrame:
     if not frames:
         raise FileNotFoundError(f"no parquet objects under gs://{LAKE_BUCKET}/{prefix}")
     return pl.concat(frames, how="diagonal_relaxed")
+
+
+def list_ml(*parts: str) -> list[str]:
+    """Blob names (relative to this project's ML prefix) under ``parts``."""
+    prefix = f"{PROJECT}/" + "/".join(parts)
+    return [b.name[len(PROJECT) + 1:] for b in _client().list_blobs(ML_BUCKET, prefix=prefix)]

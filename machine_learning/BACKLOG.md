@@ -105,3 +105,21 @@ Done 2026-10-01 (late): IV v2 = WAR (`src/league.py`, `src/lineup.py`, `src/war.
 league win curve turns PAR into wins, per-roster marginal WAR + outside targets, any league via
 JSON. Rank-match fair value on the table removed the curve artifact that made every top asset
 look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).
+
+15. **Price draft picks into WAR.** A pick is a claim on the player taken at that slot: value =
+    E[WAR of the player drafted there | slot, class] discounted to the draft date, plus the
+    option value of the slot's distribution. Build from history: the league's own rookie drafts
+    (bronze sleeper drafts/draft_picks, 2021+) and NFL draft capital -> realized WAR of those
+    players by slot; current picks come from `fact_pick_values` (standings-projected slot tier).
+    Separate model from the player projection; likely a compound (slot -> expected rookie
+    profile -> WAR).
+
+16. **Rookie premium: market, not model (tested 2026-10-01).** Out of sample (in-season model fit
+    as of T-1; cohorts 2022-2024, weeks 3/6/9, KTC-priced players): the market's rookies finished
+    13.7 ranks WORSE than it ranked them (vets 8.9 ranks better); the model's rookie ranks were
+    off by 2.4. Realized minus projected next-season points: rookies +20, vets +34 -- the model
+    is not under-projecting rookies relative to veterans. Rookies the market had in its top 40 at
+    week 3 (n=19): market rank 25, model rank 31, realized 63. So "every rookie looks rich" is
+    mostly the market's rookie premium; the model's rookie prior is close to unbiased. Open
+    question worth a test: whether the premium is rational as resale value (rookies hold price
+    for a year even when they underperform), which an intrinsic measure will never show.
