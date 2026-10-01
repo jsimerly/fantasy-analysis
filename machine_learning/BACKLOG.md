@@ -94,6 +94,24 @@ model's own weights are 0.49 / 0.37 at W3 and 0.62 / 0.23 at W9 — already abou
     market's shares then matched realized (QB 27 / WR 38). Candidate causes: QB sigma (5.2) doubles
     WR's (2.5) and inflates expected-excess upside; WR shrinkage; QB games. Test as a value
     variant in the harness (cross-position rank agreement + per-position share error).
+    **Tested 2026-10-01 (weekly line, cohorts 2015–2022, projected vs realized 3-year WAR on every
+    projected player; the ledger now records per-position shares and `share_abs_err`).** Projected
+    shares QB 28.9 / RB 30.1 / TE 10.0 / WR 31.0 % vs realized QB 27.0 / RB 30.0 / TE 11.1 / WR 31.9 %.
+    The QB tilt is 2 points, not the 7 the priced-player IV comparison suggested. A fixed QB ×0.8
+    (`--fixed-scale QB=0.8`) overshoots (24.5 % vs 27.0, share error 0.092 → 0.101) while nudging
+    the top-150 rank agreement 0.603 → 0.613; not adopted. Player level (cohorts 2017–22, players
+    projected > 0.3 WAR): realized / projected is QB 1.16, RB 1.26, TE 1.33, WR 1.44, so the model
+    under-projects good players everywhere and least for QBs, which is the whole cross-position
+    tilt: item 18 (shrinkage), worst for WRs. By QB age: <26 1.33, 26–29 1.04, 30–33 1.09, 34+ 0.91;
+    by tier: QB1–12 1.29, QB13–24 1.02, QB25+ 1.39. So the "every QB is cheap vs KTC" page pattern
+    (31 of 39 priced QBs, mean age 30.6 vs 25.4 for the fairly-priced ones) is a disagreement with
+    the market's age curve, and the next three years of wins side with the model on 26–33-year-olds
+    and slightly with the market on 34+. What the model cannot see: resale value and retirement
+    beyond the 3-year window (its years-3+ tail is 30–35 % of an old QB's value and is unverified),
+    and, in-season, depth charts (backups projected 8–11 ROS games: Brissett, Mariota, Lock,
+    Watson) — item 11 for the in-season model. No manual position weights exist anywhere in
+    production; values are the tree models' points and games projections through the league's
+    lineup, replacement line and win curve.
 
 14. **WAR acceptance test (needs data).** Which definition (PAR vs WAR, share vs fill replacement)
     best predicts team weekly wins from roster strength. Standings exist from 2025-10 and roster
