@@ -43,3 +43,19 @@ def test_pick_table_discounts_future_drafts_and_prices_them():
     assert e27["wins"] > l27["wins"] > 0
     assert abs(e28["wins"] - e27["wins"] * 0.8) < 1e-9 and abs(e27["wins"] - e27["wins_undiscounted"] * 0.8) < 1e-9
     assert abs(e27["wins_per_1000"] - e27["wins"] / 7.0) < 1e-9 and e28["ktc"] is None
+
+
+def test_owned_picks_default_to_the_original_roster_unless_traded():
+    traded = pl.DataFrame({"season": ["2027"], "round": [1], "original_roster_id": [2], "owner_roster_id": [5]})
+    out = picks.owned_picks(traded, [1, 2, 5], [2027, 2028], rounds=[1, 2])
+    assert out.height == 2 * 2 * 3
+    r = out.filter((pl.col("season") == 2027) & (pl.col("round") == 1) & (pl.col("original_roster_id") == 2)).row(0, named=True)
+    assert r["owner_roster_id"] == 5
+    assert (out.filter(~((pl.col("season") == 2027) & (pl.col("round") == 1) & (pl.col("original_roster_id") == 2)))
+            .select((pl.col("owner_roster_id") == pl.col("original_roster_id")).all()).item())
+
+
+def test_projected_tier_puts_the_worst_lineup_early():
+    assert picks.projected_tier(10, 10) == "Early" and picks.projected_tier(1, 10) == "Late" and picks.projected_tier(5, 10) == "Mid"
+    assert picks.projected_tier(12, 12) == "Early" and picks.projected_tier(1, 12) == "Late"
+

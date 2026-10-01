@@ -91,6 +91,27 @@ def pick_table(by_tier: pl.DataFrame, a: float, b: float, seasons: list[int], no
     return out
 
 
+def owned_picks(traded: pl.DataFrame, roster_ids: list[int], seasons: list[int], rounds: list[int] = (1, 2, 3)) -> pl.DataFrame:
+    """Every (season, round, original roster) pick with its current owner: each roster owns its own
+    picks unless Sleeper's traded-pick state (season, round, original_roster_id, owner_roster_id)
+    says otherwise."""
+    base = pl.DataFrame({"season": [s for s in seasons for _ in rounds for _ in roster_ids],
+                         "round": [r for _ in seasons for r in rounds for _ in roster_ids],
+                         "original_roster_id": [rid for _ in seasons for _ in rounds for rid in roster_ids]})
+    tr = traded.select(pl.col("season").cast(pl.Int64), pl.col("round").cast(pl.Int64), pl.col("original_roster_id").cast(pl.Int64),
+                       pl.col("owner_roster_id").cast(pl.Int64)).unique(subset=["season", "round", "original_roster_id"], keep="last")
+    return (base.with_columns(pl.col("season").cast(pl.Int64), pl.col("round").cast(pl.Int64), pl.col("original_roster_id").cast(pl.Int64))
+            .join(tr, on=["season", "round", "original_roster_id"], how="left")
+            .with_columns(pl.col("owner_roster_id").fill_null(pl.col("original_roster_id"))))
+
+
+def projected_tier(strength_rank: int, n_teams: int) -> str:
+    """Slot tier of a roster's own pick from its projected strength rank (1 = best lineup, picks last)."""
+    slot = n_teams - strength_rank + 1
+    slot10 = int((slot - 1) / n_teams * 10) + 1
+    return "Early" if slot10 <= TIERS["Early"][1] else "Mid" if slot10 <= TIERS["Mid"][1] else "Late"
+
+
 def build_from_lake(now_season: int, seasons: list[int], rate: float = 0.2, first_class: int = 2010, last_class: int = 2016,
                     years: int = 10) -> tuple[pl.DataFrame, dict]:
     """The whole chain from the lake: realized wins by NFL pick (classes with a full window), the

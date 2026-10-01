@@ -161,7 +161,7 @@ def main() -> None:
         spearman = float(value.spearman(priced["iv_inseason"].to_numpy(), priced["ktc_value"].to_numpy())) if priced.height else None
 
     # ---- WAR per league (build_war.py outputs): per-player value components per league + roster views
-    leagues, teams = [], {}
+    leagues, teams, league_ids = [], {}, {}
     tail_tag = f"season={args.season or args.as_of_season}/week={args.week or 0}/run_date={args.run_date}"
     by_name = {r["name"]: r for r in rows}
     for path in sorted(p for p in gcs_io.list_ml("war") if p.endswith(f"{tail_tag}/meta.json")):
@@ -186,6 +186,7 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             td = None
         offset = float(td["lineup_offset"][0]) if td is not None and "lineup_offset" in td.columns else 0.0
+        league_ids[lid] = meta_l.get("league_id")
         leagues.append({"id": lid, "name": meta_l.get("display_name", lid), "teams": meta_l["league"]["teams"], "slots": meta_l["league"]["slots"],
                         "replacement": {k: _r(v, 1) for k, v in meta_l["replacement_ppg"].items()}, "starters": meta_l.get("starters"),
                         "curve": {"mean": _r(curve["mean_points"], 1), "sd": _r(curve["sd_points"], 1), "n": curve.get("n", 0),
@@ -232,6 +233,33 @@ def main() -> None:
         print(f"picks: curve a={pick_meta['a']:.2f} b={pick_meta['b']:.2f} on {pick_meta['n_players']} drafted players, {pick_meta['n_rookie_picks']} league rookie picks")
     except Exception as e:  # noqa: BLE001
         print("picks: skipped:", str(e)[:200]); picks_out = None
+    # owned picks per roster, with the slot tier projected from the original roster's lineup strength
+    if picks_out is not None and teams:
+        try:
+            client = gcs_io._client()
+            tp_blobs = sorted(b.name for b in client.list_blobs("nfl-data-bronze", prefix="bronze/sleeper/rosters/traded_picks/daily/") if b.name.endswith(".parquet"))
+            traded_all = gcs_io.read_lake(tp_blobs[-1])
+            value_of = {(int(r["season"]), int(r["round"]), r["tier"]): (r["wins_undiscounted"], r.get("ktc")) for r in pick_tab.iter_rows(named=True)}
+            future = [now_season + 1, now_season + 2, now_season + 3]
+            for lid, tl in teams.items():
+                sleeper_id = league_ids.get(lid)
+                traded = traded_all.filter(pl.col("league_id") == str(sleeper_id)) if sleeper_id else traded_all.head(0)
+                order = sorted(tl, key=lambda x: -(x["ppg"] or 0))
+                rank = {x["rid"]: i + 1 for i, x in enumerate(order)}
+                names = {x["rid"]: x["name"] for x in tl}
+                owned = picks.owned_picks(traded, [x["rid"] for x in tl], future)
+                for x in tl:
+                    mine = owned.filter(pl.col("owner_roster_id") == x["rid"]).sort("season", "round", "original_roster_id")
+                    out_p = []
+                    for r in mine.iter_rows(named=True):
+                        # next two drafts from projected strength; the third is anyone's guess -> Mid
+                        tier = picks.projected_tier(rank[r["original_roster_id"]], len(tl)) if r["season"] <= now_season + 2 else "Mid"
+                        wins, ktc = value_of.get((r["season"], r["round"], tier), (None, None))
+                        out_p.append([r["season"], r["round"], tier, names.get(r["original_roster_id"], ""), _r(wins, 3), ktc])
+                    x["picks"] = out_p
+            print("owned picks attached:", {lid: sum(len(x.get("picks", [])) for x in tl) for lid, tl in teams.items()})
+        except Exception as e:  # noqa: BLE001
+            print("owned picks: skipped:", str(e)[:200])
     out = {
         "picks": picks_out,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
