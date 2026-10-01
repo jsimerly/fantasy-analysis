@@ -52,6 +52,8 @@ def main() -> None:
     ap.add_argument("--last-cohort", type=int, default=None, help="default: last complete season minus horizon")
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--replacement", choices=["share", "fill"], default="share",
+                    help="replacement level: production flex-share line, or an explicit fill of the league's lineup (lineup.league_fill)")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
@@ -81,7 +83,15 @@ def main() -> None:
     hist, xw = market.load_ktc_history(), market.load_crosswalk()
     ctx = fg.Context()
 
+    if args.replacement == "fill":
+        import league as lg
+        import lineup
+        spec = lg.LeagueSpec.from_settings(gcs_io.read_lake(SETTINGS_PATH))
+        pool = matrix.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
+
     def rep_for(T: int) -> dict:
+        if args.replacement == "fill":
+            return lineup.replacement_from_history(pool, spec, list(range(T - 4, T + 1)))
         return replacement.replacement_levels(matrix, starters, seasons=list(range(T - 4, T + 1)))
 
     def market_for(cohort: pl.DataFrame, T: int) -> pl.DataFrame:

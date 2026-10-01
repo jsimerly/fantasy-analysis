@@ -50,6 +50,41 @@ Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced th
 Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
 oldest ages (see the age-survival prior); one lineup.
 
+## Intrinsic value v2 — wins above replacement (WAR), league-dependent
+
+`src/league.py`, `src/lineup.py`, `src/war.py`, `scripts/build_war.py`. Value in **wins**, built
+from the league's own configuration rather than a fixed line:
+
+1. **Lineup** (`LeagueSpec`): teams + starting slots + slot eligibility, from `dim_league_settings`
+   or any JSON (`leagues/12team_1qb.json`), so the same projections price differently per league.
+2. **Replacement** (`lineup.league_fill`): an explicit fill of every team's slots from the pool
+   (dedicated slots first, then the more restrictive flex), averaged over the last five real
+   seasons. The owner's superflex league actually starts ~28 RB / ~31 WR / ~12 TE, not the
+   24.5 / 34.5 / 11 the fixed flex shares assumed, which moves RB replacement from 10.9 to 9.9 ppg.
+   Backtested like for like, fill-based replacement is at least as good as the production line
+   (rank agreement with realized value 0.673 vs 0.671).
+3. **Win curve** (`WinCurve`): P(win a week | points) on the league's own standings
+   (`team_weeks_from_standings`); a logistic fit with 300+ team-weeks, otherwise a normal-margin
+   curve from the league's weekly mean / spread. Wins are linear-to-concave in points, so there
+   is no top-end convexity in production value; the title premium is a team-context layer.
+4. **WAR** = Σ_k (1 − r)^(k−1) · games_k · [W(μ + excess_k) − W(μ)] with excess_k the sigma-aware
+   points above replacement per game; the rest of this season is the first, undiscounted span.
+   PAR is the linear special case and is reported alongside.
+5. **Per roster** (`war.team_marginal_war`, `--teams`): marginal wins each player adds to HIS
+   roster (optimal lineup with him minus without, exact assignment incl. FLEX / SUPER_FLEX),
+   mapped through the curve at that roster's own weekly total, plus the best outside targets.
+
+```
+scripts/build_war.py --season 2026 --week 3 --run-date 2026-10-01 --teams      # owner's league, in-season
+scripts/build_war.py --season 2026 --week 3 --run-date 2026-10-01 --league leagues/12team_1qb.json
+```
+Outputs: `war/league=<name>/season=S/week=W/run_date=D/{projections, teams}.parquet + meta.json`.
+
+Known calibration gap (first-3-span shares vs realized 3-year shares, 2017–2022 cohorts): the
+model gives QBs ~33 % of league value where QBs delivered ~26 %, and WRs ~29 % where they
+delivered ~38 %; QB projection spread (sigma 5.2 vs 2.5 for WR) inflates QB upside credit. A
+position-level calibration is a value-definition experiment, not a feature one (BACKLOG 13).
+
 ## Experiments — mix and match feature groups
 
 Every modelling angle is kept as a named **feature group** (`src/feature_groups.py`) and any

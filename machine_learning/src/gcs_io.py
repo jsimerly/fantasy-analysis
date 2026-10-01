@@ -66,3 +66,22 @@ def write_ml_json(obj: dict, *parts: str) -> str:
     blob = _client().bucket(ML_BUCKET).blob(f"{PROJECT}/" + "/".join(parts))
     blob.upload_from_string(json.dumps(obj, indent=2, default=str), content_type="application/json")
     return ml_path(*parts)
+
+
+def read_lake_prefix(prefix: str, partition: str | None = None) -> pl.DataFrame:
+    """Every parquet under a lake prefix, concatenated (diagonal); with ``partition`` the
+    ``<partition>=value`` folder each row came from is added as a column of that name."""
+    import re
+
+    frames = []
+    for b in _client().list_blobs(LAKE_BUCKET, prefix=prefix):
+        if not b.name.endswith(".parquet"):
+            continue
+        df = pl.read_parquet(io.BytesIO(b.download_as_bytes()))
+        if partition:
+            m = re.search(rf"/{partition}=([^/]+)/", "/" + b.name)
+            df = df.with_columns(pl.lit(m.group(1) if m else None).alias(partition))
+        frames.append(df)
+    if not frames:
+        raise FileNotFoundError(f"no parquet objects under gs://{LAKE_BUCKET}/{prefix}")
+    return pl.concat(frames, how="diagonal_relaxed")

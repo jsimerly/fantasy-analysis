@@ -88,3 +88,20 @@ Done 2026-10-01: the table now runs off the in-season model (ROS at full weight,
 Recency check (2012–2024 snapshots): realized ROS ppg ≈ 0.39·to-date + 0.46·prior at week 3,
 0.59 / 0.27 at week 9, 0.66 / 0.20 at week 13; last-3 adds ≤ 0.17 beyond to-date. The in-season
 model's own weights are 0.49 / 0.37 at W3 and 0.62 / 0.23 at W9 — already about right.
+
+13. **Position-level calibration of value.** First-3-span IV shares (QB 33 / RB 26 / TE 12 / WR 29 %)
+    vs realized 3-year PAR shares on priced players 2017–2022 (QB 26 / RB 23 / TE 13 / WR 38 %); the
+    market's shares then matched realized (QB 27 / WR 38). Candidate causes: QB sigma (5.2) doubles
+    WR's (2.5) and inflates expected-excess upside; WR shrinkage; QB games. Test as a value
+    variant in the harness (cross-position rank agreement + per-position share error).
+
+14. **WAR acceptance test (needs data).** Which definition (PAR vs WAR, share vs fill replacement)
+    best predicts team weekly wins from roster strength. Standings exist from 2025-10 and roster
+    snapshots from 2025-10-16 only (~140 team-weeks); in-season projections are persisted only for
+    2026 week 3. Schedule the in-season run weekly, then run the test on a season of data.
+
+Done 2026-10-01 (late): IV v2 = WAR (`src/league.py`, `src/lineup.py`, `src/war.py`,
+`scripts/build_war.py`): explicit league fill replaces the flex-share line (RB 10.9 → 9.9 ppg),
+league win curve turns PAR into wins, per-roster marginal WAR + outside targets, any league via
+JSON. Rank-match fair value on the table removed the curve artifact that made every top asset
+look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).

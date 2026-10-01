@@ -112,6 +112,15 @@ def fair_value_curve(iv: np.ndarray, market: np.ndarray, method: str = "power") 
     ``isotonic``: the non-parametric step fit; wherever the market's ordering disagrees with
     IV's it pools players into one flat step (that is why the top of the list came out tied),
     so it is kept only as an option."""
+    if method == "rank":
+        # quantile mapping: each player is paired with the market value found at his IV rank, so the
+        # top IV gets the top price and no curve shape is imposed (the power law cannot reach KTC's
+        # 9999 ceiling and made every top asset look rich)
+        iv_a, mk_a = np.asarray(iv, float), np.asarray(market, float)
+        order = np.argsort(-iv_a)
+        fair = np.empty(len(iv_a))
+        fair[order] = np.sort(mk_a)[::-1]
+        return fair
     iv, market = np.asarray(iv, float), np.asarray(market, float)
     if method == "isotonic":
         return IsotonicRegression(increasing=True, out_of_bounds="clip").fit(iv, market).predict(iv)
