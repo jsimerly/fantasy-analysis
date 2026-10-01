@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import polars as pl  # noqa: E402
 
 import gcs_io  # noqa: E402
+import market  # noqa: E402
 import value  # noqa: E402
 
 
@@ -44,6 +45,14 @@ def main() -> None:
         on="player_id", how="left",
     )
 
+    # FantasyCalc (trade-derived) value on the same day, as a second market reference
+    fav = gcs_io.read_lake(market.FACT_ASSET_VALUES_PATH)
+    day = fav["valuation_date"].max()
+    fc = (fav.filter((pl.col("valuation_date") == day) & (pl.col("market_type") == "DYNASTY")
+                     & (pl.col("qb_format") == "SF") & (pl.col("te_premium") == "Standard") & (pl.col("fc_value") > 0))
+          .group_by("player_id").agg(pl.col("fc_value").max()).rename({"player_id": "player_key"}))
+    proj = proj.join(fc, on="player_key", how="left")
+
     hcols = [c for c in proj.columns if c.startswith("h") and c.endswith("_fpts_hat")]
     horizons = sorted(int(c[1:].split("_")[0]) for c in hcols)
     rows = []
@@ -61,6 +70,9 @@ def main() -> None:
             "mis_pct_pos": round(r["mis_pct_pos"], 3) if r.get("mis_pct_pos") is not None else None,
             "match": r.get("market_match"),
             "h": [round(r[f"h{k}_fpts_hat"]) for k in horizons],
+            # undiscounted points above replacement per horizon: the page recomputes IV for any discount
+            "v": [round(r[f"h{k}_vorp_hat"], 2) for k in horizons],
+            "fc": r.get("fc_value"),
             "h1_ppg": round(r["h1_ppg_hat"], 1), "h1_games": round(r["h1_games_hat"], 1),
         })
     out = {
