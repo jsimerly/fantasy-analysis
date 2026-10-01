@@ -36,6 +36,8 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
 - **dim-franchise-meta** (T2) reads `dim_leagues_meta` + `dim_users` (T1).
 - **fact-asset-values** (T2) reads `_staging/asset_values_long` (staging-asset-alignment, T1)
   + `dim_players_master` (T1).
+- **fact-player-injury-week** / **fact-depth-chart-week** (T1) read bronze nflverse only
+  (injuries + rosters_weekly; depth_charts + schedules). They do not feed other silver jobs yet.
 - **fact-player-week** (T2) reads `dim_league_settings` (T1, for scoring) + bronze nflverse
   `player_stats`/`schedules`/`nfl_players`; it's the atomic player-week production fact.
 - **fact-roster-membership** (T3) reads `dim_franchises_meta` (T2) + `dim_players_master`

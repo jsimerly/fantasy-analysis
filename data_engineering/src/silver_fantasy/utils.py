@@ -112,3 +112,41 @@ def read_latest_incremental_by_key(
         .unique(subset=[join_key], keep='last', maintain_order=True)
         .drop('_load_date')
     )
+
+
+def read_bronze_prefix(bucket_name: str, prefix: str, dedupe_on: list[str] | None = None,
+                       partition_col: str = "partition_season") -> "pl.DataFrame":
+    """Read every parquet under ``prefix`` (newest object first) into one frame.
+
+    Partitions are concatenated with ``diagonal_relaxed`` because nflverse changes dtypes and
+    columns between seasons. The ``season=YYYY`` folder each row came from is added as
+    ``partition_col`` (null when the folder is not a season, e.g. ``season=None``), since the
+    newer feeds (depth charts from 2025) carry no season column of their own. With ``dedupe_on``
+    the newest file wins for any key more than one file carries.
+    """
+    import io
+    import re
+
+    import polars as pl
+    from google.cloud import storage
+
+    client = storage.Client()
+    blobs = sorted(
+        (b for b in client.list_blobs(bucket_name, prefix=prefix) if b.name.endswith(".parquet")),
+        key=lambda b: (b.updated, b.name), reverse=True,
+    )
+    frames = []
+    for b in blobs:
+        df = pl.read_parquet(io.BytesIO(b.download_as_bytes()))
+        m = re.search(r"/season=(\d{4})/", "/" + b.name)
+        frames.append(df.with_columns(pl.lit(int(m.group(1)) if m else None, dtype=pl.Int32).alias(partition_col)))
+    if not frames:
+        raise FileNotFoundError(f"no parquet objects under gs://{bucket_name}/{prefix}")
+    df = pl.concat(frames, how="diagonal_relaxed")
+    keys = [c for c in (dedupe_on or []) if c in df.columns]
+    if keys:
+        before = df.height
+        df = df.unique(subset=keys, keep="first", maintain_order=True)
+        if df.height != before:
+            print(f"  de-duplicated {before - df.height} rows under {prefix} on {keys} (newest file wins)")
+    return df

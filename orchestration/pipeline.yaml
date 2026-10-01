@@ -48,6 +48,8 @@ main:
               - "silver-dim-dates"               # bronze nflverse schedules only (no dims)
               - "silver-staging-asset-alignment"
               - "silver-fact-pick-values"        # bronze KTC only (no dims)
+              - "silver-fact-player-injury-week" # bronze nflverse injuries + rosters_weekly
+              - "silver-fact-depth-chart-week"   # bronze nflverse depth_charts + schedules (both eras)
           # --- SILVER T2: read T1 outputs ---
           - silver_t2_jobs:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
