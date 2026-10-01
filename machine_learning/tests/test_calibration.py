@@ -46,3 +46,17 @@ def test_calibrated_model_fits_a_table_and_changes_predictions_within_bounds():
     # the calibration is built from the model's own held-out errors: sigma still works alongside it
     cal.estimate_sigma(m, as_of_season=2021)
     assert "h1_ppg_sigma" in cal.predict(test).columns
+
+
+def test_quantile_sigma_is_per_player_positive_and_overrides_position_sigma():
+    H = [1]
+    m = career.attach_horizon_targets(career.career_features(features.attach_lags_and_target(_fact(), drop_no_target=False)), H)
+    q = career.HorizonModels(H, n_estimators=20, max_depth=2, quantile_sigma=True).fit(m, as_of_season=2021)
+    q.estimate_sigma(m, as_of_season=2021)
+    out = q.predict(m.filter(pl.col("season") == 2021))
+    s = out["h1_ppg_sigma"].to_numpy()
+    assert (s >= 1.0).all() and s.std() > 0                      # floored, and it varies by player
+    plain = career.HorizonModels(H, n_estimators=20, max_depth=2).fit(m, as_of_season=2021)
+    plain.estimate_sigma(m, as_of_season=2021)
+    s0 = plain.predict(m.filter(pl.col("season") == 2021))["h1_ppg_sigma"].to_numpy()
+    assert len(np.unique(s0)) <= 4                                # position-level sigma: at most one value per position

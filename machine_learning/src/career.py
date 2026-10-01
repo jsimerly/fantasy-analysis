@@ -114,7 +114,8 @@ class HorizonModels:
     """One (ppg, games) model pair per horizon. ``fit`` then ``predict``."""
 
     def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0,
-                 features: list[str] | None = None, calibrate: bool = False, holdout: int = 3, **params):
+                 features: list[str] | None = None, calibrate: bool = False, holdout: int = 3,
+                 quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84), **params):
         self.horizons = list(horizons)
         self.device = device
         self.seed = seed
@@ -122,6 +123,9 @@ class HorizonModels:
         self.calibrate = calibrate
         self.holdout = holdout
         self.calibration: dict | None = None
+        self.quantile_sigma = quantile_sigma         # per-player spread from quantile models (else per position)
+        self.quantiles = quantiles
+        self.quantile_models: dict[int, tuple[XGBRegressor, XGBRegressor]] = {}
         self.params = {**DEFAULT_PARAMS, **params}
         self.ppg_models: dict[int, XGBRegressor] = {}
         self.games_models: dict[int, XGBRegressor] = {}
@@ -164,6 +168,13 @@ class HorizonModels:
             p = self._new().fit(self.feature_frame(played).to_numpy(),
                                 played[f"h{k}_ppg"].to_numpy().astype(float))
             self.games_models[k], self.ppg_models[k] = g, p
+            if self.quantile_sigma:
+                Xp, yp = self.feature_frame(played).to_numpy(), played[f"h{k}_ppg"].to_numpy().astype(float)
+                lo = XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1,
+                                  objective="reg:quantileerror", quantile_alpha=self.quantiles[0], **self.params).fit(Xp, yp)
+                hi = XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1,
+                                  objective="reg:quantileerror", quantile_alpha=self.quantiles[1], **self.params).fit(Xp, yp)
+                self.quantile_models[k] = (lo, hi)
         if self.calibrate:
             self._fit_calibration(train, as_of_season)
         return self
@@ -252,7 +263,18 @@ class HorizonModels:
                 games, ppg = self._apply_calibration(df, k, games, ppg)
             cols += [pl.Series(f"h{k}_games_hat", games), pl.Series(f"h{k}_ppg_hat", ppg),
                      pl.Series(f"h{k}_fpts_hat", games * ppg)]
-            if sigma:
+            if k in self.quantile_models:
+                # player-specific spread: half the 16th-84th percentile width of the ppg projection,
+                # floored so a projection is never treated as certain; rescaled with the calibration slope
+                lo, hi = self.quantile_models[k]
+                width = np.clip(hi.predict(X) - lo.predict(X), 0.0, None)
+                s_row = np.maximum(width / 2.0, 1.0)
+                if self.calibration and k in self.calibration:
+                    per = self.calibration[k]
+                    slopes = np.array([per.get(p, per["__all__"])[0][1] for p in df["position"].to_list()])
+                    s_row = s_row * slopes
+                cols.append(pl.Series(f"h{k}_ppg_sigma", s_row))
+            elif sigma:
                 s = sigma[k]
                 cols.append(df["position"].replace_strict(
                     {p: v for p, v in s.items() if p != "__all__"}, default=s["__all__"], return_dtype=pl.Float64

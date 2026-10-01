@@ -42,6 +42,7 @@ class ExperimentConfig:
     device: str = "cpu"
     params: dict = field(default_factory=dict)
     calibrate: bool = False          # walk-forward recalibration of ppg / games (career.HorizonModels)
+    quantile_sigma: bool = False     # player-specific spread from quantile models instead of one sigma per position
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -93,7 +94,8 @@ def run_experiment(
     rows = []
     for T in cfg.cohorts:
         rep = rep_for(T)
-        models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, **cfg.params).fit(df, as_of_season=T)
+        models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
+                                      **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
@@ -128,6 +130,7 @@ def run_experiment(
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
                "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
+               "quantile_sigma": cfg.quantile_sigma,
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -137,7 +140,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "commit",
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
                "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread"]
 
