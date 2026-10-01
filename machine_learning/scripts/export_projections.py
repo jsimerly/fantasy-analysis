@@ -37,6 +37,13 @@ def main() -> None:
         ).with_columns(pl.col("iv").rank(method="ordinal", descending=True).alias("iv_rank_all"))
         meta["spearman_iv_vs_ktc"] = summary["spearman"]
 
+    # within-position comparison: the market's premium for a whole position factored out
+    within, _ = value.compare_to_market(proj, group_col="position")
+    proj = proj.join(
+        within.select("player_id", pl.col("fair_value").alias("fair_pos"), pl.col("mispricing_pct").alias("mis_pct_pos")),
+        on="player_id", how="left",
+    )
+
     hcols = [c for c in proj.columns if c.startswith("h") and c.endswith("_fpts_hat")]
     horizons = sorted(int(c[1:].split("_")[0]) for c in hcols)
     rows = []
@@ -50,6 +57,8 @@ def main() -> None:
             "rank_gap": r.get("rank_gap"),
             "fair": round(r["fair_value"]) if r.get("fair_value") is not None else None,
             "mis_pct": round(r["mispricing_pct"], 3) if r.get("mispricing_pct") is not None else None,
+            "fair_pos": round(r["fair_pos"]) if r.get("fair_pos") is not None else None,
+            "mis_pct_pos": round(r["mis_pct_pos"], 3) if r.get("mis_pct_pos") is not None else None,
             "match": r.get("market_match"),
             "h": [round(r[f"h{k}_fpts_hat"]) for k in horizons],
             "h1_ppg": round(r["h1_ppg_hat"], 1), "h1_games": round(r["h1_games_hat"], 1),

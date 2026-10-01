@@ -130,6 +130,19 @@ class TestMarketComparison:
         assert fair[1] == fair[2]                                     # the step artifact, now opt-in
         assert np.all(np.diff(value.fair_value_curve([10.0, 20.0, 30.0], [1000, 3000, 2000])) > 0)
 
+    def test_per_group_curve_removes_a_positional_premium(self):
+        # the market pays RBs 2x per IV point: pooled, every RB looks rich and every WR cheap;
+        # within position, both groups are fairly priced
+        df = pl.DataFrame({
+            "position": ["RB"] * 4 + ["WR"] * 4,
+            "iv": [10.0, 20.0, 30.0, 40.0] * 2,
+            "ktc_value": [2000, 4000, 6000, 8000, 1000, 2000, 3000, 4000],
+        })
+        pooled, _ = value.compare_to_market(df)
+        assert pooled.filter(pl.col("position") == "RB")["mispricing_pct"].mean() > 0.1
+        within, _ = value.compare_to_market(df, group_col="position")
+        assert within["mispricing_pct"].abs().max() < 0.05
+
     def test_rank_gap_is_signed(self):
         # IV #1 but market #3 -> gap -2 (polars ranks are unsigned; a raw difference wrapped to ~4.29e9)
         df = pl.DataFrame({"iv": [30.0, 20.0, 10.0], "ktc_value": [1000, 2000, 3000]})

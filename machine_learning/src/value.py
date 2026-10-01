@@ -114,19 +114,28 @@ def fair_value_curve(iv: np.ndarray, market: np.ndarray, method: str = "power") 
 
 
 def compare_to_market(df: pl.DataFrame, iv_col: str = "iv", market_col: str = "ktc_value",
-                      method: str = "power") -> tuple[pl.DataFrame, dict]:
+                      method: str = "power", group_col: str | None = None) -> tuple[pl.DataFrame, dict]:
     """Rows with both an IV and a market value, plus:
     ``fair_value`` -- monotone map of IV onto the market's scale (see ``fair_value_curve``),
     ``mispricing`` -- market - fair_value (positive = market pays more than fundamentals),
     ``mispricing_pct`` -- mispricing / fair_value,
     ``iv_rank`` / ``market_rank`` / ``rank_gap`` -- ordering disagreement (positive = market ranks higher).
-    Summary: n and spearman."""
+    With ``group_col`` (e.g. "position") the curve is fitted per group, so the mispricing says
+    "vs other players at the position" and the market's positional premium is factored out.
+    Summary: n and spearman (pooled)."""
     both = df.filter(pl.col(iv_col).is_not_null() & pl.col(market_col).is_not_null())
     if both.height < 3:
         return both, {"n": both.height, "spearman": float("nan")}
     iv = both[iv_col].to_numpy().astype(float)
     mk = both[market_col].to_numpy().astype(float)
-    fair = fair_value_curve(iv, mk, method)
+    if group_col is None:
+        fair = fair_value_curve(iv, mk, method)
+    else:
+        fair = np.empty(both.height)
+        groups = both[group_col].to_numpy()
+        for g in np.unique(groups):
+            m = groups == g
+            fair[m] = fair_value_curve(iv[m], mk[m], method) if m.sum() >= 3 else fair_value_curve(iv, mk, method)[m]
     out = both.with_columns(
         pl.Series("fair_value", fair),
         (pl.col(market_col) - pl.Series("fair_value", fair)).alias("mispricing"),
