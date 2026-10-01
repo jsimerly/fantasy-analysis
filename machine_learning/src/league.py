@@ -146,6 +146,29 @@ def team_weeks_from_standings(team_state: pl.DataFrame, lo: float = 20.0, hi: fl
              .select("league_id", "roster_id", "load_date", "week_pts", pl.col("dwin").alias("win")))
 
 
+OWNER_CURVE_FALLBACK = (134.2, 41.2)        # Stuck in High School, 2025-26 team-weeks: weekly mean, margin spread
+
+
+def curve_for_lineage(lineage_id: str | None, min_fit: int = 300) -> "WinCurve":
+    """A league's win curve from its own standings in the lake: a logistic fit with ``min_fit``
+    team-weeks, otherwise a normal-margin curve from its weekly mean / spread; the owner's
+    league's known values when the lake cannot be read."""
+    try:
+        ts = load_team_state()
+        if lineage_id:
+            import gcs_io
+            ids = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").filter(pl.col("league_lineage_id") == lineage_id)["league_id"].to_list()
+            ts = ts.filter(pl.col("league_id").is_in(ids))
+        tw = team_weeks_from_standings(ts)
+        if tw.height >= min_fit:
+            return WinCurve.fit(tw)
+        c = WinCurve.normal(float(tw["week_pts"].mean()), float(tw["week_pts"].std()) * 2 ** 0.5)
+        c.n = tw.height
+        return c
+    except Exception:  # noqa: BLE001
+        return WinCurve.normal(*OWNER_CURVE_FALLBACK)
+
+
 def load_team_state() -> pl.DataFrame:
     """Every standings snapshot in the lake, tagged with its load_date."""
     import gcs_io

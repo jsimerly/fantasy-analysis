@@ -78,6 +78,26 @@ def wins_above_replacement(df: pl.DataFrame, rep: dict[str, float], curve: WinCu
     return df.with_columns(cols + [pl.Series("war", war_total), pl.Series("par", par_total)])
 
 
+def realized_wins(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, horizons: list[int],
+                  discount_rate: float = value.DEFAULT_DISCOUNT_RATE) -> pl.DataFrame:
+    """What a player actually delivered, in the same wins: per observable season k,
+    games_k x [W(mu + max(ppg_k - rep, 0)) - W(mu)], discounted like ``wins_above_replacement``.
+    Null when any horizon is censored (not yet played), as ``value.realized_value`` does."""
+    rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    total = np.zeros(df.height)
+    cols = []
+    for k in horizons:
+        ppg = df[f"h{k}_ppg"].fill_null(0.0).to_numpy().astype(float)
+        games = df[f"h{k}_games"].fill_null(0).to_numpy().astype(float)
+        ex = np.maximum(ppg - rep_arr, 0.0)
+        w = games * curve.delta_win(curve.mean_points, ex)
+        cols.append(pl.Series(f"war_real_{k}", w))
+        total += value.discount_weight(k, discount_rate) * w
+    observable = pl.all_horizontal([pl.col(f"h{k}_observable") for k in horizons])
+    return df.with_columns(cols + [pl.Series("_rw", total)]).with_columns(
+        pl.when(observable).then(pl.col("_rw")).otherwise(None).alias("realized_war")).drop("_rw")
+
+
 def lineup_offset(curve: WinCurve, lineup_totals: list[float]) -> float:
     """Where projected lineups sit on the curve. The curve is fitted on the league's ACTUAL weekly
     totals (every position, that league's scoring); projected lineups cover QB/RB/WR/TE in model

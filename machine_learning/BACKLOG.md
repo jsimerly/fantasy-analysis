@@ -165,12 +165,13 @@ pieces are right, not just the total.
     (n = 50) realized 10.2 ppg vs 9.9 projected next year and only 20 % got back to ≥ 90 % of
     their prior rate, so the model's cold read on a Jefferson-type season is calibrated.
 
-## Objective, restated (2026-10-01)
-The harness ranks variants by how well projections ordered players against what ACTUALLY happened;
-KTC's ordering of the same players is the bar, and agreement with KTC is diagnostic only. Because
-trading rewards being right where we disagree, two "beat the market" metrics are now logged for
-every variant: `edge_corr` = Spearman between (market rank − model rank) and (market rank −
-realized rank), i.e. does our disagreement predict the market's error; `edge_spread` = realized
-rank gain of the third we like most minus the third we like least. The leaderboard sorts by
-`edge_corr`. Magnitude bias by prior tier (`bias_top12_h1` etc.) is logged alongside, so a
-variant can be judged on ordering, edge and calibration at once.
+## Objective, restated (2026-10-01, final)
+Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
+a test set, the model is trained on earlier seasons only, and projected WAR is scored against the
+WAR those players actually delivered over the following years, in the owner's league's units.
+Primary metrics (market-free): rank agreement of projected vs realized WAR among the top 150 by
+projected WAR (`spearman_war_top`) and among everyone (`spearman_war_all`); mean error and bias in
+wins (`mae_war_*`, `bias_war_*`, `bias_war_top12`); top-decile hit rate. The leaderboard sorts by
+`spearman_war_top`. Market columns (KTC's agreement on priced players, edge corr/spread) are
+context only: what a manager would have done without a model, and whether our disagreement with
+the market predicted its error. Agreement with KTC itself is not tracked as a goal.

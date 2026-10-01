@@ -120,3 +120,18 @@ class TestLineupOffset:
         b = war.team_marginal_war(roster, SF, c, comps, offset=off)
         assert (a["m_par"] == b["m_par"]).all()                        # points unchanged
         assert b["m_war"][0] != a["m_war"][0]                          # read at a different point on the curve
+
+
+class TestRealizedWins:
+    def test_realized_wins_matches_projected_formula_and_censoring(self):
+        c = lg.WinCurve.normal(134, 42)
+        df = pl.DataFrame({"position": ["QB", "WR"], "h1_ppg": [25.0, None], "h1_games": [16, 0], "h1_observable": [True, True],
+                           "h2_ppg": [None, None], "h2_games": [None, 0], "h2_observable": [False, True]})
+        out = war.realized_wins(df, {"QB": 15.0, "WR": 10.0}, c, [1, 2], discount_rate=0.5)
+        assert abs(out["war_real_1"][0] - 16 * float(c.delta_win(134, 10))) < 1e-9
+        assert out["realized_war"][0] is None and out["realized_war"][1] == 0.0          # censored h2; never played
+
+    def test_curve_for_lineage_falls_back_when_the_lake_is_unavailable(self, monkeypatch):
+        monkeypatch.setattr(lg, "load_team_state", lambda: (_ for _ in ()).throw(RuntimeError("no lake")))
+        c = lg.curve_for_lineage("x")
+        assert abs(c.mean_points - lg.OWNER_CURVE_FALLBACK[0]) < 1e-9 and c.n == 0

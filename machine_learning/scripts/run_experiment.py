@@ -55,7 +55,8 @@ def main() -> None:
     ap.add_argument("--replacement", choices=["share", "fill"], default="share",
                     help="replacement level: production flex-share line, or an explicit fill of the league's lineup (lineup.league_fill)")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
-    ap.add_argument("--calibrate", action="store_true", help="walk-forward recalibration of ppg / games per position and horizon")
+    ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games"],
+                    help="walk-forward recalibration per position and horizon: both (default when given), ppg or games")
     ap.add_argument("--quantile-sigma", action="store_true", help="player-specific projection spread from quantile models")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
     ap.add_argument("--list-groups", action="store_true")
@@ -85,6 +86,9 @@ def main() -> None:
     starters = replacement.starters_per_position(slots, teams)
     hist, xw = market.load_ktc_history(), market.load_crosswalk()
     ctx = fg.Context()
+    import league as lg
+    curve = lg.curve_for_lineage(replacement.PRIMARY_LINEAGE)
+    print(f"WAR units: owner's league curve, weekly mean {curve.mean_points:.1f}, spread {curve.sd_points:.1f} ({curve.n} team-weeks)")
 
     if args.replacement == "fill":
         import league as lg
@@ -115,7 +119,7 @@ def main() -> None:
                 params[k] = v
     for name, groups in variants:
         cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device,
-                                  params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma)
+                                  params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
@@ -125,8 +129,8 @@ def main() -> None:
             ledger = ex.append_result(ledger, summary)
     with pl.Config(tbl_rows=-1, tbl_width_chars=220, float_precision=3):
         print("\n== summary (mean over cohorts) ==")
-        print(pl.DataFrame(summaries).select([c for c in ["name", "groups", "n_features", "spearman_iv_vs_realized", "spearman_ktc_vs_realized",
-                                                         "iv_minus_ktc", "spearman_iv_vs_realized_all", "top_decile_iv", "top_decile_ktc"]
+        print(pl.DataFrame(summaries).select([c for c in ["name", "groups", "n_features", "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top",
+                                                         "bias_war_top12", "top_decile_war_all", "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "edge_corr"]
                                               + [f"mae_h{k}" for k in H] if c in summaries[0]]))
     if not args.no_log and ledger is not None:
         print("ledger ->", ex.save_ledger(ledger))

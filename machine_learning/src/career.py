@@ -120,7 +120,9 @@ class HorizonModels:
         self.device = device
         self.seed = seed
         self.features = list(features) if features is not None else None   # None = FEATURES (production)
-        self.calibrate = calibrate
+        # True / "both": ppg and games lines; "ppg": ppg only (games lines hurt: a least-squares line
+        # through a 0-or-14 target pulls starters' games down); "games": games only; False: none
+        self.calibrate = "both" if calibrate is True else (calibrate or False)
         self.holdout = holdout
         self.calibration: dict | None = None
         self.quantile_sigma = quantile_sigma         # per-player spread from quantile models (else per position)
@@ -216,8 +218,10 @@ class HorizonModels:
         for p in np.unique(pos):
             (ap, bp), (ag, bg) = per.get(p, per["__all__"])
             m = pos == p
-            ppg[m] = np.clip(ap + bp * ppg[m], 0.0, None)
-            games[m] = np.clip(ag + bg * games[m], 0.0, MAX_GAMES)
+            if self.calibrate in ("both", "ppg"):
+                ppg[m] = np.clip(ap + bp * ppg[m], 0.0, None)
+            if self.calibrate in ("both", "games"):
+                games[m] = np.clip(ag + bg * games[m], 0.0, MAX_GAMES)
         return games, ppg
 
     def estimate_sigma(self, train: pl.DataFrame, as_of_season: int | None = None,

@@ -41,8 +41,10 @@ class ExperimentConfig:
     discount_rate: float = value.DEFAULT_DISCOUNT_RATE
     device: str = "cpu"
     params: dict = field(default_factory=dict)
-    calibrate: bool = False          # walk-forward recalibration of ppg / games (career.HorizonModels)
+    calibrate: object = False        # walk-forward recalibration: True/"both", "ppg", "games" or False (career.HorizonModels)
     quantile_sigma: bool = False     # player-specific spread from quantile models instead of one sigma per position
+    curve: object = None             # league.WinCurve for WAR units; None = the owner's league's known curve
+    top_n: int = 150                 # "relevant players" cut for the market-free metrics: top N by projected WAR
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -100,12 +102,34 @@ def run_experiment(
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
         cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep, H, cfg.discount_rate)
+        # the same thing in wins: projected WAR and realized WAR on the league's curve
+        import war as _war
+        from league import WinCurve, OWNER_CURVE_FALLBACK
+        curve = cfg.curve or WinCurve.normal(*OWNER_CURVE_FALLBACK)
+        cohort = _war.wins_above_replacement(cohort, rep, curve, _war.career_components(H), cfg.discount_rate, sigma=getattr(models, "sigma", None))
+        cohort = _war.realized_wins(cohort, rep, curve, H, cfg.discount_rate)
         cohort = market_for(cohort, T)
         obs = cohort.filter(pl.col("realized_iv").is_not_null())
         priced = obs.filter(pl.col("ktc_value").is_not_null())
         row = {"name": cfg.name, "cohort": T, "n_all": obs.height, "n_priced": priced.height}
         if obs.height:
             row["spearman_iv_vs_realized_all"] = value.spearman(obs["iv"].to_numpy(), obs["realized_iv"].to_numpy())
+            # ---- primary, market-free: projected WAR vs realized WAR
+            pw, rw = obs["war"].to_numpy().astype(float), obs["realized_war"].to_numpy().astype(float)
+            row["spearman_war_all"] = value.spearman(pw, rw)
+            row["mae_war_all"] = float(np.mean(np.abs(rw - pw)))
+            row["bias_war_all"] = float(np.mean(rw - pw))
+            row["top_decile_war_all"] = top_decile_precision(pw, rw)
+            top = obs.sort("war", descending=True).head(cfg.top_n)            # the players a manager would actually weigh
+            if top.height >= 20:
+                tw, tr = top["war"].to_numpy().astype(float), top["realized_war"].to_numpy().astype(float)
+                row["spearman_war_top"] = value.spearman(tw, tr)
+                row["mae_war_top"] = float(np.mean(np.abs(tr - tw)))
+                row["bias_war_top"] = float(np.mean(tr - tw))
+            prior = obs.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
+            t12 = prior.filter(pl.col("_pr") <= 12)
+            if t12.height:
+                row["bias_war_top12"] = float((t12["realized_war"].to_numpy() - t12["war"].to_numpy()).mean())
         if priced.height:
             iv, kt, rz = (priced[c].to_numpy().astype(float) for c in ("iv", "ktc_value", "realized_iv"))
             row.update({"spearman_iv_vs_realized": value.spearman(iv, rz), "spearman_ktc_vs_realized": value.spearman(kt, rz),
@@ -127,6 +151,7 @@ def run_experiment(
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
     metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_"))]
+    # warn when market context is missing entirely (the primary metrics never need it)
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
                "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
@@ -141,27 +166,36 @@ def run_experiment(
 
 # ------------------------------------------------------------------------------ ledger
 LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "commit",
+               # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
+               "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all",
+               # context: the market on the same (priced) players
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
                "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread"]
 
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
     row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c)
-                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_", "bias_")))])
+                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h")))])
     return row if ledger is None or ledger.height == 0 else pl.concat([ledger, row], how="diagonal_relaxed")
 
 
+PRIMARY = "spearman_war_top"
+
+
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:
-    """Variants ranked by rank agreement with realized value; filter to one horizon / cohort span
-    so the comparison is like for like."""
+    """Variants ranked by the market-free primary metric (rank agreement of projected WAR with
+    realized WAR among the top-N projected players); filter to one horizon / cohort span so the
+    comparison is like for like. Market columns are context only."""
     lb = ledger
     if horizon is not None:
         lb = lb.filter(pl.col("horizon") == horizon)
     if cohorts is not None:
         lb = lb.filter(pl.col("cohorts") == cohorts)
-    show = [c for c in ["name", "groups", "n_features", "calibrate", "params", "horizon", "cohorts", "edge_corr", "edge_spread", "spearman_iv_vs_realized", "spearman_ktc_vs_realized",
-                        "iv_minus_ktc", "top_decile_iv", "mae_h1", "bias_all_h1", "bias_top12_h1", "timestamp", "commit"] if c in lb.columns]
-    key = "edge_corr" if "edge_corr" in lb.columns and lb["edge_corr"].null_count() < lb.height else "spearman_iv_vs_realized"
+    show = [c for c in ["name", "groups", "n_features", "calibrate", "quantile_sigma", "params", "horizon", "cohorts",
+                        "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "top_decile_war_all",
+                        "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "edge_corr", "edge_spread", "timestamp", "commit"] if c in lb.columns]
+    key = next((c for c in (PRIMARY, "spearman_iv_vs_realized_all", "spearman_iv_vs_realized")
+                if c in lb.columns and lb[c].null_count() < lb.height), "name")
     return lb.select(show).sort(key, descending=True, nulls_last=True)
 
 
