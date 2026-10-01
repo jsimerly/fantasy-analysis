@@ -201,6 +201,14 @@ pieces are right, not just the total.
 20. **Depth value for benches.** With weekly availability known per position (item 19), value a
     bench player as the weeks he would actually start for THIS roster (expected starts × his edge
     over the next man), rather than 0 below replacement. Needs the roster layer, not the model.
+21. **ROS vs Career toggle on the Players page, with a redraft market for ROS.** The model is
+    built for the long term but its first span is a rest-of-season projection, so the page can
+    double as a redraft tool: one toggle switches every column (value, rank, fair, mispricing) to
+    ROS, and the market comparison switches with it, since KTC's dynasty values lag badly for
+    redraft: FantasyPros ROS rankings / projections (the fantasypros ingestion in progress), or
+    KTC's redraft values if they are exposed. Career keeps the KTC dynasty comparison. Needs a
+    ROS price feed in the lake (DE), then the page work is small (the Rank-by control already
+    carries ROS WAR / PAR).
 
 ## Objective, restated (2026-10-01, final)
 Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
