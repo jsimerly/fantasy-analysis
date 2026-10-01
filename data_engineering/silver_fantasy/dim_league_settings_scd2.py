@@ -5,7 +5,7 @@ import os
 import polars as pl
 from dotenv import load_dotenv
 
-from utils import get_latest_bronze_path, merge_full_and_incremental
+from utils import get_latest_bronze_path, merge_full_and_incremental, read_latest_incremental_by_key
 
 load_dotenv()
 
@@ -14,27 +14,27 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
     
     # Scoring
     full_scoring_path = get_latest_bronze_path(bucket_name, "league/scoring/full_load")
-    daily_scoring_path = get_latest_bronze_path(bucket_name, "league/scoring/incremental")
+    daily_scoring_df = read_latest_incremental_by_key(bucket_name, "league/scoring/incremental", join_key='league_id')
     # Rosters
     full_rosters_path = get_latest_bronze_path(bucket_name, "league/roster_slots/full_load")
-    daily_rosters_path = get_latest_bronze_path(bucket_name, "league/roster_slots/incremental")
+    daily_rosters_df = read_latest_incremental_by_key(bucket_name, "league/roster_slots/incremental", join_key='league_id')
     # Settings
     full_settings_path = get_latest_bronze_path(bucket_name, "league/settings/full_load")
-    daily_settings_path = get_latest_bronze_path(bucket_name, "league/settings/incremental")
+    daily_settings_raw = read_latest_incremental_by_key(bucket_name, "league/settings/incremental", join_key='league_id')
     
     existing_silver_path = f"gs://{bucket_name}/silver/fantasy/dim_league_settings/data.parquet"
 
     # scoring (the base)
     scoring_df = merge_full_and_incremental(
         pl.read_parquet(full_scoring_path),
-        pl.read_parquet(daily_scoring_path),
+        daily_scoring_df,
         join_key='league_id',
         preserve_columns=['league_lineage_id']
     )
 
     raw_rosters_df = merge_full_and_incremental(
         pl.read_parquet(full_rosters_path),
-        pl.read_parquet(daily_rosters_path),
+        daily_rosters_df,
         join_key='league_id',
         preserve_columns=['league_lineage_id']
     )
@@ -54,7 +54,6 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
     ])
 
     full_settings_raw = pl.read_parquet(full_settings_path)
-    daily_settings_raw = pl.read_parquet(daily_settings_path)
 
     # EXCLUDING 'leg' and 'last_scored_leg' because they change weekly and would bloat the history table.
     settings_key_cols = [
