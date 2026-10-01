@@ -79,10 +79,12 @@ from the league's own configuration rather than a fixed line:
    player sits deeper than the full-season fill, and the depth is read off the data per position
    rather than assumed: in effective starters the owner's league goes QB 20 → 25, RB 28 → 32.5,
    WR 31 → 39, TE 12 → 16 (2021–25), i.e. replacement ppg QB −1.6, RB −0.8, WR −0.9, TE −0.8.
-   Selectable in the harness (`--replacement weekly`, with `--realized-replacement` to hold the
-   yardstick fixed). Verdict (BACKLOG item 19): it moves the yardstick, not the ranking — against
-   a fixed realized definition the weekly line is no better (0.569 vs 0.580), so valuation keeps
-   the full-season fill.
+   This is the production line (`build_war.py --replacement weekly`, the default; `fill` keeps the
+   full-season fill). It is a definition, not a model change: within a position every player gains
+   the same games-weighted constant, so no within-position reordering; across positions QBs gain
+   most (their line moves 1.8 ppg). In the harness (`--replacement`, `--realized-replacement`)
+   the cross-position shift is a wash on held-out ordering (BACKLOG item 19), so the choice rests
+   on realism: lineups are filled every week from the players who are actually available.
 3. **Win curve** (`WinCurve`): P(win a week | points) on the league's own standings
    (`team_weeks_from_standings`); a logistic fit with 300+ team-weeks, otherwise a normal-margin
    curve from the league's weekly mean / spread. Wins are linear-to-concave in points, so there

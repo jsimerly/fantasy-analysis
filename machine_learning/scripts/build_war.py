@@ -104,17 +104,28 @@ def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
 
 def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, comps: list[war.Component], sigma: dict,
                  season_fact: pl.DataFrame, rate: float, rosters: pl.DataFrame | None, owner_id: str | None, span: str,
-                 note: str = "", scale: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+                 note: str = "", scale: pl.DataFrame | None = None, weeks: pl.DataFrame | None = None,
+                 replacement: str = "weekly") -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+    """``replacement``: "weekly" fills the league's lineups each week from the players who actually played
+    (injuries and byes push the marginal starter deeper; lineup.replacement_weekly, needs ``weeks``),
+    "fill" is the full-season fill (every starter assumed to play every week)."""
     if scale is not None:                     # this league's scoring, applied after the one model (per-player ratio)
         proj = scoring.apply_scale(proj, scale, [c for c in proj.columns if c.endswith("_ppg_hat") or c.endswith("_ppg_sigma")])
         season_fact = scoring.apply_scale(season_fact, scale, ["ppg"])
     last = int(season_fact.filter(pl.col("season_complete"))["season"].max())
     hist = list(range(last - 4, last + 1))
     pool_hist = season_fact.filter(pl.col("position").is_in(POSITIONS))
-    rep = lineup.replacement_from_history(pool_hist, spec, hist)
+    rep_full = lineup.replacement_from_history(pool_hist, spec, hist)
+    if replacement == "weekly":
+        if weeks is None:
+            raise ValueError("weekly replacement needs the weekly fact")
+        rep = lineup.replacement_weekly(pool_hist, weeks, spec, hist)
+    else:
+        rep = rep_full
     starters = lineup.starters_per_position(pool_hist.filter((pl.col("season") == last) & (pl.col("games") >= 8)), spec)
     print(f"\n== {spec.name}: {spec.teams} teams, slots {spec.slots}")
-    print(f"  starters by position (explicit fill, {last}): {starters}; replacement ({hist[0]}-{hist[-1]}): " + ", ".join(f"{p} {v:.1f}" for p, v in rep.items()))
+    print(f"  starters by position (explicit fill, {last}): {starters}; replacement ({replacement}, {hist[0]}-{hist[-1]}): " + ", ".join(f"{p} {v:.1f}" for p, v in rep.items())
+          + ("" if replacement != "weekly" else "; full-season fill would be " + ", ".join(f"{p} {v:.1f}" for p, v in rep_full.items())))
     print(f"  win curve: mean {curve.mean_points:.1f} sd {curve.sd_points:.1f} n={curve.n}; +10 ppg for an average team = +{10 * curve.slope_at_mean:.3f} win/week")
     out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma)
     out = out.with_columns(pl.col("war").rank(method="ordinal", descending=True).cast(pl.Int64).alias("war_rank_all"))
@@ -189,6 +200,9 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--teams", action="store_true", help="per-roster marginal WAR, trade targets and free agents")
     ap.add_argument("--no-write", action="store_true")
+    ap.add_argument("--replacement", choices=["weekly", "fill"], default="weekly",
+                    help="replacement line: weekly = the marginal starter among players who actually played each week (injuries, byes); fill = full-season fill")
+    ap.add_argument("--dump", help="also write each league's projections / teams parquet to this local directory (for comparisons)")
     args = ap.parse_args()
 
     career_meta = gcs_io.read_ml_json("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}", "metrics.json")
@@ -206,6 +220,7 @@ def main() -> None:
     proj = proj.filter(pl.col("position").is_in(POSITIONS))
     season_fact = features.load_fact_player_season()
     settings = gcs_io.read_lake(SETTINGS_PATH)
+    weeks = gcs_io.read_lake(WEEK_PATH)
     tag_base = ("war",)
     tag_tail = (f"season={args.season or args.as_of_season}", f"week={args.week or 0}", f"run_date={args.run_date}")
 
@@ -218,7 +233,6 @@ def main() -> None:
         leagues = all_leagues if args.all_leagues else all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
         primary_id = all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)["league_id"][0]
         primary_sc = scoring.league_scoring(settings, primary_id)
-        weeks = gcs_io.read_lake(WEEK_PATH)
         last_season = int(weeks["season"].max())
         for lid, name, lineage in leagues.select("league_id", "league_name", "league_lineage_id").iter_rows():
             spec = lg.LeagueSpec.from_settings(settings, lineage, name=slug(name))
@@ -236,8 +250,14 @@ def main() -> None:
         rosters = current_rosters(lid) if (args.teams and lid) else None
         display = next((n for i, n, _ in gcs_io.read_lake(LEAGUES_META_PATH).select("league_id", "league_name", "league_lineage_id").iter_rows() if i == lid), spec.name) if lid else spec.name
         out, teams_df, meta = build_league(spec, curve, proj, comps, sigma, season_fact, args.discount_rate, rosters,
-                                           owner_id if args.teams and not args.league else None, span, note, scale=scale)
-        meta.update({"display_name": display, "lineage_id": lineage, "league_id": lid})
+                                           owner_id if args.teams and not args.league else None, span, note, scale=scale,
+                                           weeks=weeks, replacement=args.replacement)
+        meta.update({"display_name": display, "lineage_id": lineage, "league_id": lid, "replacement": args.replacement})
+        if args.dump:
+            Path(args.dump).mkdir(parents=True, exist_ok=True)
+            out.write_parquet(Path(args.dump) / f"{spec.name}_projections.parquet")
+            if teams_df is not None:
+                teams_df.write_parquet(Path(args.dump) / f"{spec.name}_teams.parquet")
         if not args.no_write:
             tag = tag_base + (f"league={spec.name}",) + tag_tail
             p = gcs_io.write_ml_parquet(out, *tag, "projections.parquet")

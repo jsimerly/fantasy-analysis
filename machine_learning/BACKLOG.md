@@ -185,13 +185,19 @@ pieces are right, not just the total.
     the ranking: against either fixed realized definition the weekly-rep projection is no better
     (0.569 vs 0.580; 0.603 vs 0.606). The replacement line is a per-position constant, so it cannot
     reorder players within a position; it only shifts positions against each other (QBs gain most)
-    and that shift did not help. Verdict: not adopted for valuation; kept as `--replacement weekly`
-    in the harness (and the choice is now recorded in the ledger, with `--realized-replacement` for
-    cross-checks). The honest form of the user's point lives elsewhere: a player's OWN injury risk
-    is already in WAR through projected games; the roster layer (trade builder) enumerates deal
-    players in / out by availability. Where a weekly-fill line would matter is bench valuation —
-    the 25th QB is worth something in a 10-team superflex because he starts 20 % of weeks — which
-    is a roster-construction question (depth value), not a player-ranking one. Open as item 20.
+    and that shift is a wash on held-out ordering. So the harness cannot decide this one: it is a
+    definition of the yardstick, not a model change, and the realistic definition is the weekly one
+    (lineups are filled every week from the players who are actually available). **Adopted as the
+    production line** (`build_war.py --replacement weekly`, default; the harness records the choice
+    in the ledger, `--realized-replacement` for cross-checks). Effect on the 2026 week-3 table,
+    owner's league: every value rises by a games-weighted constant (QB +0.30, TE +0.14, WR +0.13,
+    RB +0.11 career wins on average in the top 150); position shares of top-150 WAR QB 34.7 → 36.9 %,
+    RB 29.8 → 26.9 %, WR 24.7 → 25.3 %, TE 10.7 → 10.9 %; the pack moves closer to the top
+    (#1 / #12 1.96 → 1.70, #12 / #48 2.44 → 2.14); top-30 reorders are QBs up 2–5 places
+    (Hurts, Mahomes, Williams, Burrow, Dart) and RBs down (Jeanty 7 → 11, McCaffrey 13 → 18,
+    Taylor 17 → 22, Henry 23 → 29). A player's OWN injury risk is separate and already in WAR
+    through projected games; the trade builder enumerates deal players in / out by availability.
+    Bench value (the 25th QB starts ~20 % of weeks in a 10-team superflex) is item 20.
 20. **Depth value for benches.** With weekly availability known per position (item 19), value a
     bench player as the weeks he would actually start for THIS roster (expected starts × his edge
     over the next man), rather than 0 below replacement. Needs the roster layer, not the model.
