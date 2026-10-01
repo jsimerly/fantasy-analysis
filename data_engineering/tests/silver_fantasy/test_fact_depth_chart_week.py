@@ -90,10 +90,11 @@ class TestSnapshotEra:
         # feed semantics: slot 1 holds overall WR ranks 1, 4, 7...; slot 2 holds 2, 5, 8...
         snaps = _snap([{"gsis_id": "wr1", "pos_slot": 1, "pos_rank": 1}, {"gsis_id": "wr4", "pos_slot": 1, "pos_rank": 4},
                        {"gsis_id": "wr2", "pos_slot": 2, "pos_rank": 2}, {"gsis_id": "wr5", "pos_slot": 2, "pos_rank": 5},
+                       {"gsis_id": "wr3", "pos_slot": 3, "pos_rank": 3},
                        {"gsis_id": "qb2", "pos_name": "Quarterback", "pos_abb": "QB", "pos_slot": 9, "pos_rank": 2}])
         out = m.snapshot_era(snaps, _sched([{"week": 1}])).sort("gsis_id")
-        assert dict(zip(out["gsis_id"], out["depth_rank"])) == {"qb2": 2, "wr1": 1, "wr2": 1, "wr4": 2, "wr5": 2}
-        assert dict(zip(out["gsis_id"], out["position_rank"])) == {"qb2": 2, "wr1": 1, "wr2": 2, "wr4": 4, "wr5": 5}
+        assert dict(zip(out["gsis_id"], out["depth_rank"])) == {"qb2": 2, "wr1": 1, "wr2": 1, "wr3": 1, "wr4": 2, "wr5": 2}
+        assert dict(zip(out["gsis_id"], out["position_rank"])) == {"qb2": 2, "wr1": 1, "wr2": 2, "wr3": 3, "wr4": 4, "wr5": 5}
         assert out.schema["position_rank"] == pl.Int32
 
 
