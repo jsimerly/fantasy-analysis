@@ -45,6 +45,22 @@ def fantasycalc_values() -> pl.DataFrame:
             .group_by("player_id").agg(pl.col("fc_value").max()).rename({"player_id": "player_key"}))
 
 
+def redraft_values() -> pl.DataFrame:
+    """Latest KTC REDRAFT values per player_key: superflex (``rd_sf``) and 1QB (``rd_1qb``), standard TE.
+    The ROS market for the page's ROS view (dynasty values lag redraft reality by design)."""
+    fav = gcs_io.read_lake(market.FACT_ASSET_VALUES_PATH)
+    rd = fav.filter((pl.col("market_type") == "REDRAFT") & (pl.col("te_premium") == "Standard") & (pl.col("ktc_value") > 0))
+    out = None
+    for fmt_, col in (("SF", "rd_sf"), ("1QB", "rd_1qb")):
+        sub = rd.filter(pl.col("qb_format") == fmt_)
+        if sub.height == 0:
+            continue
+        day = sub["valuation_date"].max()
+        one = sub.filter(pl.col("valuation_date") == day).group_by("player_id").agg(pl.col("ktc_value").max().alias(col)).rename({"player_id": "player_key"})
+        out = one if out is None else out.join(one, on="player_key", how="full", coalesce=True)
+    return out if out is not None else pl.DataFrame({"player_key": [], "rd_sf": [], "rd_1qb": []})
+
+
 def within_position(proj: pl.DataFrame, iv_col: str) -> pl.DataFrame:
     """The market's premium for a whole position factored out: fair value fitted per position."""
     within, _ = value.compare_to_market(proj, iv_col=iv_col, group_col="position")
@@ -58,7 +74,7 @@ def _common(r: dict) -> dict:
         "ktc": r.get("ktc_value"), "market_rank": r.get("market_rank"), "iv_rank": r.get("iv_rank"), "rank_gap": r.get("rank_gap"),
         "fair": _r(r.get("fair_value"), 0), "mis_pct": _r(r.get("mispricing_pct"), 3),
         "fair_pos": _r(r.get("fair_pos"), 0), "mis_pct_pos": _r(r.get("mis_pct_pos"), 3),
-        "match": r.get("market_match"), "fc": r.get("fc_value"),
+        "match": r.get("market_match"), "fc": r.get("fc_value"), "rd_sf": r.get("rd_sf"), "rd_1qb": r.get("rd_1qb"),
     }
 
 
@@ -109,6 +125,8 @@ def main() -> None:
     meta = gcs_io.read_ml_json(*career_base, "metrics.json")
     rate = meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2))
     fc = fantasycalc_values()
+    rd = redraft_values()
+    fc = fc.join(rd, on="player_key", how="full", coalesce=True)
 
     if args.source == "career":
         proj = gcs_io.read_ml_parquet(*career_base, "projections.parquet")

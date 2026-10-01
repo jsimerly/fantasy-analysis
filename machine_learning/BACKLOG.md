@@ -224,9 +224,13 @@ pieces are right, not just the total.
     double as a redraft tool: one toggle switches every column (value, rank, fair, mispricing) to
     ROS, and the market comparison switches with it, since KTC's dynasty values lag badly for
     redraft: FantasyPros ROS rankings / projections (the fantasypros ingestion in progress), or
-    KTC's redraft values if they are exposed. Career keeps the KTC dynasty comparison. Needs a
-    ROS price feed in the lake (DE), then the page work is small (the Rank-by control already
-    carries ROS WAR / PAR).
+    KTC's redraft values if they are exposed. Career keeps the KTC dynasty comparison.
+    **Done 2026-10-01 (first cut):** KTC redraft values were already in the lake
+    (`fact_asset_values_daily`, market_type REDRAFT, SF and 1QB, since 2025-10-08, ~140 players a
+    day). The export carries `rd_sf` / `rd_1qb` per player and the page has a View control
+    (Career = multi-year value vs KTC dynasty; ROS = rest-of-season value vs KTC redraft SF) plus
+    the two redraft series in the Market selector. Coverage is the top ~100 of the projected
+    players; FantasyPros ROS projections (ingestion in progress) would widen it.
 
 ## Objective, restated (2026-10-01, final)
 Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
