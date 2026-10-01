@@ -96,20 +96,37 @@ def spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
-def compare_to_market(df: pl.DataFrame, iv_col: str = "iv", market_col: str = "ktc_value") -> tuple[pl.DataFrame, dict]:
+def fair_value_curve(iv: np.ndarray, market: np.ndarray, method: str = "power") -> np.ndarray:
+    """Monotone map from intrinsic value onto the market's scale.
+
+    ``power`` (default): least-squares fit of ``log(market) = a + b*log(iv + 1)`` -- smooth and
+    strictly increasing, so two players with different IV never get the same fair value.
+    ``isotonic``: the non-parametric step fit; wherever the market's ordering disagrees with
+    IV's it pools players into one flat step (that is why the top of the list came out tied),
+    so it is kept only as an option."""
+    iv, market = np.asarray(iv, float), np.asarray(market, float)
+    if method == "isotonic":
+        return IsotonicRegression(increasing=True, out_of_bounds="clip").fit(iv, market).predict(iv)
+    ok = market > 0
+    b, a = np.polyfit(np.log1p(iv[ok]), np.log(market[ok]), 1)
+    b = max(b, 1e-6)                                   # keep it increasing
+    return np.exp(a) * np.power(1.0 + iv, b)
+
+
+def compare_to_market(df: pl.DataFrame, iv_col: str = "iv", market_col: str = "ktc_value",
+                      method: str = "power") -> tuple[pl.DataFrame, dict]:
     """Rows with both an IV and a market value, plus:
-    ``fair_value`` -- isotonic (monotone) map of IV onto the market's scale,
+    ``fair_value`` -- monotone map of IV onto the market's scale (see ``fair_value_curve``),
     ``mispricing`` -- market - fair_value (positive = market pays more than fundamentals),
     ``mispricing_pct`` -- mispricing / fair_value,
     ``iv_rank`` / ``market_rank`` / ``rank_gap`` -- ordering disagreement (positive = market ranks higher).
-    Summary: n, spearman, and the share of market ordering explained."""
+    Summary: n and spearman."""
     both = df.filter(pl.col(iv_col).is_not_null() & pl.col(market_col).is_not_null())
     if both.height < 3:
         return both, {"n": both.height, "spearman": float("nan")}
     iv = both[iv_col].to_numpy().astype(float)
     mk = both[market_col].to_numpy().astype(float)
-    iso = IsotonicRegression(increasing=True, out_of_bounds="clip").fit(iv, mk)
-    fair = iso.predict(iv)
+    fair = fair_value_curve(iv, mk, method)
     out = both.with_columns(
         pl.Series("fair_value", fair),
         (pl.col(market_col) - pl.Series("fair_value", fair)).alias("mispricing"),

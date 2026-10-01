@@ -115,15 +115,20 @@ class TestMarketComparison:
         assert abs(value.spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-9
         assert abs(value.spearman([1, 2, 3, 4], [40, 30, 20, 10]) + 1.0) < 1e-9
 
-    def test_fair_value_is_monotone_and_mispricing_sums_to_about_zero(self):
+    def test_fair_value_is_smooth_monotone_without_ties(self):
         df = pl.DataFrame({"iv": [10.0, 20.0, 30.0, 40.0, 50.0], "ktc_value": [1000, 3000, 2000, 6000, 9000]})
         out, summary = value.compare_to_market(df)
         fair = out["fair_value"].to_list()
-        assert fair == sorted(fair)
-        assert abs(out["mispricing"].sum()) < 1e-6
+        assert fair == sorted(fair) and len(set(fair)) == 5          # strictly increasing: no tied tiers
         assert summary["n"] == 5 and summary["spearman"] > 0.8
         # the 20->3000 row is paid more than its neighbours justify
         assert out.filter(pl.col("iv") == 20.0)["mispricing"][0] > 0
+
+    def test_isotonic_option_pools_disagreeing_neighbours(self):
+        import numpy as np
+        fair = value.fair_value_curve([10.0, 20.0, 30.0], [1000, 3000, 2000], method="isotonic")
+        assert fair[1] == fair[2]                                     # the step artifact, now opt-in
+        assert np.all(np.diff(value.fair_value_curve([10.0, 20.0, 30.0], [1000, 3000, 2000])) > 0)
 
     def test_rows_without_market_are_excluded(self):
         df = pl.DataFrame({"iv": [1.0, 2.0, 3.0, 4.0], "ktc_value": [100, None, 300, 400]})

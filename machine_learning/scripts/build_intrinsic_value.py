@@ -34,10 +34,14 @@ SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--horizon", type=int, default=7)
+    ap.add_argument("--horizon", type=int, default=10,
+                    help="seasons projected; elite QBs play 15+, so the cap, not the discount, is what "
+                         "would under-value them -- the discount already prices distance in time")
     ap.add_argument("--discount", type=float, default=value.DEFAULT_DISCOUNT)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--no-write", action="store_true")
+    ap.add_argument("--sensitivity", action="store_true",
+                    help="also print the top 10 under horizon x discount alternatives")
     args = ap.parse_args()
     H = list(range(1, args.horizon + 1))
     today = datetime.now(timezone.utc).date()
@@ -80,6 +84,19 @@ def main() -> None:
         print("\nTop 10 by IV among players with NO market value (unmatched or unpriced):")
         print(proj.filter(pl.col("ktc_value").is_null()).sort("iv", descending=True)
               .select("player_name", "position", pl.col("age_at_season").round(0).alias("age"), pl.col("iv").round(0), "market_match").head(10))
+
+    if args.sensitivity:
+        pred = models.predict(current)
+        watch = ["Drake Maye", "Jared Goff", "Josh Allen", "Caleb Williams", "Puka Nacua"]
+        print("\nSensitivity: top 10 by IV under alternative horizon / discount (same projections):")
+        for h in sorted({5, 7, args.horizon}):
+            for disc in (0.7, 0.8, 0.9):
+                hh = [k for k in H if k <= h]
+                alt = value.intrinsic_value(pred, rep, hh, disc).sort("iv", descending=True)
+                names = alt["player_name"].head(10).to_list()
+                ranks = {n: int(alt.with_row_index("r").filter(pl.col("player_name") == n)["r"][0]) + 1
+                         for n in watch if n in alt["player_name"].to_list()}
+                print(f"  H={h:2d} discount={disc}: {', '.join(names)}  | ranks {ranks}")
 
     if not args.no_write:
         run = today.isoformat()
