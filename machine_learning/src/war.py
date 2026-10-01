@@ -78,12 +78,25 @@ def wins_above_replacement(df: pl.DataFrame, rep: dict[str, float], curve: WinCu
     return df.with_columns(cols + [pl.Series("war", war_total), pl.Series("par", par_total)])
 
 
+def lineup_offset(curve: WinCurve, lineup_totals: list[float]) -> float:
+    """Where projected lineups sit on the curve. The curve is fitted on the league's ACTUAL weekly
+    totals (every position, that league's scoring); projected lineups cover QB/RB/WR/TE in model
+    units and are shrunk toward the mean, so they run lower. Centring the curve on the league's
+    average projected lineup puts an average roster at the curve's 50 % point, and the rosters'
+    win probabilities average one half, as they must."""
+    if not lineup_totals:
+        return 0.0
+    return float(curve.mean_points - float(np.mean(lineup_totals)))
+
+
 def team_marginal_war(roster: pl.DataFrame, spec: LeagueSpec, curve: WinCurve, components: list[Component],
-                      discount_rate: float = value.DEFAULT_DISCOUNT_RATE, candidates: pl.DataFrame | None = None) -> pl.DataFrame:
+                      discount_rate: float = value.DEFAULT_DISCOUNT_RATE, candidates: pl.DataFrame | None = None,
+                      offset: float = 0.0) -> pl.DataFrame:
     """Marginal wins each rostered player adds to HIS roster (lineup with him minus without him),
     and, if ``candidates`` is given, what each candidate would add to this roster.
 
     ``roster`` / ``candidates``: one row per player with ``position`` and the component columns.
+    ``offset`` (see ``lineup_offset``) shifts projected lineup totals onto the curve's scale.
     Returns one row per player with ``m_par_k`` / ``m_war_k`` per component and ``m_war`` / ``m_par``."""
     pos = roster["position"].to_list()
     out_rows = []
@@ -104,7 +117,7 @@ def team_marginal_war(roster: pl.DataFrame, spec: LeagueSpec, curve: WinCurve, c
                 gain, team_total = max(with_ - base, 0.0), with_
             g = games[comp.k]
             par = gain * g
-            war = g * float(curve.delta_win(team_total, gain))
+            war = g * float(curve.delta_win(team_total + offset, gain))
             w = value.discount_weight(comp.k, discount_rate)
             row[f"m_par_{comp.k}"], row[f"m_war_{comp.k}"] = par, war
             war_total += w * war; par_total += w * par

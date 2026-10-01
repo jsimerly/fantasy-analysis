@@ -152,3 +152,15 @@ undiscounted, 2.0 at 20 %; only 46 % were still a 15-ppg player a year later, 29
 later, none seven. The model gives Bijan 4.0 undiscounted / 3.4 at 20 % (full-season scaled), i.e.
 above the base rate. Calibrate games and ppg decay JOINTLY by position × age × horizon so the
 pieces are right, not just the total.
+
+18. **The career model shrinks good players too much (tested 2026-10-01, out of sample, cohorts
+    2017–22, all positions).** Realized minus projected season points by the player's prior-season
+    position tier: top 5 +13 / +7 / +22 at 1 / 2 / 3 years out; tier 6–12 +11 / +18 / +15; tier
+    13–24 +5 / 0 / −1; lower tiers ≈ 0. WRs ranked 6–12 are projected ~30 points (18 %) low at
+    every horizon. This is the across-the-board bias behind "our model is cold on established
+    stars"; the market's top-tier ranks are not systematically wrong in the same way. Fix
+    candidates, through the harness: less regularisation / more depth for the ppg model, or a
+    walk-forward post-hoc calibration of ppg_hat by position and prior tier. Note the down-year
+    case is NOT part of it: former top-12 players coming off a season ≤ 70 % of their best
+    (n = 50) realized 10.2 ppg vs 9.9 projected next year and only 20 % got back to ≥ 90 % of
+    their prior rate, so the model's cold read on a Jefferson-type season is calibrated.

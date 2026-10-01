@@ -106,3 +106,17 @@ class TestWAR:
         assert x["m_par"] == 18 * 16 and x["rostered"] is False                           # open superflex: the candidate starts in full
         w2 = out.filter(pl.col("player_id") == "w2").row(0, named=True)
         assert w2["m_par"] == 10 * 16                                                     # third WR fills the flex
+
+
+class TestLineupOffset:
+    def test_offset_centres_projected_lineups_and_shifts_marginal_wins(self):
+        c = lg.WinCurve.normal(134, 42)
+        off = war.lineup_offset(c, [120.0, 110.0, 130.0])             # mean 120 -> +14
+        assert abs(off - 14.0) < 1e-9 and abs(c.win_prob(120 + off) - 0.5) < 1e-9
+        roster = pl.DataFrame({"player_id": ["q1", "r1", "w1", "t1", "w2"], "player_name": list("ABCDE"), "position": ["QB", "RB", "WR", "TE", "WR"],
+                               "h1_ppg_hat": [22.0, 12.0, 11.0, 8.0, 10.0], "h1_games_hat": [16.0] * 5})
+        comps = war.career_components([1])
+        a = war.team_marginal_war(roster, SF, c, comps, offset=0.0)
+        b = war.team_marginal_war(roster, SF, c, comps, offset=off)
+        assert (a["m_par"] == b["m_par"]).all()                        # points unchanged
+        assert b["m_war"][0] != a["m_war"][0]                          # read at a different point on the curve

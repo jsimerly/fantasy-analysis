@@ -29,6 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 
 import features  # noqa: E402
@@ -136,21 +137,28 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
         rosters = rosters.filter(~pl.col("is_taxi") & pl.col("player_id").is_not_null())
         owner_of = rosters.select("player_id", pl.col("team_name").alias("owned_by")).unique("player_id")
         pool = out.join(owner_of, on="player_id", how="left")
-        rows = []
-        for roster_id, name, oid in rosters.select("roster_id", "team_name", "owner_id").unique().sort("roster_id").iter_rows():
+        teams_list = rosters.select("roster_id", "team_name", "owner_id").unique().sort("roster_id").rows()
+        per_team = {}
+        for roster_id, name, oid in teams_list:
             mine = rosters.filter(pl.col("roster_id") == roster_id)["player_id"].implode()
             r = pool.filter(pl.col("player_id").is_in(mine))
-            if r.height == 0:
-                continue
+            if r.height:
+                per_team[roster_id] = (name, oid, mine, r, war.roster_total(r, spec, comps[0].ppg))
+        # projected lineups vs the curve: centre the curve on the league's average projected lineup
+        offset = war.lineup_offset(curve, [v[4] for v in per_team.values()])
+        print(f"  projected lineups: mean {np.mean([v[4] for v in per_team.values()]):.1f} ppg vs curve mean {curve.mean_points:.1f} -> offset {offset:+.1f}")
+        rows = []
+        for roster_id, (name, oid, mine, r, total) in per_team.items():
             cands = pool.filter(~pl.col("player_id").is_in(mine)).sort("war", descending=True).head(80)
-            total = war.roster_total(r, spec, comps[0].ppg)
-            t = war.team_marginal_war(r, spec, curve, comps, rate, candidates=cands)
+            t = war.team_marginal_war(r, spec, curve, comps, rate, candidates=cands, offset=offset)
             t = (t.join(cands.select("player_id", "owned_by"), on="player_id", how="left")
                    .join(out.select("player_id", pl.col("war").alias("league_war"), "ktc_value"), on="player_id", how="left")
                    .with_columns(pl.lit(roster_id).alias("roster_id"), pl.lit(name).alias("team_name"), pl.lit(total).alias("lineup_ppg_now"),
-                                 pl.lit(float(curve.win_prob(total))).alias("win_prob_now"), pl.lit(bool(owner_id and oid == owner_id)).alias("is_owner")))
+                                 pl.lit(float(curve.win_prob(total + offset))).alias("win_prob_now"), pl.lit(offset).alias("lineup_offset"),
+                                 pl.lit(bool(owner_id and oid == owner_id)).alias("is_owner")))
             rows.append(t)
         teams_df = pl.concat(rows)
+        print(f"  mean win probability across rosters: {teams_df.group_by('roster_id').agg(pl.col('win_prob_now').first())['win_prob_now'].mean():.3f}")
         with pl.Config(tbl_rows=14, tbl_width_chars=180, fmt_str_lengths=24, float_precision=2):
             print(teams_df.group_by("roster_id", "team_name", "is_owner").agg(pl.col("lineup_ppg_now").first(), pl.col("win_prob_now").first())
                   .sort("lineup_ppg_now", descending=True))
