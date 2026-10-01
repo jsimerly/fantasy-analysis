@@ -38,3 +38,20 @@ def read_lake(path: str) -> pl.DataFrame:
 def ml_path(*parts: str) -> str:
     """gs:// path for a model-exclusive artifact under this project's ML prefix."""
     return f"gs://{ML_BUCKET}/{PROJECT}/" + "/".join(parts)
+
+
+def write_ml_parquet(df: pl.DataFrame, *parts: str) -> str:
+    """Write a frame as parquet under this project's ML prefix; returns the gs:// path."""
+    buf = io.BytesIO()
+    df.write_parquet(buf)
+    blob = _client().bucket(ML_BUCKET).blob(f"{PROJECT}/" + "/".join(parts))
+    blob.upload_from_string(buf.getvalue(), content_type="application/octet-stream")
+    return ml_path(*parts)
+
+
+def write_ml_json(obj: dict, *parts: str) -> str:
+    import json
+
+    blob = _client().bucket(ML_BUCKET).blob(f"{PROJECT}/" + "/".join(parts))
+    blob.upload_from_string(json.dumps(obj, indent=2, default=str), content_type="application/json")
+    return ml_path(*parts)
