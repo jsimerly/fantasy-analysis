@@ -36,8 +36,11 @@ import gcs_io  # noqa: E402
 import league as lg  # noqa: E402
 import lineup  # noqa: E402
 import replacement as _rep  # noqa: E402
+import scoring  # noqa: E402
 import value  # noqa: E402
 import war  # noqa: E402
+
+WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 
 SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 LEAGUES_META_PATH = "silver/fantasy/dim_leagues_meta/data.parquet"
@@ -100,7 +103,10 @@ def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
 
 def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, comps: list[war.Component], sigma: dict,
                  season_fact: pl.DataFrame, rate: float, rosters: pl.DataFrame | None, owner_id: str | None, span: str,
-                 note: str = "") -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+                 note: str = "", scale: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+    if scale is not None:                     # this league's scoring, applied after the one model (per-player ratio)
+        proj = scoring.apply_scale(proj, scale, [c for c in proj.columns if c.endswith("_ppg_hat") or c.endswith("_ppg_sigma")])
+        season_fact = scoring.apply_scale(season_fact, scale, ["ppg"])
     last = int(season_fact.filter(pl.col("season_complete"))["season"].max())
     hist = list(range(last - 4, last + 1))
     pool_hist = season_fact.filter(pl.col("position").is_in(POSITIONS))
@@ -186,27 +192,34 @@ def main() -> None:
     tag_base = ("war",)
     tag_tail = (f"season={args.season or args.as_of_season}", f"week={args.week or 0}", f"run_date={args.run_date}")
 
-    targets: list[tuple[lg.LeagueSpec, lg.WinCurve, str | None, str | None, str]] = []   # spec, curve, lineage, league_id, note
+    targets: list[tuple[lg.LeagueSpec, lg.WinCurve, str | None, str | None, str, pl.DataFrame | None]] = []   # spec, curve, lineage, league_id, note, scale
     if args.league:
         spec = lg.LeagueSpec.from_json(args.league)
-        targets.append((spec, win_curve_for(None), None, None, "custom league: no standings or rosters; win curve from all leagues in the lake"))
+        targets.append((spec, win_curve_for(None), None, None, "custom league: no standings or rosters; win curve from all leagues in the lake; primary league's scoring", None))
     else:
-        leagues = gcs_io.read_lake(LEAGUES_META_PATH).filter(pl.col("status") == "in_season")
-        if not args.all_leagues:
-            leagues = leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
+        all_leagues = gcs_io.read_lake(LEAGUES_META_PATH).filter(pl.col("status") == "in_season")
+        leagues = all_leagues if args.all_leagues else all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
+        primary_id = all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)["league_id"][0]
+        primary_sc = scoring.league_scoring(settings, primary_id)
+        weeks = gcs_io.read_lake(WEEK_PATH)
+        last_season = int(weeks["season"].max())
         for lid, name, lineage in leagues.select("league_id", "league_name", "league_lineage_id").iter_rows():
             spec = lg.LeagueSpec.from_settings(settings, lineage, name=slug(name))
-            cur = settings.filter(pl.col("is_current") & (pl.col("league_id") == lid))
-            pint = float(cur["pass_int"][0]) if cur.height and cur["pass_int"][0] is not None else None
-            note = "projections scored under this league's rules" if lineage == _rep.PRIMARY_LINEAGE else \
-                   f"projections scored under the primary league's rules (shared offensive scoring; this league's interception penalty is {pint:g})"
-            targets.append((spec, win_curve_for(lineage), lineage, lid, note))
+            if lineage == _rep.PRIMARY_LINEAGE:
+                note, scale = "the model is trained on this league's scoring", None
+            else:
+                sc = scoring.league_scoring(settings, lid)
+                diff = scoring.scoring_diff(primary_sc, sc)
+                scale = scoring.ppg_scale(weeks, primary_sc, sc, seasons=[last_season - 2, last_season - 1, last_season]) if diff else None
+                note = ("same offensive scoring as the primary league" if not diff else
+                        "scoring adjusted per player from the primary league's rules: " + ", ".join(f"{k} {a:g} -> {b:g}" for k, (a, b) in sorted(diff.items())))
+            targets.append((spec, win_curve_for(lineage), lineage, lid, note, scale))
         owner_id = owner_in_every_league(leagues) if args.teams else None
-    for spec, curve, lineage, lid, note in targets:
+    for spec, curve, lineage, lid, note, scale in targets:
         rosters = current_rosters(lid) if (args.teams and lid) else None
         display = next((n for i, n, _ in gcs_io.read_lake(LEAGUES_META_PATH).select("league_id", "league_name", "league_lineage_id").iter_rows() if i == lid), spec.name) if lid else spec.name
         out, teams_df, meta = build_league(spec, curve, proj, comps, sigma, season_fact, args.discount_rate, rosters,
-                                           owner_id if args.teams and not args.league else None, span, note)
+                                           owner_id if args.teams and not args.league else None, span, note, scale=scale)
         meta.update({"display_name": display, "lineage_id": lineage, "league_id": lid})
         if not args.no_write:
             tag = tag_base + (f"league={spec.name}",) + tag_tail

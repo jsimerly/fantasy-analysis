@@ -179,6 +179,25 @@ def build_situation(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     ).drop(["_prev_team", "_prev2_team"])
 
 
+# ------------------------------------------------------------------------------ rookie
+ROOKIE_COLS = ["pick_x_rookie", "pick_x_young", "pick_over_exp", "round_x_rookie"]
+
+
+def build_rookie(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """Draft capital weighted by how new the player is: its pull on next-season points fades from
+    -0.52 (rookie year) to -0.27 (year 11+), so give the trees the interaction explicitly.
+    Undrafted players sit past the last pick (260) / round 8."""
+    exp = pl.col("exp_at_season").cast(pl.Float64).fill_null(0.0)
+    pick = pl.col("draft_pick").cast(pl.Float64).fill_null(260.0)
+    rnd = pl.col("draft_round").cast(pl.Float64).fill_null(8.0)
+    return matrix.with_columns(
+        (pick * (exp == 0).cast(pl.Float64)).alias("pick_x_rookie"),
+        (pick * (exp <= 2).cast(pl.Float64)).alias("pick_x_young"),
+        (pick / (1.0 + exp)).alias("pick_over_exp"),
+        (rnd * (exp == 0).cast(pl.Float64)).alias("round_x_rookie"),
+    )
+
+
 # ---------------------------------------------------------------------------- registry
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
@@ -187,6 +206,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "role": FeatureGroup("role", ROLE_COLS, build_role, "fact_depth_chart_week"),
     "trend": FeatureGroup("trend", TREND_COLS, build_trend, "fact_player_week (second half vs first half, last 4)"),
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
+    "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 

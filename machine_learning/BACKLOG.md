@@ -137,3 +137,9 @@ look rich (top-24 mean mispricing +12 % → +7 %, the 9990+ assets to 0 %).
     ingestion first; (c) an explicit rookie prior in the in-season model (draft slot → expected
     rookie-year ppg curve by position) that the to-date games update. Accept only through the
     harness (rank agreement) and the rookie residual test (BACKLOG 16).
+
+    Tested 2026-10-01: the explicit interaction group (`rookie`: pick x rookie, pick x young,
+    pick / (1 + exp), round x rookie) scores 0.669 vs 0.671 for the current set in the season-level
+    harness — the trees already had draft pick and experience and were using them. The remaining
+    lead is inputs the model does not have (college production) and the in-season rookie prior,
+    not more combinations of what it has.

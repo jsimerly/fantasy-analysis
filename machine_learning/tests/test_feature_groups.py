@@ -86,6 +86,20 @@ class TestSituation:
         assert out["lag1_moved"].to_list() == [None, None, 0, 1]
 
 
+class TestRookie:
+    def test_draft_capital_scaled_by_experience(self):
+        m = _matrix([{"player_id": "r", "exp_at_season": 0, "draft_pick": 10, "draft_round": 1},
+                     {"player_id": "y", "exp_at_season": 2, "draft_pick": 10, "draft_round": 1},
+                     {"player_id": "v", "exp_at_season": 9, "draft_pick": 10, "draft_round": 1},
+                     {"player_id": "u", "exp_at_season": 0, "draft_pick": None, "draft_round": None}])
+        out = fg.build_rookie(m, fg.Context()).sort("player_id")
+        d = {r["player_id"]: r for r in out.to_dicts()}
+        assert (d["r"]["pick_x_rookie"], d["r"]["pick_x_young"], d["r"]["pick_over_exp"], d["r"]["round_x_rookie"]) == (10, 10, 10, 1)
+        assert (d["y"]["pick_x_rookie"], d["y"]["pick_x_young"], d["y"]["pick_over_exp"]) == (0, 10, 10 / 3)
+        assert (d["v"]["pick_x_rookie"], d["v"]["pick_x_young"], d["v"]["pick_over_exp"]) == (0, 0, 1.0)
+        assert d["u"]["pick_x_rookie"] == 260 and d["u"]["round_x_rookie"] == 8
+
+
 class TestRegistry:
     def test_resolve_dedupes_and_rejects_unknown(self):
         groups = fg.resolve("base,career,base")

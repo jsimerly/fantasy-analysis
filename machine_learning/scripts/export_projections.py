@@ -176,8 +176,8 @@ def main() -> None:
                 free = t.filter(~pl.col("rostered") & pl.col("owned_by").is_null()).sort("m_war", descending=True).head(6)
                 tl.append({"rid": rid, "name": tname, "owner": bool(t["is_owner"][0]) if "is_owner" in t.columns else False,
                            "ppg": _r(t["lineup_ppg_now"][0]), "wp": _r(t["win_prob_now"][0], 3),
-                           "players": [[x["player_name"], x["position"], _r(x["m_war"], 2), _r(x["m_par"], 0), _r(x["league_war"], 2), x["ktc_value"]] for x in own.iter_rows(named=True)],
-                           "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"]] for x in trade.iter_rows(named=True)],
+                           "players": [[x["player_name"], x["position"], _r(x["m_war"], 2), _r(x["m_par"], 0), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2)] for x in own.iter_rows(named=True)],
+                           "targets": [[x["player_name"], x["position"], x["owned_by"], _r(x["m_war"], 2), _r(x["league_war"], 2), x["ktc_value"], _r(x.get("m_war_1"), 2)] for x in trade.iter_rows(named=True)],
                            "free": [[x["player_name"], x["position"], _r(x["m_war"], 2)] for x in free.iter_rows(named=True)]})
             teams[lid] = tl
     default_league = next((l["id"] for l in leagues if l["primary"]), leagues[0]["id"] if leagues else None)

@@ -80,6 +80,13 @@ scripts/build_war.py --season 2026 --week 3 --run-date 2026-10-01 --league leagu
 ```
 Outputs: `war/league=<name>/season=S/week=W/run_date=D/{projections, teams}.parquet + meta.json`.
 
+**One model, many leagues (`src/scoring.py`).** The projection model is trained once, on the
+primary league's scoring (Stuck in High School). For another league, every player's real weeks
+from the last three seasons are re-scored under both rule sets and the ratio scales his projected
+ppg and his historical ppg (so replacement is in the same units); differences the weekly fact
+cannot rebuild (fumbles, 2-pt, yardage bonuses) are shared across the owner's leagues and cancel.
+`build_war.py --all-leagues` notes each league's adjustment in its meta.
+
 Known calibration gap (first-3-span shares vs realized 3-year shares, 2017–2022 cohorts): the
 model gives QBs ~33 % of league value where QBs delivered ~26 %, and WRs ~29 % where they
 delivered ~38 %; QB projection spread (sigma 5.2 vs 2.5 for WR) inflates QB upside credit. A
