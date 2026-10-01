@@ -52,7 +52,7 @@ bad run still shows up red for alerting. The `run.v2` connector blocks until eac
 execution finishes (a failed job raises and is caught per-job).
 
 Excluded from the daily DAG (run manually): the `*-full` / backfill jobs
-(`ktc-full-*`, `nflverse-{full,combine,draft,schedule,nfl-draft-picks}`,
+(`ktc-full-*`, `nflverse-{full,combine,draft,schedule,nfl-draft-picks,backfill-seasonal}`,
 `sleeper-{league-lineage,league-transactions,draft-picks}`) and
 `sleeper-commissioner-adjustments` (a static hand-maintained list — run it only when you
 edit the overrides).

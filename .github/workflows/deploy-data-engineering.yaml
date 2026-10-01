@@ -83,6 +83,11 @@ jobs:
             ["nflverse-full"]="nflverse_ingestion.full_ingestion:1Gi:1:30m"
             ["nflverse-nfl-draft-picks"]="nflverse_ingestion.nfl_draft_picks:1Gi:1:30m"
             ["nflverse-schedule"]="nflverse_ingestion.schedule_ingestion:1Gi:1:30m"
+            # manual: load one seasonal nflverse dataset's history, one data.parquet per season (same
+            # path the daily job writes). Drive with execution env overrides, e.g.
+            #   gcloud run jobs execute nflverse-backfill-seasonal --region us-central1 \
+            #     --update-env-vars DATASET=injuries,START_SEASON=2009
+            ["nflverse-backfill-seasonal"]="nflverse_ingestion.backfill_seasonal:2Gi:1:2h"
             # --- silver (1Gi; heavier facts 2Gi; staging 4Gi/2cpu) ---
             ["silver-dim-franchise-meta"]="silver_fantasy.dim_franchise_meta:1Gi:1:30m"
             ["silver-dim-league-meta"]="silver_fantasy.dim_leagues_meta:1Gi:1:30m"

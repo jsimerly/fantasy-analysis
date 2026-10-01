@@ -64,6 +64,15 @@ DATASETS_CONFIG = {
         'seasonal': True,
         'schedule': SCHEDULE_DAILY
     },
+    # Weekly practice / game-status injury reports (2009+): report_status Out/Doubtful/Questionable,
+    # body part, practice status. Players on IR/PUP are NOT listed (use rosters_weekly.status for
+    # that). Backfilled once with backfill_seasonal (DATASET=injuries START_SEASON=2009).
+    'injuries': {
+        'loader': nfl.load_injuries,
+        'folder': 'injuries',
+        'seasonal': True,
+        'schedule': SCHEDULE_DAILY
+    },
     'nextgen_stats': {
         'loader': nfl.load_nextgen_stats, 
         'folder': 'nextgen_stats', 

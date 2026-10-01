@@ -13,7 +13,7 @@ src/
   sleeper_ingestion/      api/, daily/, historical/, league_crawler*, _utils.py
   ktc_ingestion/          utils.py, dynasty/ devy/ redraft/
   fantasycalc_ingestion/  daily_ingestion.py
-  nflverse_ingestion/     *_ingestion.py
+  nflverse_ingestion/     *_ingestion.py, backfill_seasonal.py (history of one daily dataset)
   fantasypros_ingestion/  projections_scraper.py   (local-only; not deployed)
   silver_fantasy/         dim_*.py, fact_*.py, utils.py, _staging/
 tests/                    per-package; pytest in importlib mode, gql/nflreadpy stubs + fake_gcs
