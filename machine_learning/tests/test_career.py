@@ -109,6 +109,33 @@ class TestHorizonModels:
             career.HorizonModels([1], n_estimators=5).fit(df, as_of_season=2009)
 
 
+class TestAgeSurvival:
+    def _table(self):
+        # 300 QB seasons: continuation falls from ~95% at 25 to ~40% at 40
+        rng = np.random.default_rng(3)
+        ages = rng.uniform(22, 42, 300)
+        p = 1 / (1 + np.exp(-(14 - 0.4 * ages)))
+        played = rng.random(300) < p
+        return pl.DataFrame({"position": ["QB"] * 300, "age_at_season": ages, "games": [10] * 300,
+                             "h1_observable": [True] * 300, "h1_played": played})
+
+    def test_fit_gives_decreasing_survival_and_caps_the_old(self):
+        s = career.AgeSurvival().fit(self._table())
+        assert s.p_next("QB", np.array([25.0]))[0] > s.p_next("QB", np.array([40.0]))[0]
+        assert s.survival("QB", np.array([43.0]), 3)[0] < 0.3
+        pred = pl.DataFrame({"position": ["QB", "QB"], "age_at_season": [25.0, 43.0],
+                             "h1_games_hat": [16.0, 16.0], "h3_games_hat": [15.0, 15.0]})
+        out = s.cap_games(pred, [1, 3])
+        young, old = out.to_dicts()
+        assert young["h1_games_hat"] > 14 and young["h3_games_hat"] > 10      # prior barely binds
+        assert old["h1_games_hat"] < 10 and old["h3_games_hat"] < 5          # survivorship removed
+
+    def test_unknown_position_is_uncapped(self):
+        s = career.AgeSurvival().fit(self._table())
+        pred = pl.DataFrame({"position": ["K"], "age_at_season": [45.0], "h1_games_hat": [16.0]})
+        assert s.cap_games(pred, [1])["h1_games_hat"][0] == 16.0
+
+
 class TestBaselines:
     def test_carry_forward_repeats_this_season(self):
         df = career.attach_horizon_targets(_season_table(), [1, 2])

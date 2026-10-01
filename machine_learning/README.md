@@ -21,7 +21,36 @@ Buckets, by ownership:
   namespaced per project under `<ML_BUCKET>/dynasty-value/`. Not used in Phase 0 (nothing
   persisted yet); writes begin in Phase 1+.
 
-## Phase 2 — intrinsic value (current)
+## Phase 3 — in-season update (current)
+
+The primary in-season view (`src/inseason.py`). A **snapshot** is (player, season T, through
+week W): the prior-season feature set (as of T−1) plus this season to date (games, per-game
+rate, usage, last-3 form, missed weeks). Targets: rest-of-season ppg/games (0 games if he never
+played again) and next-season ppg/games (attrition learnt). Trained on every (season, week)
+snapshot back to 1999 (~199k rows), so the model learns how far a 3-week sample should move a
+projection versus a 10-week one. `inseason_value` = ROS (undiscounted) + next season from this
+model + seasons T+2.. from the career model off the latest complete season, discounted — the
+dynasty-relevant number to compare with the market in-season.
+
+```
+scripts/backtest_inseason.py            # by checkpoint week x cohort vs KTC + naive baselines; market-lag test
+scripts/backtest_inseason.py --current  # project the in-progress season; writes gs://.../inseason/season=YYYY/week=W/
+```
+
+Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced that week):
+- **Rest of season**: rank correlation with realized ROS ppg, model **0.78 vs KTC 0.70** at week 3,
+  widening to 0.69 vs 0.57 by week 13 (to-date ppg alone: 0.70; last season alone: 0.60).
+- **Next season**: in-season IV **0.565 vs KTC 0.555** (W3) … 0.588 vs 0.581 (W13); a 50/50
+  last-season/to-date blend is nearly as good (0.55–0.59), so the gain over a sensible heuristic is thin.
+- **Market lag**: the gap between the *next-season* projection and KTC at week W predicts KTC's move
+  to February (Spearman −0.19 at W3): the third the market priced cheap vs fundamentals gained ~+6 %,
+  the rich third ~−7 %, and a naive "hot start" rule has no such power. The *multi-year* IV gap does
+  not predict the move — the in-season market chases near-term production, so that is where the
+  tradable lag is.
+Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
+oldest ages (see the age-survival prior); one lineup.
+
+## Phase 2 — intrinsic value
 
 What no site publishes: a value built from **fundamentals** (projected career production) rather
 than from what the market thinks. Like a DCF for a company:
@@ -32,6 +61,10 @@ than from what the market thinks. Like a DCF for a company:
    not assumed). Direct multi-horizon models: real outcomes per horizon, no compounding of a
    one-year model, and outcomes not yet observable are censored. `estimate_sigma` measures the
    out-of-sample spread of each horizon's `ppg` projection on held-out recent seasons.
+   `career.AgeSurvival` is a population prior on availability: the games models see only the
+   survivors at the oldest ages (every 43-year-old QB season in the data is Tom Brady's), so
+   projected games at horizon k are capped at `17 × P(still playing k years out | position, age)`
+   from a logistic fit of year-over-year continuation. It only binds for old players.
 2. **Replacement level** (`src/replacement.py`): from the league's lineup in
    `dim_league_settings` (10-team superflex: ~20 QB / 24.5 RB / 34.5 WR / 11 TE starters),
    replacement ppg = the player just outside the starters, averaged over the last 5 seasons.

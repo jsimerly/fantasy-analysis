@@ -191,6 +191,66 @@ class HorizonModels:
         return df.with_columns(cols)
 
 
+# ------------------------------------------------------------------- age-survival prior
+class AgeSurvival:
+    """Population probability of still playing k seasons out, by position and age.
+
+    The gradient-boosted games models learn attrition well where data is dense, but at the
+    oldest ages the only training examples are the survivors (every 43-year-old QB season in
+    the data is Tom Brady's), so they extrapolate a 43-year-old with 13 ppg as if he were
+    Brady. A smooth logistic fit of P(played next season | age) per position, dominated by
+    the hundreds of 30-38-year-old seasons, is a far better prior there; projected games at
+    horizon k are capped at ``MAX_GAMES x survival(age, k)``. The cap only binds where the
+    model is over-optimistic (it is ~15 games for anyone under 30).
+    """
+
+    def __init__(self) -> None:
+        self.coef: dict[str, tuple[float, float]] = {}      # position -> (intercept, slope on age)
+
+    def fit(self, season_df: pl.DataFrame) -> "AgeSurvival":
+        from sklearn.linear_model import LogisticRegression
+
+        rows = season_df.filter(pl.col("h1_observable") & (pl.col("games") > 0) & pl.col("age_at_season").is_not_null())
+        for pos in rows["position"].unique().to_list():
+            sub = rows.filter(pl.col("position") == pos)
+            if sub.height < 50 or sub["h1_played"].n_unique() < 2:
+                continue
+            lr = LogisticRegression().fit(sub[["age_at_season"]].to_numpy(), sub["h1_played"].to_numpy().astype(int))
+            self.coef[pos] = (float(lr.intercept_[0]), float(lr.coef_[0][0]))
+        return self
+
+    def p_next(self, position: str, age: np.ndarray) -> np.ndarray:
+        if position not in self.coef:
+            return np.ones_like(np.asarray(age, float))
+        b0, b1 = self.coef[position]
+        return 1.0 / (1.0 + np.exp(-(b0 + b1 * np.asarray(age, float))))
+
+    def survival(self, position: str, age: np.ndarray, k: int) -> np.ndarray:
+        """P(plays in season age+k | plays now) = product of the yearly continuation odds."""
+        age = np.asarray(age, float)
+        s = np.ones_like(age)
+        for j in range(k):
+            s = s * self.p_next(position, age + j)
+        return s
+
+    def cap_games(self, df: pl.DataFrame, horizons: Iterable[int], age_col: str = "age_at_season",
+                  col: str = "h{k}_games_hat") -> pl.DataFrame:
+        """Cap each horizon's projected games at MAX_GAMES x survival (per row's position/age)."""
+        cols = []
+        pos = df["position"].to_numpy()
+        age = df[age_col].fill_null(27.0).to_numpy().astype(float)
+        for k in horizons:
+            name = col.format(k=k)
+            if name not in df.columns:
+                continue
+            cap = np.empty(df.height)
+            for p in np.unique(pos):
+                m = pos == p
+                cap[m] = MAX_GAMES * self.survival(str(p), age[m], k)
+            cols.append(pl.Series(name, np.minimum(df[name].to_numpy().astype(float), cap)))
+        return df.with_columns(cols)
+
+
 # --------------------------------------------------------------------------- baselines
 def carry_forward_horizons(test: pl.DataFrame, horizons: Iterable[int]) -> pl.DataFrame:
     """Naive: next k seasons look like this one."""

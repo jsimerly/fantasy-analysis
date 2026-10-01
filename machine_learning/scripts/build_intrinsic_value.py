@@ -60,7 +60,10 @@ def main() -> None:
     print("out-of-sample ppg spread by horizon (all positions):",
           {k: round(v["__all__"], 2) for k, v in sigma.items()})
     current = df.filter(pl.col("season") == last)
-    proj = value.intrinsic_value(models.predict(current), rep, H, args.discount)
+    survival = career.AgeSurvival().fit(df.filter(pl.col("season") < last))
+    pred = survival.cap_games(models.predict(current), H)            # population age prior on availability
+    pred = pred.with_columns([(pl.col(f"h{k}_games_hat") * pl.col(f"h{k}_ppg_hat")).alias(f"h{k}_fpts_hat") for k in H])
+    proj = value.intrinsic_value(pred, rep, H, args.discount)
     proj = market.attach_market(proj, today)
     cmp, summary = value.compare_to_market(proj)
     # persist the market comparison with the projections (fair value, mispricing, ranks)
@@ -91,7 +94,6 @@ def main() -> None:
               .select("player_name", "position", pl.col("age_at_season").round(0).alias("age"), pl.col("iv").round(0), "market_match").head(10))
 
     if args.sensitivity:
-        pred = models.predict(current)
         watch = ["Drake Maye", "Jared Goff", "Josh Allen", "Caleb Williams", "Puka Nacua"]
         print("\nSensitivity: top 10 by IV under alternative horizon / discount (same projections):")
         for h in sorted({5, 7, args.horizon}):

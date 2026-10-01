@@ -56,10 +56,14 @@ def week_end_date(wk: pl.DataFrame, season: int, week: int) -> date:
 
 def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str):
     """Career-model projections off every player's row in season ``as_of`` (their latest
-    complete season), plus the out-of-sample spread, trained only on outcomes known by then."""
+    complete season), plus the out-of-sample spread, trained only on outcomes known by then.
+    Projected games are capped by the population age-survival prior (survivorship at the
+    oldest ages). Returns (predictions, sigma, survival)."""
     m = career.HorizonModels(H, device=device).fit(season_df, as_of_season=as_of)
     sigma = m.estimate_sigma(season_df, as_of_season=as_of)
-    return m.predict(season_df.filter(pl.col("season") == as_of)), sigma
+    survival = career.AgeSurvival().fit(season_df.filter((pl.col("season") + 1) <= as_of))
+    pred = survival.cap_games(m.predict(season_df.filter(pl.col("season") == as_of)), H)
+    return pred, sigma, survival
 
 
 def main() -> None:
@@ -84,9 +88,10 @@ def main() -> None:
         cur = int(wk["season"].max())
         w_now = int(wk.filter(pl.col("season") == cur)["week"].max())
         rep = replacement.replacement_levels(season, starters)
-        tail, sigma = career_tail(season, last_complete, rep, args.device)
+        tail, sigma, survival = career_tail(season, last_complete, rep, args.device)
         m = inseason.InSeasonModels(device=args.device).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
+        snap = survival.cap_games(snap, [1], col="next_games_hat")
         snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount)
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
         # preseason view for the same players: the career model's IV off their 2025 row
@@ -106,8 +111,9 @@ def main() -> None:
             liquid = v.filter(pl.col("ktc_value") >= 1500)
             print("\nMarket CHEAPEST vs in-season intrinsic value (KTC >= 1500):"); print(liquid.sort("mispricing_pct").select(show).head(20))
             print("\nMarket RICHEST vs in-season intrinsic value:"); print(liquid.sort("mispricing_pct", descending=True).select(show).head(20))
+            movers = liquid.filter(pl.col("moved_up").is_not_null())      # rookies have no preseason rank
             print("\nBiggest movers since preseason in the model's own ranking (moved_up = preseason IV rank - in-season IV rank):")
-            print(liquid.sort("moved_up", descending=True).select(show).head(10)); print(liquid.sort("moved_up").select(show).head(10))
+            print(movers.sort("moved_up", descending=True).select(show).head(10)); print(movers.sort("moved_up").select(show).head(10))
         run = datetime.now(timezone.utc).date().isoformat()
         p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left"),
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")
@@ -117,11 +123,13 @@ def main() -> None:
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(season, starters, seasons=list(range(T - 5, T)))
-        tail, sigma = career_tail(season, T - 1, rep, args.device)
+        tail, sigma, survival = career_tail(season, T - 1, rep, args.device)
         m = inseason.InSeasonModels(device=args.device).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
         for W in weeks:
             snap = m.predict(snaps.filter((pl.col("season") == T) & (pl.col("week") == W)))
+            snap = survival.cap_games(snap, [1], col="next_games_hat")
+            snap = snap.with_columns((pl.col("next_games_hat") * pl.col("next_ppg_hat")).alias("next_fpts_hat"))
             snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount)
             snap = market.attach_market(snap, week_end_date(wk, T, W), hist, xw).join(k_end, on="player_key", how="left")
             priced = snap.filter(pl.col("ktc_value").is_not_null() & pl.col("next_observable"))
