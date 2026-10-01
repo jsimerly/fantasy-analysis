@@ -166,6 +166,49 @@ class InSeasonModels:
 
 
 # ------------------------------------------------------------------- in-season value
+AGE_BUCKETS = [(0, 23), (24, 25), (26, 27), (28, 29), (30, 99)]
+
+
+def _age_bucket(age: pl.Expr) -> pl.Expr:
+    expr = pl.lit(None, pl.Utf8)
+    for lo, hi in reversed(AGE_BUCKETS):
+        expr = pl.when(age.is_between(lo, hi)).then(pl.lit(f"{lo}-{hi}")).otherwise(expr)
+    return expr
+
+
+def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8) -> pl.DataFrame:
+    """Give players with no career tail (rookies and anyone without a complete prior season) a tail
+    extrapolated from their own next-season projection: season k = next-season ppg / games times
+    the median ratio h{k} / next among players of the same position and age bucket who do have a
+    career tail (falls back to the position when a bucket is thin). Without this a rookie's value
+    stopped after next season while a veteran's ran ten years, which made every rookie look rich.
+    Adds ``tail_source`` ('career' | 'extrapolated' | 'none')."""
+    ks = [k for k in horizons if k >= 3 and f"h{k}_ppg_hat" in df.columns]
+    if not ks or "age_at_season" not in df.columns:
+        return df.with_columns(pl.lit("career").alias("tail_source"))
+    has = pl.all_horizontal([pl.col(f"h{k}_ppg_hat").is_not_null() for k in ks])
+    d = df.with_columns(has.alias("_has_tail"), _age_bucket(pl.col("age_at_season")).alias("_ab"))
+    base = d.filter(pl.col("_has_tail") & (pl.col("next_ppg_hat") > 0) & (pl.col("next_games_hat") > 0))
+    ratio_exprs = []
+    for k in ks:
+        ratio_exprs += [(pl.col(f"h{k}_ppg_hat") / pl.col("next_ppg_hat")).median().alias(f"_rp{k}"),
+                        (pl.col(f"h{k}_games_hat") / pl.col("next_games_hat")).median().alias(f"_rg{k}")]
+    by_bucket = base.group_by("position", "_ab").agg([pl.len().alias("_n")] + ratio_exprs).filter(pl.col("_n") >= min_group).drop("_n")
+    by_pos = base.group_by("position").agg(ratio_exprs)
+    d = d.join(by_bucket, on=["position", "_ab"], how="left")
+    d = d.join(by_pos, on="position", how="left", suffix="_pos")
+    fills = []
+    for k in ks:
+        rp = pl.coalesce([pl.col(f"_rp{k}"), pl.col(f"_rp{k}_pos")])
+        rg = pl.coalesce([pl.col(f"_rg{k}"), pl.col(f"_rg{k}_pos")])
+        fills += [pl.when(pl.col("_has_tail")).then(pl.col(f"h{k}_ppg_hat")).otherwise(pl.col("next_ppg_hat") * rp).alias(f"h{k}_ppg_hat"),
+                  pl.when(pl.col("_has_tail")).then(pl.col(f"h{k}_games_hat")).otherwise(pl.col("next_games_hat") * rg).alias(f"h{k}_games_hat")]
+    d = d.with_columns(fills).with_columns(
+        pl.when(pl.col("_has_tail")).then(pl.lit("career"))
+          .when(pl.col(f"h{ks[0]}_ppg_hat").is_not_null()).then(pl.lit("extrapolated")).otherwise(pl.lit("none")).alias("tail_source"))
+    return d.drop([c for c in d.columns if c.startswith("_rp") or c.startswith("_rg") or c in ("_has_tail", "_ab")])
+
+
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
@@ -185,7 +228,7 @@ def inseason_value(
 
     horizons = [k for k in horizons if k >= 3]
     tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")])
-    df = snaps.join(tail, on="player_id", how="left")
+    df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons)
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
 
     def excess(mu_col: str, k: int) -> np.ndarray:
