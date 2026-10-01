@@ -75,3 +75,15 @@ per-game rate, the rest covariance — rate projection is the bigger lever, avai
 Done 2026-10-01: the table now runs off the in-season model (ROS at full weight, next season at
 1 − rate, this season's games included, rookies in). The three cases moved from IV ranks
 126 / 85 / 116 preseason to 50 / 33 / 68 in-season against market ranks 52 / 16 / 32.
+
+12. **Situation-change flags as direction features, not a volatility rating.** Tested 2013–2024
+    (relevant players who played the next season): a new team shifts next-season ppg −1.0
+    relative to stayers, a week-1 depth demotion −1.7, a promotion +0.9, a new starting QB
+    nothing; the spread of outcomes (std ≈ 3.5 ppg) does not widen with any of them, nor with
+    the count of changes. So they belong in the ppg / games models (direction), not in sigma.
+    Teammate turnover (top-3 target earners) is untested. Caveat: availability effects not
+    tested (conditioned on playing ≥ 6 games).
+
+Recency check (2012–2024 snapshots): realized ROS ppg ≈ 0.39·to-date + 0.46·prior at week 3,
+0.59 / 0.27 at week 9, 0.66 / 0.20 at week 13; last-3 adds ≤ 0.17 beyond to-date. The in-season
+model's own weights are 0.49 / 0.37 at W3 and 0.62 / 0.23 at W9 — already about right.
