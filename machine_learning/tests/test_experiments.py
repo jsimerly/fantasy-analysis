@@ -91,3 +91,16 @@ class TestMarketEdge:
         e2 = ex.market_edge(market + 0.01 * rng.normal(size=n), market, truth)   # we just echo the market
         assert abs(e2["edge_corr"]) < 0.4 and e2["edge_spread"] < e["edge_spread"]
         assert ex.market_edge(np.arange(5.0), np.arange(5.0), np.arange(5.0)) == {}
+
+
+def test_paired_comparison_is_cohort_by_cohort(monkeypatch):
+    import experiments as ex
+    a = pl.DataFrame({"cohort": [2015, 2016, 2017, 2018], "spearman_war_top": [0.50, 0.60, 0.55, 0.65], "mae_war_top": [1.0, 1.0, 1.0, 1.0]})
+    b = pl.DataFrame({"cohort": [2015, 2016, 2017, 2018], "spearman_war_top": [0.52, 0.62, 0.57, 0.67], "mae_war_top": [1.0, 1.1, 0.9, 1.0]})
+    monkeypatch.setattr(ex, "load_run", lambda ref: a if ref == "a" else b)
+    out = ex.paired("a", "b")
+    top = out.filter(pl.col("metric") == "spearman_war_top").row(0, named=True)
+    assert abs(top["diff_b_minus_a"] - 0.02) < 1e-9 and top["b_wins"] == 4 and top["cohorts"] == 4 and top["t"] > 100
+    mae = out.filter(pl.col("metric") == "mae_war_top").row(0, named=True)
+    assert abs(mae["diff_b_minus_a"]) < 1e-9 and mae["b_wins"] == 1
+

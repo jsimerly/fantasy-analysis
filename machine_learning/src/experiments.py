@@ -234,6 +234,45 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 
 
 PRIMARY = "spearman_war_top"
+RUNS_PREFIX = ("experiments", "runs")
+PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err"]
+
+
+def save_run(per_cohort: pl.DataFrame, summary: dict) -> str:
+    """Persist a run's per-cohort rows (the unit of a paired comparison) next to the ledger."""
+    stamp = str(summary.get("timestamp", "")).replace(":", "-")
+    return gcs_io.write_ml_parquet(per_cohort.with_columns(pl.lit(stamp).alias("run_ts")), *RUNS_PREFIX, f"{summary['name']}_{stamp}.parquet")
+
+
+def load_run(ref: str) -> pl.DataFrame:
+    """``name`` (latest run of that name) or ``name@timestamp``."""
+    name, _, stamp = ref.partition("@")
+    paths = sorted(x for x in gcs_io.list_ml(*RUNS_PREFIX) if x.rsplit("/", 1)[-1].startswith(name + "_"))
+    if stamp:
+        paths = [x for x in paths if stamp.replace(":", "-") in x]
+    if not paths:
+        raise FileNotFoundError(f"no per-cohort results for {ref!r}")
+    tail = paths[-1].split("/")[-3:]
+    return gcs_io.read_ml_parquet(*tail)
+
+
+def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS) -> pl.DataFrame:
+    """Paired comparison of two runs cohort by cohort: mean difference (B - A), its standard error
+    over cohorts, the t statistic and how many cohorts B wins. Eight cohorts is few: |t| above ~2.4
+    is the 5 % two-sided line, below ~1 is noise."""
+    a, b = load_run(ref_a), load_run(ref_b)
+    j = a.join(b, on="cohort", suffix="_b")
+    rows = []
+    for m in metrics:
+        if m not in a.columns or m not in b.columns:
+            continue
+        d = (j[f"{m}_b"] - j[m]).drop_nulls()
+        if d.len() < 2:
+            continue
+        mean, se = float(d.mean()), float(d.std() / np.sqrt(d.len()))
+        rows.append({"metric": m, "a": float(j[m].mean()), "b": float(j[f"{m}_b"].mean()), "diff_b_minus_a": mean, "se": se,
+                     "t": mean / se if se > 0 else float("inf"), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
+    return pl.DataFrame(rows)
 
 
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:

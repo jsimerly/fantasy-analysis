@@ -69,11 +69,17 @@ def main() -> None:
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
+    ap.add_argument("--paired", nargs=2, metavar=("RUN_A", "RUN_B"),
+                    help="compare two runs' per-cohort results (names or name@timestamp; latest run of each name) and exit")
     args = ap.parse_args()
 
     if args.list_groups:
         for g in fg.GROUPS.values():
             print(f"{g.name:10s} {len(g.columns):3d} cols  <- {g.source}")
+        return
+    if args.paired:
+        with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
+            print(ex.paired(*args.paired))
         return
     if args.leaderboard:
         ledger = ex.load_ledger()
@@ -145,6 +151,7 @@ def main() -> None:
             print(per_cohort)
         if not args.no_log:
             ledger = ex.append_result(ledger, summary)
+            print("per-cohort ->", ex.save_run(per_cohort, summary))
     with pl.Config(tbl_rows=-1, tbl_width_chars=220, float_precision=3):
         print("\n== summary (mean over cohorts) ==")
         print(pl.DataFrame(summaries).select([c for c in ["name", "groups", "n_features", "spearman_war_top", "spearman_war_all", "mae_war_top", "bias_war_top",
