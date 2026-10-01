@@ -22,6 +22,11 @@ def seed(monkeypatch, fake_gcs):
     monkeypatch.setattr(mod, "get_latest_bronze_path",
                         lambda bucket, ep, source="sleeper": f"path::{ep}")
 
+    def fake_latest(bucket, ep, join_key="league_id", source="sleeper", columns=None, **kw):
+        df = fake_gcs[f"path::{ep}"]
+        return df.select([c for c in columns if c in df.columns]) if columns else df
+    monkeypatch.setattr(mod, "read_latest_incremental_by_key", fake_latest)
+
     def _seed_bronze(pass_td=4.0):
         scoring = pl.DataFrame({
             "league_id": ["L1"], "league_lineage_id": ["ROOT"], "pass_td": [pass_td],
@@ -84,3 +89,36 @@ class TestChange:
         assert expired.height == 1
         assert expired.to_dicts()[0]["pass_td"] == 4.0
         assert expired.to_dicts()[0]["valid_to"] is not None
+
+
+class TestLatestObservationAcrossPartitions:
+    """Regression for the 2026-09 flap: a completed league leaves the daily feed, so reading
+    only the newest partition fell back to full_load (all-null scoring for later-season
+    leagues) and a new version opened every day. All three incremental entities must be read
+    as the latest observation per league across every partition."""
+
+    def test_every_incremental_entity_uses_the_all_partitions_reader(self, seed, monkeypatch):
+        seed_bronze, _ = seed
+        seed_bronze()
+        calls = []
+        real = mod.read_latest_incremental_by_key
+        def spy(bucket, ep, **kw):
+            calls.append(ep)
+            return real(bucket, ep, **kw)
+        monkeypatch.setattr(mod, "read_latest_incremental_by_key", spy)
+        transform()
+        assert sorted(calls) == ["league/roster_slots/incremental", "league/scoring/incremental",
+                                 "league/settings/incremental"]
+
+    def test_stale_full_load_does_not_reopen_a_version(self, seed):
+        # existing current version = the real (observed) scoring; the full_load snapshot for the
+        # league is all-null; the latest observation still carries the real scoring -> no change
+        seed_bronze, store = seed
+        seed_bronze(pass_td=4.0)
+        store[EXISTING_PATH] = transform()
+        store["path::league/scoring/full_load"] = pl.DataFrame(
+            {"league_id": ["L1"], "league_lineage_id": ["ROOT"], "pass_td": [None]}
+        ).with_columns(pl.col("pass_td").cast(pl.Float64))
+        df = transform()
+        assert df.height == 1 and df["is_current"][0] is True and df["pass_td"][0] == 4.0
+

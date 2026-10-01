@@ -257,3 +257,46 @@ class TestLeaguesFrameSchemaPinned:
         assert set(saved) == {"leagues", "settings", "scoring", "roster_slots"}
         assert saved["leagues"]["bracket_id"].to_list() == [None, 1306906374357147648]
         assert saved["leagues"].schema["bracket_id"] == pl.Int64
+
+
+class TestLeaguesWithDifferentKeySets:
+    """Regression (2026-09): leagues carry different scoring / settings key sets, and the
+    per-league frames were combined with concat(how='align'), which JOINS on the common
+    columns -- when a league with fewer keys came first, 24 keys of the richer league were
+    nulled. Rows must be stacked (diagonal), every league keeping all of its own values,
+    whatever the processing order."""
+
+    def _run(self, monkeypatch, order):
+        monkeypatch.setenv("GCS_BUCKET_NAME", "test-bucket")
+        rich = _league(); rich["league_id"] = "RICH"
+        rich["scoring_settings"] = {"pass_td": 4.0, "rec": 1.0, "bonus_rec_yd_100": 3.0, "rec_0_4": 0.5}
+        rich["settings"] = {"leg": 3, "last_scored_leg": 2, "taxi_slots": 4, "reserve_slots": 2, "taxi_years": 2}
+        poor = _league(); poor["league_id"] = "POOR"
+        poor["scoring_settings"] = {"pass_td": 6.0, "rec": 0.5}
+        poor["settings"] = {"leg": 3, "last_scored_leg": 2, "taxi_slots": 4, "reserve_slots": 2}
+        payloads = {"RICH": rich, "POOR": poor}
+        known = pl.DataFrame({"league_id": order, "status": ["in_season"] * 2, "source_system": ["sleeper"] * 2})
+        monkeypatch.setattr(mod, "get_fantasy_leagues", lambda: known)
+        monkeypatch.setattr(mod, "discover_new_season_leagues", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "get_league", lambda league_id: payloads[league_id])
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        saved = {}
+        monkeypatch.setattr(mod, "save_df_to_gcs", lambda df, b, d, entity: saved.__setitem__(entity, df))
+        mod.main()
+        return saved
+
+    @pytest.mark.parametrize("order", [["RICH", "POOR"], ["POOR", "RICH"]])
+    def test_every_league_keeps_all_of_its_scoring_keys(self, monkeypatch, order):
+        saved = self._run(monkeypatch, order)
+        rich = saved["scoring"].filter(pl.col("league_id") == "RICH").to_dicts()[0]
+        assert rich["bonus_rec_yd_100"] == 3.0 and rich["rec_0_4"] == 0.5 and rich["pass_td"] == 4.0
+        poor = saved["scoring"].filter(pl.col("league_id") == "POOR").to_dicts()[0]
+        assert poor["pass_td"] == 6.0 and poor["bonus_rec_yd_100"] is None      # genuinely absent
+        assert saved["scoring"].height == 2
+
+    @pytest.mark.parametrize("order", [["RICH", "POOR"], ["POOR", "RICH"]])
+    def test_settings_keys_survive_too(self, monkeypatch, order):
+        saved = self._run(monkeypatch, order)
+        rich = saved["settings"].filter(pl.col("league_id") == "RICH").to_dicts()[0]
+        assert rich["taxi_years"] == 2
+
