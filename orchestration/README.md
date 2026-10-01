@@ -15,6 +15,7 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
   Cloud Scheduler         sleeper-incremental-league / -players / -rosters / -transactions / -users
   (1 trigger, 10:00 UTC)  sleeper-drafts-overview · fantasycalc-daily
         │                 ktc-incremental-{dynasty,redraft,devy} · nflverse-daily
+                 nflverse-backfill-seasonal (reconcile: loads any missing past season)
         ▼                            │ (all complete)
    fantasy-pipeline ─────────────────┤
    (Cloud Workflow)                  ▼
@@ -52,7 +53,7 @@ bad run still shows up red for alerting. The `run.v2` connector blocks until eac
 execution finishes (a failed job raises and is caught per-job).
 
 Excluded from the daily DAG (run manually): the `*-full` / backfill jobs
-(`ktc-full-*`, `nflverse-{full,combine,draft,schedule,nfl-draft-picks,backfill-seasonal}`,
+(`ktc-full-*`, `nflverse-{full,combine,draft,schedule,nfl-draft-picks}`,
 `sleeper-{league-lineage,league-transactions,draft-picks}`) and
 `sleeper-commissioner-adjustments` (a static hand-maintained list — run it only when you
 edit the overrides).

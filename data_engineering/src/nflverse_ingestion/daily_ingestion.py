@@ -20,48 +20,56 @@ DATASETS_CONFIG = {
         'loader': nfl.load_pbp, 
         'folder': 'play_by_play', 
         'seasonal': True,
+        'start_season': 1999,
         'schedule': SCHEDULE_DAILY
     },
     'player_stats': {
         'loader': nfl.load_player_stats, 
         'folder': 'player_stats', 
         'seasonal': True,
+        'start_season': 1999,
         'schedule': SCHEDULE_DAILY
     },
     'team_stats': {
         'loader': lambda s: nfl.load_team_stats(seasons=s), 
         'folder': 'team_stats', 
         'seasonal': True,
+        'start_season': 1999,
         'schedule': SCHEDULE_DAILY
     },
     'schedules': {
         'loader': nfl.load_schedules, 
         'folder': 'schedules', 
         'seasonal': True,
+        'start_season': 1999,
         'schedule': SCHEDULE_DAILY
     },
     'rosters': {
         'loader': nfl.load_rosters, 
         'folder': 'rosters', 
         'seasonal': True,
+        'start_season': 1999,
         'schedule': SCHEDULE_DAILY
     },
     'rosters_weekly': {
         'loader': nfl.load_rosters_weekly, 
         'folder': 'rosters_weekly', 
         'seasonal': True,
+        'start_season': 2002,
         'schedule': SCHEDULE_DAILY
     },
     'depth_charts': {
         'loader': nfl.load_depth_charts, 
         'folder': 'depth_charts', 
         'seasonal': True,
+        'start_season': 2001,
         'schedule': SCHEDULE_DAILY
     },
     'snap_counts': {
         'loader': nfl.load_snap_counts, 
         'folder': 'snap_counts', 
         'seasonal': True,
+        'start_season': 2013,   # nflverse's 2012 snap-count file is empty
         'schedule': SCHEDULE_DAILY
     },
     # Weekly practice / game-status injury reports (2009+): report_status Out/Doubtful/Questionable,
@@ -71,24 +79,28 @@ DATASETS_CONFIG = {
         'loader': nfl.load_injuries,
         'folder': 'injuries',
         'seasonal': True,
+        'start_season': 2009,
         'schedule': SCHEDULE_DAILY
     },
     'nextgen_stats': {
         'loader': nfl.load_nextgen_stats, 
         'folder': 'nextgen_stats', 
         'seasonal': True,
+        'start_season': 2016,
         'schedule': SCHEDULE_DAILY
     },
     'ftn_charting': {
         'loader': nfl.load_ftn_charting, 
         'folder': 'ftn_charting', 
         'seasonal': True,
+        'start_season': 2022,
         'schedule': SCHEDULE_DAILY
     },
     'officials': {
         'loader': nfl.load_officials, 
         'folder': 'officials', 
         'seasonal': True,
+        'start_season': 2015,
         'schedule': SCHEDULE_DAILY
     },
     

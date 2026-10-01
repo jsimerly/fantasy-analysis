@@ -38,6 +38,7 @@ main:
               - "ktc-incremental-redraft"
               - "ktc-incremental-devy"
               - "nflverse-daily"
+              - "nflverse-backfill-seasonal"  # fills any missing past season of every seasonal nflverse dataset (no-op when complete)
           # --- SILVER T1: read bronze only ---
           - silver_t1_jobs:
               - "silver-dim-league-meta"
