@@ -72,6 +72,15 @@ per-game rate, the rest covariance — rate projection is the bigger lever, avai
 11. **Depth chart entering week 1 as a feature.** Walker was KC's RB1 on the week-1 chart after
     the move from Seattle's two-back split; the preseason projection could not see it, the
     in-season model only after three games. Same source table.
+    **Tested 2026-10-01 (in-season model):** `inseason.depth_features` adds the depth rank entering
+    the snapshot week, its three-week change and the starter flag (86 % of snapshots listed);
+    `backtest_inseason.py --depth`. Cohorts 2021–24: ROS rank agreement 0.784 → 0.786 (W3),
+    0.772 → 0.770 (W6); next-season +0.001–0.003; targeted (to-date ppg ≥ 6): starters unchanged,
+    backup QBs (n = 45) ROS ppg MAE 5.02 → 4.91 and games bias +0.26 → −0.01, backup RBs unchanged.
+    Neutral: the to-date usage features already carry the role. Kept opt-in, not production.
+    The Brissett / Watson / Mariota projections (8–11 ROS games) therefore reflect that they have
+    been playing in 2026; the market's discount on them is about who starts next, which no
+    feature in the lake sees yet (item 7, team commitment).
 
 Done 2026-10-01: the table now runs off the in-season model (ROS at full weight, next season at
 1 − rate, this season's games included, rookies in). The three cases moved from IV ranks

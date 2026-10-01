@@ -74,12 +74,12 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
-    ap.add_argument("--no-depth", action="store_true", help="leave the depth-chart features out (A/B against the default)")
+    ap.add_argument("--depth", action="store_true", help="add the depth-chart standing features (BACKLOG 11; neutral in the 2021-24 backtest, so opt-in)")
     args = ap.parse_args()
     weeks = [int(w) for w in args.weeks.split(",")]
 
     wk, season = load_inputs()
-    depth = None if args.no_depth else gcs_io.read_lake("silver/fantasy/fact_depth_chart_week/data.parquet")
+    depth = gcs_io.read_lake("silver/fantasy/fact_depth_chart_week/data.parquet") if args.depth else None
     snaps = inseason.baselines(inseason.build_snapshots(wk, season, depth=depth))
     if depth is not None:
         print(f"depth-chart features on: {snaps['td_depth_rank'].is_not_null().mean():.0%} of snapshots listed")
