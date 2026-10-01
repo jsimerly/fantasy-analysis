@@ -114,6 +114,18 @@ model gives QBs ~33 % of league value where QBs delivered ~26 %, and WRs ~29 % w
 delivered ~38 %; QB projection spread (sigma 5.2 vs 2.5 for WR) inflates QB upside credit. A
 position-level calibration is a value-definition experiment, not a feature one (BACKLOG 13).
 
+## Weekly refresh (Cloud Run)
+
+`scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
+(`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
+(`build_war.py --all-leagues --teams`) and exports the page data to
+`pages/season=S/week=W/run_date=D/projections.json` in the ML bucket. `Dockerfile` builds the
+image; `.github/workflows/deploy-machine-learning.yaml` pushes it, deploys the `ml-weekly-refresh`
+Cloud Run job (4Gi / 2 cpu / 1 h) and keeps a Cloud Scheduler trigger on Tuesdays 15:00 UTC, after
+the daily data pipeline. The runtime service account needs read / write on the lake and ML buckets.
+The published page is republished from the exported JSON by hand (a job cannot update an
+artifact). `--dry-run` prints the three commands; `--skip inseason` etc. leaves a step out.
+
 ## Experiments — mix and match feature groups
 
 Every modelling angle is kept as a named **feature group** (`src/feature_groups.py`) and any
