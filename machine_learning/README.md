@@ -71,12 +71,14 @@ than from what the market thinks. Like a DCF for a company:
 3. **Value** (`src/value.py`): per horizon, *expected* points above replacement
    `E[max(ppg − rep, 0)] × games` under the projection's spread (so a player projected near
    replacement keeps his upside instead of being worth exactly 0), then
-   `IV = Σ_k discount^k · VORP_k` with `discount = 0.8` (a manager time-preference parameter —
-   tune it).
+   `IV = Σ_k (1 − r)^(k−1) · VORP_k` with a per-year discount rate `r = 20 %` (season 1, the
+   coming season, at full weight; `r = 100 %` means this season only; a manager time-preference
+   parameter exposed as a slider in the projections table).
 4. **Market comparison** (`src/market.py`, `value.compare_to_market`): KTC superflex values
-   joined by id (`dim_players_master.gsis_id`, trimmed) with a name+position fallback; an
-   isotonic fit maps IV onto KTC's scale so `mispricing = market − fair_value` is in market
-   units, plus rank gaps.
+   joined by id (`dim_players_master.gsis_id`, trimmed) with a name+position fallback; a
+   power-law fit `log(market) = a + b·log(IV + 1)` (isotonic optional) maps IV onto the market's
+   scale so `mispricing = market − fair_value` is in market units, plus rank gaps; the same fit
+   within each position factors out a position-wide premium.
 
 ```
 scripts/

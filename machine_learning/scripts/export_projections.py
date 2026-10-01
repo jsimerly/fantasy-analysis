@@ -77,7 +77,7 @@ def main() -> None:
         })
     out = {
         "as_of_season": meta["as_of_season"], "run_date": meta["run_date"], "horizon": meta["horizon"],
-        "horizons": horizons, "discount": meta["discount"], "replacement_ppg": meta["replacement_ppg"],
+        "horizons": horizons, "discount_rate": meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2)), "replacement_ppg": meta["replacement_ppg"],
         "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
         "spearman": meta.get("spearman_iv_vs_ktc"), "rows": rows,
     }

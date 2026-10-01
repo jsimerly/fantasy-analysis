@@ -110,15 +110,18 @@ def _big():
 
 
 class TestInSeasonValue:
-    def test_ros_undiscounted_next_discounted_tail_from_career(self):
+    def test_ros_full_weight_next_discounted_tail_from_career(self):
         snaps = pl.DataFrame({"player_id": ["a", "b"], "position": ["QB", "WR"],
                               "ros_ppg_hat": [25.0, 8.0], "ros_games_hat": [10.0, 10.0],
                               "next_ppg_hat": [24.0, 12.0], "next_games_hat": [16.0, 16.0]})
+        # career_pred is projected off season T-1: h1 = this season, h2 = next season (both replaced by
+        # the in-season model), h3 = the first tail season, weighted (1 - rate)^2
         career_pred = pl.DataFrame({"player_id": ["a"], "h2_ppg_hat": [22.0], "h2_games_hat": [8.0],
-                                    "h3_ppg_hat": [20.0], "h3_games_hat": [4.0]})
-        out = inseason.inseason_value(snaps, career_pred, {"QB": 20.0, "WR": 10.0}, None, [1, 2, 3], discount=0.5)
+                                    "h3_ppg_hat": [24.0], "h3_games_hat": [4.0], "h4_ppg_hat": [20.0], "h4_games_hat": [4.0]})
+        out = inseason.inseason_value(snaps, career_pred, {"QB": 20.0, "WR": 10.0}, None, [1, 2, 3, 4], discount_rate=0.5)
         a = out.filter(pl.col("player_id") == "a").to_dicts()[0]
-        assert a["vorp_ros"] == 50.0 and a["vorp_next"] == 64.0 and a["h2_vorp_hat"] == 16.0 and a["h3_vorp_hat"] == 0.0
+        assert a["vorp_ros"] == 50.0 and a["vorp_next"] == 64.0 and a["h3_vorp_hat"] == 16.0 and a["h4_vorp_hat"] == 0.0
+        assert "h2_vorp_hat" not in out.columns                     # next season is never counted twice
         assert abs(a["iv_inseason"] - (50 + 0.5 * 64 + 0.25 * 16)) < 1e-9
         b = out.filter(pl.col("player_id") == "b").to_dicts()[0]        # no career tail -> only ros/next
         assert b["vorp_ros"] == 0.0 and b["vorp_next"] == 32.0 and abs(b["iv_inseason"] - 16.0) < 1e-9

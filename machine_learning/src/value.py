@@ -1,11 +1,12 @@
 """Intrinsic value = discounted points above replacement over the projected career.
 
     VORP_k  = max(ppg_hat_k - replacement_ppg[position], 0) x games_hat_k
-    IV      = sum_k  discount^k x VORP_k                      (k = 1..H)
+    IV      = sum_k  (1 - rate)^(k-1) x VORP_k                (k = 1..H; k = 1 is the coming season)
 
-The discount is the dynasty manager's time preference: a point next season is worth more than
-the same point three seasons out (uncertainty, roster churn, wanting to win now). It is a
-parameter, not a fact -- the owner should tune it; 0.8 is the default.
+The discount rate is the dynasty manager's time preference, per year: at 5 % a point above
+replacement this season counts 1.00, next season 0.95, the one after 0.9025. 0 % weighs every
+season the same; 100 % counts only the coming season. It is a parameter, not a fact -- the owner
+should tune it (the projections table exposes it as a slider); 20 % is the default.
 
 ``realized_value`` applies the same formula to what actually happened (for backtests), and
 ``compare_to_market`` lines intrinsic value up against KTC: a monotone (isotonic) fit maps
@@ -21,7 +22,14 @@ import polars as pl
 from scipy.stats import norm
 from sklearn.isotonic import IsotonicRegression
 
-DEFAULT_DISCOUNT = 0.8
+DEFAULT_DISCOUNT_RATE = 0.2
+
+
+def discount_weight(k: int, rate: float) -> float:
+    """Weight of season k (k = 1 is the coming season, at full weight) under a per-year ``rate``."""
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError(f"discount rate must be in [0, 1], got {rate}")
+    return (1.0 - rate) ** (k - 1)
 
 
 def _rep_expr(rep: dict[str, float]) -> pl.Expr:
@@ -43,7 +51,7 @@ def expected_excess(mu: np.ndarray, sigma: np.ndarray, rep: np.ndarray) -> np.nd
 
 
 def intrinsic_value(
-    df: pl.DataFrame, rep: dict[str, float], horizons: Iterable[int], discount: float = DEFAULT_DISCOUNT,
+    df: pl.DataFrame, rep: dict[str, float], horizons: Iterable[int], discount_rate: float = DEFAULT_DISCOUNT_RATE,
 ) -> pl.DataFrame:
     """Add ``h{k}_vorp_hat`` per horizon plus ``iv`` (discounted) and ``iv_undiscounted``.
 
@@ -63,13 +71,13 @@ def intrinsic_value(
         cols.append(pl.Series(f"h{k}_vorp_hat", excess * games))
     out = df.with_columns(cols)
     return out.with_columns(
-        pl.sum_horizontal([pl.col(f"h{k}_vorp_hat") * (discount ** k) for k in horizons]).alias("iv"),
+        pl.sum_horizontal([pl.col(f"h{k}_vorp_hat") * discount_weight(k, discount_rate) for k in horizons]).alias("iv"),
         pl.sum_horizontal([pl.col(f"h{k}_vorp_hat") for k in horizons]).alias("iv_undiscounted"),
     )
 
 
 def realized_value(
-    df: pl.DataFrame, rep: dict[str, float], horizons: Iterable[int], discount: float = DEFAULT_DISCOUNT,
+    df: pl.DataFrame, rep: dict[str, float], horizons: Iterable[int], discount_rate: float = DEFAULT_DISCOUNT_RATE,
 ) -> pl.DataFrame:
     """Same formula on actual outcomes (``h{k}_ppg`` / ``h{k}_games``; a season not played is 0).
     Rows with any censored horizon get a null ``realized_iv``."""
@@ -80,7 +88,7 @@ def realized_value(
     observable = pl.all_horizontal([pl.col(f"h{k}_observable") for k in horizons])
     return out.with_columns(
         pl.when(observable)
-        .then(pl.sum_horizontal([pl.col(f"h{k}_vorp") * (discount ** k) for k in horizons]))
+        .then(pl.sum_horizontal([pl.col(f"h{k}_vorp") * discount_weight(k, discount_rate) for k in horizons]))
         .otherwise(None).alias("realized_iv")
     )
 

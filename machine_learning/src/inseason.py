@@ -168,12 +168,14 @@ class InSeasonModels:
 # ------------------------------------------------------------------- in-season value
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
-    sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount: float = 0.8,
+    sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
 ) -> pl.DataFrame:
-    """Intrinsic value updated mid-season: the rest of THIS season (undiscounted) + next season
-    from the in-season model, then seasons T+2.. from the career model's projection off the
-    player's latest complete season (``career_pred`` carries ``h{k}_ppg_hat`` / ``h{k}_games_hat``
-    keyed by player_id; its h1 is the next season, so k >= 2 are used).
+    """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
+    from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
+    off the player's latest complete season T-1 (``career_pred`` carries ``h{k}_ppg_hat`` /
+    ``h{k}_games_hat`` keyed by player_id). Off a T-1 row, h1 is THIS season and h2 is next
+    season -- both already covered by the in-season model -- so only k >= 3 form the tail, season
+    T-1+k weighted (1 - rate)^(k-1) exactly as in ``value.intrinsic_value``.
 
     This is what the dynasty market should be compared with in-season: next-season points alone
     make every productive 38-year-old look cheap against a price that already discounts his
@@ -181,7 +183,7 @@ def inseason_value(
     """
     import value as _value
 
-    horizons = [k for k in horizons if k >= 2]
+    horizons = [k for k in horizons if k >= 3]
     tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")])
     df = snaps.join(tail, on="player_id", how="left")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
@@ -197,11 +199,11 @@ def inseason_value(
     ros = excess("ros_ppg_hat", 1) * df["ros_games_hat"].to_numpy()
     nxt = excess("next_ppg_hat", 1) * df["next_games_hat"].to_numpy()
     cols = [pl.Series("vorp_ros", ros), pl.Series("vorp_next", nxt)]
-    total = ros + discount * nxt
+    total = ros + _value.discount_weight(2, discount_rate) * nxt
     for k in horizons:
         v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy()
         cols.append(pl.Series(f"h{k}_vorp_hat", v))
-        total = total + (discount ** k) * v
+        total = total + _value.discount_weight(k, discount_rate) * v
     cols.append(pl.Series("iv_inseason", total))
     return df.with_columns(cols)
 

@@ -10,7 +10,7 @@ For each cohort season T:
 and compare rank correlations with realized value on the players KTC priced at the time.
 
 Usage (from machine_learning/):
-    uv run python scripts/backtest_value.py [--horizon 3] [--discount 0.8] [--device cpu]
+    uv run python scripts/backtest_value.py [--horizon 3] [--discount-rate 0.2] [--device cpu]
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--horizon", type=int, default=3)
-    ap.add_argument("--discount", type=float, default=value.DEFAULT_DISCOUNT)
+    ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--first-cohort", type=int, default=2020)
     args = ap.parse_args()
@@ -57,7 +57,7 @@ def main() -> None:
         models = career.HorizonModels(H, device=args.device).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         cohort = models.predict(df.filter(pl.col("season") == T))
-        cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, args.discount), rep, H, args.discount)
+        cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, args.discount_rate), rep, H, args.discount_rate)
         cohort = market.attach_market(cohort, as_of, hist, crosswalk)
         both = cohort.filter(pl.col("ktc_value").is_not_null() & pl.col("realized_iv").is_not_null())
         iv, kt, rz = (both[c].to_numpy().astype(float) for c in ("iv", "ktc_value", "realized_iv"))
@@ -95,7 +95,7 @@ def main() -> None:
 
     out = pl.DataFrame(rows)
     print(f"\nRank correlation with REALIZED discounted value over the next {args.horizon} seasons "
-          f"(discount {args.discount}), on the players KTC priced at the time:")
+          f"(discount rate {args.discount_rate:.0%}), on the players KTC priced at the time:")
     with pl.Config(tbl_rows=-1, float_precision=3, tbl_width_chars=160):
         print(out)
         print("\nmean over cohorts:")

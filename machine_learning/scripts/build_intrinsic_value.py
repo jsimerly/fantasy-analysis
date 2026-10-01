@@ -9,7 +9,7 @@ Players with no row in the latest complete season (2026 rookies, players who mis
 year) are not projected yet -- that needs college / prior-year inputs (next phase).
 
 Usage (from machine_learning/):
-    uv run python scripts/build_intrinsic_value.py [--horizon 7] [--discount 0.8] [--device cpu] [--no-write]
+    uv run python scripts/build_intrinsic_value.py [--horizon 7] [--discount-rate 0.2] [--device cpu] [--no-write]
 """
 from __future__ import annotations
 
@@ -37,7 +37,9 @@ def main() -> None:
     ap.add_argument("--horizon", type=int, default=10,
                     help="seasons projected; elite QBs play 15+, so the cap, not the discount, is what "
                          "would under-value them -- the discount already prices distance in time")
-    ap.add_argument("--discount", type=float, default=value.DEFAULT_DISCOUNT)
+    ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE,
+                    help="per-year discount rate: the coming season at full weight, season k at (1-rate)^(k-1); "
+                         "1.0 = this season only")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
@@ -63,7 +65,7 @@ def main() -> None:
     survival = career.AgeSurvival().fit(df.filter(pl.col("season") < last))
     pred = survival.cap_games(models.predict(current), H)            # population age prior on availability
     pred = pred.with_columns([(pl.col(f"h{k}_games_hat") * pl.col(f"h{k}_ppg_hat")).alias(f"h{k}_fpts_hat") for k in H])
-    proj = value.intrinsic_value(pred, rep, H, args.discount)
+    proj = value.intrinsic_value(pred, rep, H, args.discount_rate)
     proj = market.attach_market(proj, today)
     cmp, summary = value.compare_to_market(proj)
     # persist the market comparison with the projections (fair value, mispricing, ranks)
@@ -95,21 +97,21 @@ def main() -> None:
 
     if args.sensitivity:
         watch = ["Drake Maye", "Jared Goff", "Josh Allen", "Caleb Williams", "Puka Nacua"]
-        print("\nSensitivity: top 10 by IV under alternative horizon / discount (same projections):")
+        print("\nSensitivity: top 10 by IV under alternative horizon / discount rate (same projections):")
         for h in sorted({5, 7, args.horizon}):
-            for disc in (0.7, 0.8, 0.9):
+            for rate in (0.1, 0.2, 0.3):
                 hh = [k for k in H if k <= h]
-                alt = value.intrinsic_value(pred, rep, hh, disc).sort("iv", descending=True)
+                alt = value.intrinsic_value(pred, rep, hh, rate).sort("iv", descending=True)
                 names = alt["player_name"].head(10).to_list()
                 ranks = {n: int(alt.with_row_index("r").filter(pl.col("player_name") == n)["r"][0]) + 1
                          for n in watch if n in alt["player_name"].to_list()}
-                print(f"  H={h:2d} discount={disc}: {', '.join(names)}  | ranks {ranks}")
+                print(f"  H={h:2d} rate={rate:.0%}: {', '.join(names)}  | ranks {ranks}")
 
     if not args.no_write:
         run = today.isoformat()
         p1 = gcs_io.write_ml_parquet(proj, "intrinsic_value", f"as_of_season={last}", f"run_date={run}", "projections.parquet")
         p2 = gcs_io.write_ml_json({
-            "run_date": run, "as_of_season": last, "horizon": args.horizon, "discount": args.discount,
+            "run_date": run, "as_of_season": last, "horizon": args.horizon, "discount_rate": args.discount_rate,
             "lineup": slots, "teams": teams, "starters": starters, "replacement_ppg": rep,
             "n_projected": proj.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
             "ppg_sigma": sigma, "features": career.FEATURES, "model_params": models.params,

@@ -68,11 +68,11 @@ class TestIntrinsicValue:
         })
 
     def test_discounted_sum_of_points_above_replacement(self):
-        out = value.intrinsic_value(self._proj(), {"QB": 20.0, "RB": 12.0}, [1, 2], discount=0.5)
+        out = value.intrinsic_value(self._proj(), {"QB": 20.0, "RB": 12.0}, [1, 2], discount_rate=0.5)
         a = out.filter(pl.col("player_id") == "a").to_dicts()[0]
         assert a["h1_vorp_hat"] == 80.0           # (25-20)*16
         assert a["h2_vorp_hat"] == 32.0           # (24-20)*8
-        assert abs(a["iv"] - (0.5 * 80 + 0.25 * 32)) < 1e-9
+        assert abs(a["iv"] - (80 + 0.5 * 32)) < 1e-9      # season 1 at full weight, season 2 at (1 - 0.5)
         assert a["iv_undiscounted"] == 112.0
 
     def test_below_replacement_is_worth_zero_not_negative(self):
@@ -104,7 +104,7 @@ class TestIntrinsicValue:
             "h1_ppg": [25.0, None], "h1_games": [16, 0], "h1_observable": [True, True],
             "h2_ppg": [None, None], "h2_games": [None, 0], "h2_observable": [False, True],
         })
-        out = value.realized_value(df, {"QB": 20.0}, [1, 2], discount=0.5)
+        out = value.realized_value(df, {"QB": 20.0}, [1, 2], discount_rate=0.5)
         a, c = out.to_dicts()
         assert a["h1_vorp"] == 80.0 and a["realized_iv"] is None      # h2 censored
         assert c["realized_iv"] == 0.0                                 # never played
