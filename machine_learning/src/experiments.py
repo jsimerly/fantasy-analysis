@@ -41,6 +41,7 @@ class ExperimentConfig:
     discount_rate: float = value.DEFAULT_DISCOUNT_RATE
     device: str = "cpu"
     params: dict = field(default_factory=dict)
+    calibrate: bool = False          # walk-forward recalibration of ppg / games (career.HorizonModels)
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -50,6 +51,25 @@ def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 
     top_s = set(np.argsort(-score)[:k].tolist())
     top_r = set(np.argsort(-realized)[:k].tolist())
     return len(top_s & top_r) / k
+
+
+def market_edge(model: np.ndarray, market: np.ndarray, realized: np.ndarray) -> dict:
+    """Beating the market, not agreeing with it. Ranks among the priced players:
+    ``gap_model`` = market rank − model rank (positive: we like him more than the market),
+    ``gap_real``  = market rank − realized rank (positive: he finished better than the market had him).
+    ``edge_corr``  Spearman(gap_model, gap_real): does our disagreement predict the market's error?
+    ``edge_spread`` realized gap of the third we like most minus the third we like least, in ranks."""
+    def rank(v):
+        return pl.Series(-np.asarray(v, float)).rank(method="average").to_numpy()
+    gm = rank(market) - rank(model)
+    gr = rank(market) - rank(realized)
+    n = len(gm)
+    if n < 9:
+        return {}
+    order = np.argsort(-gm)
+    third = max(1, n // 3)
+    cheap, rich = gr[order[:third]].mean(), gr[order[-third:]].mean()
+    return {"edge_corr": value.spearman(gm, gr), "edge_cheap": float(cheap), "edge_rich": float(rich), "edge_spread": float(cheap - rich)}
 
 
 def git_commit() -> str | None:
@@ -73,7 +93,7 @@ def run_experiment(
     rows = []
     for T in cfg.cohorts:
         rep = rep_for(T)
-        models = career.HorizonModels(H, device=cfg.device, features=cols, **cfg.params).fit(df, as_of_season=T)
+        models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
@@ -88,16 +108,26 @@ def run_experiment(
             iv, kt, rz = (priced[c].to_numpy().astype(float) for c in ("iv", "ktc_value", "realized_iv"))
             row.update({"spearman_iv_vs_realized": value.spearman(iv, rz), "spearman_ktc_vs_realized": value.spearman(kt, rz),
                         "top_decile_iv": top_decile_precision(iv, rz), "top_decile_ktc": top_decile_precision(kt, rz)})
+            row.update(market_edge(iv, kt, rz))
         for k in H:
             o = cohort.filter(pl.col(f"h{k}_observable"))
             if o.height:
                 row[f"mae_h{k}"] = float(np.mean(np.abs(o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float))))
+        # magnitude bias (realized - projected season points, + = model too low): everyone, and prior top-12 by position
+        prior = cohort.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
+        for k in sorted({1, max(H)}):
+            o = prior.filter(pl.col(f"h{k}_observable"))
+            if o.height:
+                res = o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float)
+                top = o["_pr"].to_numpy() <= 12
+                row[f"bias_all_h{k}"] = float(res.mean())
+                row[f"bias_top12_h{k}"] = float(res[top].mean()) if top.any() else None
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
-    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_"))]
+    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_"))]
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
-               "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "",
+               "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -107,14 +137,14 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "commit",
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
-               "top_decile_iv", "top_decile_ktc"]
+               "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread"]
 
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
     row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c)
-                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith("mae_"))])
+                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_", "bias_")))])
     return row if ledger is None or ledger.height == 0 else pl.concat([ledger, row], how="diagonal_relaxed")
 
 
@@ -126,9 +156,10 @@ def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str |
         lb = lb.filter(pl.col("horizon") == horizon)
     if cohorts is not None:
         lb = lb.filter(pl.col("cohorts") == cohorts)
-    show = [c for c in ["name", "groups", "n_features", "horizon", "cohorts", "spearman_iv_vs_realized", "spearman_ktc_vs_realized",
-                        "iv_minus_ktc", "top_decile_iv", "mae_h1", "timestamp", "commit"] if c in lb.columns]
-    return lb.select(show).sort("spearman_iv_vs_realized", descending=True, nulls_last=True)
+    show = [c for c in ["name", "groups", "n_features", "calibrate", "params", "horizon", "cohorts", "edge_corr", "edge_spread", "spearman_iv_vs_realized", "spearman_ktc_vs_realized",
+                        "iv_minus_ktc", "top_decile_iv", "mae_h1", "bias_all_h1", "bias_top12_h1", "timestamp", "commit"] if c in lb.columns]
+    key = "edge_corr" if "edge_corr" in lb.columns and lb["edge_corr"].null_count() < lb.height else "spearman_iv_vs_realized"
+    return lb.select(show).sort(key, descending=True, nulls_last=True)
 
 
 def load_ledger() -> pl.DataFrame | None:

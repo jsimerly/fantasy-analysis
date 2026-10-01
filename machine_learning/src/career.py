@@ -114,11 +114,14 @@ class HorizonModels:
     """One (ppg, games) model pair per horizon. ``fit`` then ``predict``."""
 
     def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0,
-                 features: list[str] | None = None, **params):
+                 features: list[str] | None = None, calibrate: bool = False, holdout: int = 3, **params):
         self.horizons = list(horizons)
         self.device = device
         self.seed = seed
         self.features = list(features) if features is not None else None   # None = FEATURES (production)
+        self.calibrate = calibrate
+        self.holdout = holdout
+        self.calibration: dict | None = None
         self.params = {**DEFAULT_PARAMS, **params}
         self.ppg_models: dict[int, XGBRegressor] = {}
         self.games_models: dict[int, XGBRegressor] = {}
@@ -161,7 +164,50 @@ class HorizonModels:
             p = self._new().fit(self.feature_frame(played).to_numpy(),
                                 played[f"h{k}_ppg"].to_numpy().astype(float))
             self.games_models[k], self.ppg_models[k] = g, p
+        if self.calibrate:
+            self._fit_calibration(train, as_of_season)
         return self
+
+    def _fit_calibration(self, train: pl.DataFrame, as_of_season: int | None) -> None:
+        """Walk-forward recalibration. Temporary models fit as of (as_of - holdout) are scored on
+        the holdout seasons' outcomes (rows the temporary models never saw), and per position and
+        horizon a line ``realized = a + b * projected`` is fitted for ppg (players who played) and
+        for games (everyone; 0 when gone). ``predict`` applies it. Out of sample the tree ensemble
+        projects prior top-12 players 10-20 points a season low (WR 6-12 ~30): the slope b > 1
+        undoes that shrinkage where the holdout says it exists, position by position."""
+        as_of = as_of_season if as_of_season is not None else last_complete_season(train)
+        cut = as_of - self.holdout
+        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
+        cal: dict[int, dict[str, tuple]] = {}
+        for k in self.horizons:
+            rows = train.filter(pl.col(f"h{k}_observable") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
+            if rows.height < 30:
+                continue
+            pred = tmp.predict(rows)
+            per: dict[str, tuple] = {}
+            for pos in list(pred["position"].unique().to_list()) + ["__all__"]:
+                sub = pred if pos == "__all__" else pred.filter(pl.col("position") == pos)
+                played = sub.filter(pl.col(f"h{k}_played"))
+                if sub.height < 30 or played.height < 20:
+                    continue
+                per[pos] = (_line(played[f"h{k}_ppg_hat"].to_numpy(), played[f"h{k}_ppg"].to_numpy()),
+                            _line(sub[f"h{k}_games_hat"].to_numpy(), sub[f"h{k}_games"].to_numpy()))
+            if "__all__" in per:
+                cal[k] = per
+        self.calibration = cal
+
+    def _apply_calibration(self, df: pl.DataFrame, k: int, games: np.ndarray, ppg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        per = (self.calibration or {}).get(k)
+        if not per:
+            return games, ppg
+        pos = df["position"].to_numpy()
+        games, ppg = games.copy(), ppg.copy()
+        for p in np.unique(pos):
+            (ap, bp), (ag, bg) = per.get(p, per["__all__"])
+            m = pos == p
+            ppg[m] = np.clip(ap + bp * ppg[m], 0.0, None)
+            games[m] = np.clip(ag + bg * games[m], 0.0, MAX_GAMES)
+        return games, ppg
 
     def estimate_sigma(self, train: pl.DataFrame, as_of_season: int | None = None,
                        holdout: int = 3) -> dict[int, dict[str, float]]:
@@ -202,6 +248,8 @@ class HorizonModels:
         for k in self.horizons:
             games = np.clip(self.games_models[k].predict(X), 0.0, MAX_GAMES)
             ppg = np.clip(self.ppg_models[k].predict(X), 0.0, None)
+            if self.calibration:
+                games, ppg = self._apply_calibration(df, k, games, ppg)
             cols += [pl.Series(f"h{k}_games_hat", games), pl.Series(f"h{k}_ppg_hat", ppg),
                      pl.Series(f"h{k}_fpts_hat", games * ppg)]
             if sigma:
@@ -210,6 +258,16 @@ class HorizonModels:
                     {p: v for p, v in s.items() if p != "__all__"}, default=s["__all__"], return_dtype=pl.Float64
                 ).alias(f"h{k}_ppg_sigma"))
         return df.with_columns(cols)
+
+
+def _line(x: np.ndarray, y: np.ndarray, lo: float = 0.5, hi: float = 2.0) -> tuple[float, float]:
+    """Least-squares ``y = a + b x`` with the slope kept in [lo, hi] (a calibration, not a model)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    if len(x) < 2 or x.std() < 1e-9:
+        return (0.0, 1.0)
+    b = float(np.cov(x, y, bias=True)[0, 1] / x.var())
+    b = min(max(b, lo), hi)
+    return (float(y.mean() - b * x.mean()), b)
 
 
 # ------------------------------------------------------------------- age-survival prior

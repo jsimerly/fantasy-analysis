@@ -164,3 +164,13 @@ pieces are right, not just the total.
     case is NOT part of it: former top-12 players coming off a season ≤ 70 % of their best
     (n = 50) realized 10.2 ppg vs 9.9 projected next year and only 20 % got back to ≥ 90 % of
     their prior rate, so the model's cold read on a Jefferson-type season is calibrated.
+
+## Objective, restated (2026-10-01)
+The harness ranks variants by how well projections ordered players against what ACTUALLY happened;
+KTC's ordering of the same players is the bar, and agreement with KTC is diagnostic only. Because
+trading rewards being right where we disagree, two "beat the market" metrics are now logged for
+every variant: `edge_corr` = Spearman between (market rank − model rank) and (market rank −
+realized rank), i.e. does our disagreement predict the market's error; `edge_spread` = realized
+rank gain of the third we like most minus the third we like least. The leaderboard sorts by
+`edge_corr`. Magnitude bias by prior tier (`bias_top12_h1` etc.) is logged alongside, so a
+variant can be judged on ordering, edge and calibration at once.

@@ -54,6 +54,8 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--replacement", choices=["share", "fill"], default="share",
                     help="replacement level: production flex-share line, or an explicit fill of the league's lineup (lineup.league_fill)")
+    ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
+    ap.add_argument("--calibrate", action="store_true", help="walk-forward recalibration of ppg / games per position and horizon")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
@@ -100,8 +102,19 @@ def main() -> None:
     print(f"matrix {matrix.shape}; cohorts {cohorts[0]}-{cohorts[-1]}; horizon {args.horizon}; variants: " + "; ".join(f"{n}=[{','.join(g)}]" for n, g in variants))
     ledger = None if args.no_log else ex.load_ledger()
     summaries = []
+    params = {}
+    for kv in args.params:
+        k, v = kv.split("=", 1)
+        try:
+            params[k] = int(v)
+        except ValueError:
+            try:
+                params[k] = float(v)
+            except ValueError:
+                params[k] = v
     for name, groups in variants:
-        cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device)
+        cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=cohorts, discount_rate=args.discount_rate, device=args.device,
+                                  params=params, calibrate=args.calibrate)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):

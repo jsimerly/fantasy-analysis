@@ -78,3 +78,16 @@ class TestHorizonModelsFeatureHook:
         assert "h1_fpts_hat" in out.columns and out.height > 0
         default = career.HorizonModels(H, n_estimators=10, max_depth=2).fit(m, as_of_season=2021)
         assert default.feature_frame(m.head(2)).columns == career.FEATURES                 # unchanged default behaviour
+
+
+class TestMarketEdge:
+    def test_disagreement_that_predicts_market_error_scores_positive(self):
+        rng = np.random.default_rng(0); n = 60
+        market = rng.normal(size=n)
+        truth = market + rng.normal(size=n)                 # the market is noisy
+        model = truth + 0.3 * rng.normal(size=n)            # we see most of the truth
+        e = ex.market_edge(model, market, truth)
+        assert e["edge_corr"] > 0.5 and e["edge_spread"] > 5
+        e2 = ex.market_edge(market + 0.01 * rng.normal(size=n), market, truth)   # we just echo the market
+        assert abs(e2["edge_corr"]) < 0.4 and e2["edge_spread"] < e["edge_spread"]
+        assert ex.market_edge(np.arange(5.0), np.arange(5.0), np.arange(5.0)) == {}
