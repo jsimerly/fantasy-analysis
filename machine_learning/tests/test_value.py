@@ -130,6 +130,13 @@ class TestMarketComparison:
         assert fair[1] == fair[2]                                     # the step artifact, now opt-in
         assert np.all(np.diff(value.fair_value_curve([10.0, 20.0, 30.0], [1000, 3000, 2000])) > 0)
 
+    def test_rank_gap_is_signed(self):
+        # IV #1 but market #3 -> gap -2 (polars ranks are unsigned; a raw difference wrapped to ~4.29e9)
+        df = pl.DataFrame({"iv": [30.0, 20.0, 10.0], "ktc_value": [1000, 2000, 3000]})
+        out, _ = value.compare_to_market(df)
+        assert out.filter(pl.col("iv") == 30.0)["rank_gap"][0] == -2
+        assert out.schema["rank_gap"] == pl.Int64
+
     def test_rows_without_market_are_excluded(self):
         df = pl.DataFrame({"iv": [1.0, 2.0, 3.0, 4.0], "ktc_value": [100, None, 300, 400]})
         out, summary = value.compare_to_market(df)

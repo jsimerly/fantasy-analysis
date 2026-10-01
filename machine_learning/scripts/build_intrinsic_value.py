@@ -63,6 +63,11 @@ def main() -> None:
     proj = value.intrinsic_value(models.predict(current), rep, H, args.discount)
     proj = market.attach_market(proj, today)
     cmp, summary = value.compare_to_market(proj)
+    # persist the market comparison with the projections (fair value, mispricing, ranks)
+    proj = proj.join(
+        cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"),
+        on="player_id", how="left",
+    ).with_columns(pl.col("iv").rank(method="ordinal", descending=True).alias("iv_rank_all"))
     print(f"\nprojected {proj.height} players from season {last}; {summary['n']} have a KTC value "
           f"(as of {today}); spearman(IV, KTC) = {summary['spearman']:.3f}")
 

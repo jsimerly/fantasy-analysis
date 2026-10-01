@@ -132,7 +132,8 @@ def compare_to_market(df: pl.DataFrame, iv_col: str = "iv", market_col: str = "k
         (pl.col(market_col) - pl.Series("fair_value", fair)).alias("mispricing"),
     ).with_columns(
         (pl.col("mispricing") / pl.col("fair_value").clip(lower_bound=1.0)).alias("mispricing_pct"),
-        pl.col(iv_col).rank(method="ordinal", descending=True).alias("iv_rank"),
-        pl.col(market_col).rank(method="ordinal", descending=True).alias("market_rank"),
+        # ranks come back unsigned; cast before differencing or (1 - 9) wraps to 4294967288
+        pl.col(iv_col).rank(method="ordinal", descending=True).cast(pl.Int64).alias("iv_rank"),
+        pl.col(market_col).rank(method="ordinal", descending=True).cast(pl.Int64).alias("market_rank"),
     ).with_columns((pl.col("iv_rank") - pl.col("market_rank")).alias("rank_gap"))
     return out, {"n": both.height, "spearman": spearman(iv, mk)}

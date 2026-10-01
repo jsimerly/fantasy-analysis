@@ -40,6 +40,17 @@ def ml_path(*parts: str) -> str:
     return f"gs://{ML_BUCKET}/{PROJECT}/" + "/".join(parts)
 
 
+def read_ml_parquet(*parts: str) -> pl.DataFrame:
+    data = _client().bucket(ML_BUCKET).blob(f"{PROJECT}/" + "/".join(parts)).download_as_bytes()
+    return pl.read_parquet(io.BytesIO(data))
+
+
+def read_ml_json(*parts: str) -> dict:
+    import json
+
+    return json.loads(_client().bucket(ML_BUCKET).blob(f"{PROJECT}/" + "/".join(parts)).download_as_text())
+
+
 def write_ml_parquet(df: pl.DataFrame, *parts: str) -> str:
     """Write a frame as parquet under this project's ML prefix; returns the gs:// path."""
     buf = io.BytesIO()
