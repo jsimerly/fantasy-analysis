@@ -244,6 +244,17 @@ pieces are right, not just the total.
 20. **Depth value for benches.** With weekly availability known per position (item 19), value a
     bench player as the weeks he would actually start for THIS roster (expected starts × his edge
     over the next man), rather than 0 below replacement. Needs the roster layer, not the model.
+    **Done 2026-10-01 in the roster layer, with a correction.** The page's trade builder draws every
+    rostered player in or out weekly by projected availability and re-optimises the lineup, so
+    depth has value. First version had no floor: a roster whose WR3–5 project below the line
+    credited an incoming WR with his edge over the weak bench (Olave: +2.13 wins for a 1.00-WAR
+    player, +0.46 in 2028 alone when his 9.5 ppg beat the roster's own 7–8-ppg WRs). Every slot is
+    now floored at the league's replacement line (a free agent at that level is always available):
+    `lineup.optimal_lineup(..., floor=rep)` adds a phantom free agent per slot, used by
+    `war.team_marginal_war` / `roster_total` and by the page. Olave alone now adds 0.86 wins to
+    the owner's lineup vs his 1.00 WAR (availability draws and the roster's point on the curve
+    explain the rest). A roster's gain from a player is his edge over the line plus the weeks the
+    roster's own depth falls below it, never a credit for a weak bench.
 21. **ROS vs Career toggle on the Players page, with a redraft market for ROS.** The model is
     built for the long term but its first span is a rest-of-season projection, so the page can
     double as a redraft tool: one toggle switches every column (value, rank, fair, mispricing) to

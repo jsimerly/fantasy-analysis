@@ -135,3 +135,19 @@ class TestRealizedWins:
         monkeypatch.setattr(lg, "load_team_state", lambda: (_ for _ in ()).throw(RuntimeError("no lake")))
         c = lg.curve_for_lineage("x")
         assert abs(c.mean_points - lg.OWNER_CURVE_FALLBACK[0]) < 1e-9 and c.n == 0
+
+
+def test_replacement_floor_fills_slots_and_caps_marginal_value():
+    import lineup
+    from league import LeagueSpec
+    spec = LeagueSpec(name="t", teams=2, slots={"WR": 2}, eligibility={"WR": ["WR"]})
+    # one WR at 12, one at 6; the line is 9: the second slot takes a phantom free agent at 9, not the 6
+    total, assign = lineup.optimal_lineup(np.array([12.0, 6.0]), ["WR", "WR"], spec, floor={"WR": 9.0})
+    assert total == 21.0 and assign.tolist() == [0, -1]
+    # without the floor the 6 starts
+    assert lineup.optimal_lineup(np.array([12.0, 6.0]), ["WR", "WR"], spec)[0] == 18.0
+    # an empty roster still fields a full lineup of free agents
+    assert lineup.optimal_lineup(np.array([]), [], spec, floor={"WR": 9.0})[0] == 18.0
+    # a 10-ppg WR adds his edge over the line (1), not his edge over the weak bench (4)
+    assert lineup.optimal_lineup(np.array([12.0, 6.0, 10.0]), ["WR", "WR", "WR"], spec, floor={"WR": 9.0})[0] - total == 1.0
+

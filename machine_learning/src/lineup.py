@@ -21,24 +21,37 @@ from league import LeagueSpec
 BIG = 1e6
 
 
-def optimal_lineup(points: np.ndarray, positions: list[str], spec: LeagueSpec) -> tuple[float, np.ndarray]:
-    """Returns (total starting points, slot index per player or -1 for bench)."""
+def optimal_lineup(points: np.ndarray, positions: list[str], spec: LeagueSpec,
+                   floor: dict[str, float] | None = None) -> tuple[float, np.ndarray]:
+    """Returns (total starting points, slot index per player or -1 for bench).
+
+    ``floor`` (replacement ppg by position) adds a phantom free agent per slot worth the best
+    replacement line among the slot's eligible positions: a roster never starts anyone below the
+    line because a free agent at that level is always available. A player's marginal value is then
+    his edge over the line, not a credit for the roster's weak bench."""
     points = np.asarray(points, float)
     slots = spec.slot_list
     n, m = len(points), len(slots)
-    if n == 0 or m == 0:
+    if m == 0:
         return 0.0, np.full(n, -1)
-    cost = np.full((n, m), BIG)
+    ph = [max((floor.get(p, 0.0) for p in spec.eligibility[s]), default=0.0) for s in slots] if floor else []
+    rows_n = n + (m if floor else 0)
+    cost = np.full((rows_n, m), BIG)
     for i, pos in enumerate(positions):
         for j, slot in enumerate(slots):
             if pos in spec.eligibility[slot]:
                 cost[i, j] = -max(points[i], 0.0)
+    for j in range(m if floor else 0):
+        cost[n + j, j] = -max(ph[j], 0.0)
+    if rows_n == 0:
+        return 0.0, np.full(n, -1)
     rows, cols = linear_sum_assignment(cost)
     assign = np.full(n, -1)
     total = 0.0
     for i, j in zip(rows, cols):
         if cost[i, j] < BIG:
-            assign[i] = j
+            if i < n:
+                assign[i] = j
             total += -cost[i, j]
     return float(total), assign
 

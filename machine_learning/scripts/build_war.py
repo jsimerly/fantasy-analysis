@@ -157,14 +157,14 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
             active = rosters.filter((pl.col("roster_id") == roster_id) & (pl.col("status") == "active"))["player_id"].implode()
             r = pool.filter(pl.col("player_id").is_in(active))
             if r.height:
-                per_team[roster_id] = (name, oid, mine, r, war.roster_total(r, spec, comps[0].ppg))
+                per_team[roster_id] = (name, oid, mine, r, war.roster_total(r, spec, comps[0].ppg, floor=rep))
         # projected lineups vs the curve: centre the curve on the league's average projected lineup
         offset = war.lineup_offset(curve, [v[4] for v in per_team.values()])
         print(f"  projected lineups: mean {np.mean([v[4] for v in per_team.values()]):.1f} ppg vs curve mean {curve.mean_points:.1f} -> offset {offset:+.1f}")
         rows = []
         for roster_id, (name, oid, mine, r, total) in per_team.items():
             cands = pool.filter(~pl.col("player_id").is_in(mine)).sort("war", descending=True).head(80)
-            t = war.team_marginal_war(r, spec, curve, comps, rate, candidates=cands, offset=offset)
+            t = war.team_marginal_war(r, spec, curve, comps, rate, candidates=cands, offset=offset, floor=rep)
             # taxi / IR players of this roster: owned, not in the lineup, no marginal wins
             bench = pool.filter(pl.col("player_id").is_in(mine) & ~pl.col("player_id").is_in(r["player_id"].implode()))
             if bench.height:

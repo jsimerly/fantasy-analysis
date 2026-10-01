@@ -111,7 +111,7 @@ def lineup_offset(curve: WinCurve, lineup_totals: list[float]) -> float:
 
 def team_marginal_war(roster: pl.DataFrame, spec: LeagueSpec, curve: WinCurve, components: list[Component],
                       discount_rate: float = value.DEFAULT_DISCOUNT_RATE, candidates: pl.DataFrame | None = None,
-                      offset: float = 0.0) -> pl.DataFrame:
+                      offset: float = 0.0, floor: dict[str, float] | None = None) -> pl.DataFrame:
     """Marginal wins each rostered player adds to HIS roster (lineup with him minus without him),
     and, if ``candidates`` is given, what each candidate would add to this roster.
 
@@ -127,13 +127,13 @@ def team_marginal_war(roster: pl.DataFrame, spec: LeagueSpec, curve: WinCurve, c
         for comp in components:
             pts = points_by_comp[comp.k]
             if remove_idx is None:                                       # external candidate: add him
-                base, _ = lineup.optimal_lineup(pts, pos, spec)
-                with_, _ = lineup.optimal_lineup(np.append(pts, cand_pts[comp.k]), pos + [cand_pos], spec)
+                base, _ = lineup.optimal_lineup(pts, pos, spec, floor)
+                with_, _ = lineup.optimal_lineup(np.append(pts, cand_pts[comp.k]), pos + [cand_pos], spec, floor)
                 gain, team_total = max(with_ - base, 0.0), base
             else:                                                        # rostered: remove him
-                with_, _ = lineup.optimal_lineup(pts, pos, spec)
+                with_, _ = lineup.optimal_lineup(pts, pos, spec, floor)
                 keep = np.ones(len(pts), bool); keep[remove_idx] = False
-                base, _ = lineup.optimal_lineup(pts[keep], [p for i, p in enumerate(pos) if keep[i]], spec)
+                base, _ = lineup.optimal_lineup(pts[keep], [p for i, p in enumerate(pos) if keep[i]], spec, floor)
                 gain, team_total = max(with_ - base, 0.0), with_
             g = games[comp.k]
             par = gain * g
@@ -160,6 +160,6 @@ def team_marginal_war(roster: pl.DataFrame, spec: LeagueSpec, curve: WinCurve, c
     return pl.DataFrame(out_rows)
 
 
-def roster_total(roster: pl.DataFrame, spec: LeagueSpec, ppg_col: str) -> float:
-    total, _ = lineup.optimal_lineup(roster[ppg_col].fill_null(0.0).to_numpy().astype(float), roster["position"].to_list(), spec)
+def roster_total(roster: pl.DataFrame, spec: LeagueSpec, ppg_col: str, floor: dict[str, float] | None = None) -> float:
+    total, _ = lineup.optimal_lineup(roster[ppg_col].fill_null(0.0).to_numpy().astype(float), roster["position"].to_list(), spec, floor)
     return total
