@@ -8,9 +8,10 @@ games / ppg / fpts / age / experience / touches, fantasy-relevant players, 2013�
 0. **PAR exploration (owner, first).** TBD — the owner has one PAR question to settle before the
    items below start.
 
-1. **Ablation harness.** Walk-forward evaluator with feature groups toggled; one command, one
-   table. Needed because every lift below is small in aggregate (+0.003 to +0.011 R²) and
-   concentrated in tails, so nothing should be added on a hunch.
+1. **Ablation harness — DONE 2026-10-01.** `src/feature_groups.py` (named groups: base, career,
+   injury, role, trend, situation) + `src/experiments.py` + `scripts/run_experiment.py`; results
+   ledger in the ML bucket, `--leaderboard` compares like for like. Every item below is accepted
+   only if it wins there. Items 2–4 are now one-line experiments (`--groups base,career,role`).
 
 2. **Role features from data already in the lake** (the Anthony Richardson signal).
    - Season-end depth slot and depth movement (QB listed 2nd at season end kept 32 % of points;
