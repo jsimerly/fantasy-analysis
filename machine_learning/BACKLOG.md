@@ -241,6 +241,33 @@ pieces are right, not just the total.
     the two redraft series in the Market selector. Coverage is the top ~100 of the projected
     players; FantasyPros ROS projections (ingestion in progress) would widen it.
 
+## Round 5 (2026-10-01): inputs and training changes on the WAR objective, weekly line
+Baseline `current_weekly` 0.603 (`spearman_war_top`, cohorts 2015–2022). Feature groups re-tested
+under the final objective, then two training changes aimed at item 18 (shrinkage): a residual
+target (the ppg model learns the change from this season's rate, so "stays the same" is the
+default and regression to the mean has to be learnt) and relevance weights (1 + ppg / 10).
+
+| variant | top-150 | all | top decile | bias top-12 (wins) |
+|---|---|---|---|---|
+| current (base, career) | 0.603 | 0.623 | 0.686 | 0.302 |
+| + injury | 0.589 | | 0.675 | 0.308 |
+| + role | 0.604 | | 0.688 | 0.303 |
+| + trend | 0.610 | | 0.688 | 0.304 |
+| + situation | 0.593 | | 0.673 | 0.303 |
+| + all four | 0.602 | | 0.677 | 0.311 |
+| residual target | 0.611 | | 0.680 | 0.293 |
+| weights (ppg) | 0.604 | | 0.684 | 0.306 |
+| residual + weights | 0.599 | | 0.675 | 0.309 |
+
+Trend (second-half vs first-half usage, last-4 form) and the residual target are the two
+positive signals, each worth under 0.01; injury and situation hurt as inputs to the career
+model (their information is already in games / usage, and the extra columns cost the small
+cohorts more than they add). Per-cohort results are now persisted per run and `--paired A B`
+gives the mean difference, its standard error over the eight cohorts and the cohort wins, so a
+0.007 can be told from noise. Pending in this round: hyperparameters (600 trees at 0.03,
+depth 5, low regularisation), residual + trend, the opportunity × efficiency target (item 5),
+and the paired tests of the winners.
+
 ## Objective, restated (2026-10-01, final)
 Intrinsic value = projected wins above replacement. Validation is by time: each season 2015–2022 is
 a test set, the model is trained on earlier seasons only, and projected WAR is scored against the

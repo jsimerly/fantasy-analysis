@@ -152,7 +152,12 @@ scripts/run_experiment.py --groups base,career --name weekly_rep --horizon 3 --f
 
 `--replacement share|fill|weekly` picks how replacement level is built (production flex-share
 line, explicit league fill, or the injury-aware weekly fill); it is recorded in the ledger so runs
-compare like for like.
+compare like for like. `--target level|residual|opportunity` picks what the ppg model learns (the
+level; the change from this season's rate; opportunities per game × points per opportunity) and
+`--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
+cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
+writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
+cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
 
 Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
 the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,
