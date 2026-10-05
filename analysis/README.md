@@ -17,10 +17,15 @@ with both sides' assets, priced in KTC dynasty (SF) value:
   in raw value), so a two-for-one is judged the way KTC judges it. `net_v0` is received minus
   given, combined; `fair_v0` is the calculator's lean as a share of the trade;
 * **at N+1, N+2, N+3 years and today,** the same assets re-priced: what the market later thought
-  of each package. A pick is a pick (the Mid tier of its round) until its draft and the rookie
-  taken with it afterwards (the lineage's linear draft, the original roster's slot in the draft
-  order, the pick at that slot). A horizon that has not arrived is null; an asset with no price
-  on a date that has (a team defense, a pick before KTC priced picks) is 0;
+  of each package. A pick is always a pick, never the player later taken with it: for next year's
+  draft it is priced at the tier its original team is likely to land in (`pick_slots.py`, below),
+  at the Mid tier for drafts further out, at its actual slot's tier once the order is known
+  (January of the draft year), and frozen at its last pre-draft price once the draft has
+  happened. Pick prices come from every KTC source in the lake (the silver fact, the archive's
+  pick rows, the per-asset history) with the same round and tier of another season at the same
+  distance from its draft standing in where the lake has gaps, and a pick KTC had not listed yet
+  taking its first listed price. A horizon that has not arrived is null; an asset with no price on
+  a date that has (a team defense, a kicker, FAAB) is 0 and is named on the card;
 * **wins delivered since** (secondary): weekly points vs the lineage's weekly replacement line
   that season, through its win curve, from the week after the trade to today.
 
@@ -45,4 +50,32 @@ manager, horizon and trade age).
 
 Caveats: roster ids map to today's franchise owners; a side's "wins since" counts everything the
 player did afterwards whether or not he was kept; older trades have had more seasons, so the
-trade-age filter keeps scorecards comparable; one scoring setting for the wins.
+trade-age filter keeps scorecards comparable; one scoring setting for the wins. Trades undone by
+a mirror trade within ten days are flagged as reversals and left out of the scorecards; the
+2023-04-02 joke trade is excluded by id (`EXCLUDED_TRANSACTIONS`).
+
+## Expected draft slot (`pick_slots.py`, `pick_slots_report.py`)
+
+The market prices a pick by its expected slot, so a 1st from a 2-win team is not a 1st from the
+league leader. `pick_slots.build_standings` turns the 10,000-league crawl's weekly matchups
+(`bronze/sleeper_crawl/history/matchups`, 26,769 league-seasons, 2017–2025) into cumulative
+records by week and the final regular-season rank; `tier_table` is the empirical
+P(Early / Mid / Late third of the draft order | weeks played, record fifth, points-for fifth),
+`prior_table` the same given last season's finish (the preseason prior). No fitting: the table is
+the model, with the expected slot alongside. `trades.SlotContext` applies it at any trade date
+from our leagues' standings (the crawl for past seasons, Sleeper's daily `team_state` snapshots
+for the season in progress). Calibration on our own leagues' seasons: the table names the right
+third 59 / 72 / 81 % of the time after 4 / 8 / 12 weeks (44 % from the preseason prior) against
+32 % for "Mid for everyone", Brier 0.53 / 0.39 / 0.30 vs 1.37. `pick_slots_report.py --publish`
+writes every current team's outlook (P(tiers), expected slot, what that makes its next 1st and
+2nd worth at today's tier prices), the tables and the calibration to `backtests/pick_slots/`,
+which the page's Draft slots tab shows.
+
+```
+.venv/Scripts/python analysis/pick_slots.py                 # rebuild the standings and tables (cached in _cache/)
+.venv/Scripts/python analysis/pick_slots_report.py --out analysis/_cache/pick_slots --publish
+```
+
+Next, if the table is not enough: an ordered regression for the preseason prior (roster value +
+returning record) and smoothing of thin cells; XGBoost only if a held-out test says it beats
+that at calling the actual slot.

@@ -459,7 +459,17 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     N+2, Stuck: Noah Smyth +39.8k (70 % won), Spencer Carella +13.9k (61 %), the owner +8.0k
     (55 %; −15.9k at N+1 then recovering), Alex Walker −8.8k, Brayton Green −9.9k (but +28.4k at
     N+1 and the most wins delivered), Anthony Golden −13.2k, Jake Kliest −14.6k, Alex Vaught
-    −12.6k. Numbers in the paragraph above are from the wins-based first pass.** 298 completed trades,
+    −12.6k. Numbers in the paragraph above are from the wins-based first pass.**
+    **Picks (owner, 2026-10-05): a pick is valued as a pick at the time, never as the player taken.**
+    Next year's pick is priced at the tier its original team is likely to land in:
+    `analysis/pick_slots.py` builds P(Early / Mid / Late | weeks played, record fifth, points-for
+    fifth) from 26,769 league-seasons of the Sleeper crawl (an empirical table, no fitting) plus a
+    preseason prior from last season's finish; calibration on our leagues 59 / 72 / 81 % right
+    after 4 / 8 / 12 weeks vs 32 % for Mid-for-everyone. The page's Draft slots tab shows every
+    current team's outlook and the tables. Pick prices now come from every KTC source in the lake
+    (the silver fact had no 2023 picks after 2022-05 and no 2025 picks after 2024-08), with a
+    same-distance-to-draft fallback across seasons. Open: an ordered regression for the preseason
+    prior (roster value + returning record); XGBoost only if it beats that out of sample. 298 completed trades,
     932 asset legs (519 players, 492 priced at the trade date; 413 picks, 297 priced, 277 resolved
     to the rookie taken), 454 trade sides at least a season old. Stuck in High School is the
     trading league (245 of the 298). Scorecards (net wins delivered since, trades ≥ 1 season old):
