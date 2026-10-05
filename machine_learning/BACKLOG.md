@@ -466,7 +466,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     vs 0.638, rookies 0.466 vs 0.462, swaps +0.47 vs +0.42 (70 % won), 25–28 buys +0.76 vs +0.64.
     Consistent in direction, never past the line — as expected, because rank metrics at three
     years barely see a games correction whose weight is in years 3–10; the five-year harness
-    (`--horizon 5`, cohorts 2015–2020) is the test that can, results below. Production note: the
+    (`--horizon 5`, cohorts 2015–2020) is the test that can: paired vs `current_w5` (0.601),
+    the starters-and-mid table 0.614 (+0.013, t = 1.5, 4 of 6 cohorts), the blend 0.607 (t = 1.1);
+    everyone-projected and top-decile a hair lower (t ≤ 1.6), wins MAE and bias unchanged — the
+    top-12 under-projection at five years (0.45 wins) barely moves because the ppg tail for the
+    best players is also shrunk (item 18): more games × an excess near zero is still near zero,
+    so games and ppg tails need fixing together. Standing: directionally right on every test,
+    never past the line; adoption is the owner's call (the measured gap itself is not in doubt).
+    Production note: the
     in-season rookie tail is extrapolated from the career tails of young players with a history, so
     a games correction to the career model lifts rookies through that ratio automatically. (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
