@@ -139,10 +139,12 @@ class _TabPFN:
         if version:
             os.environ["TABPFN_MODEL_VERSION"] = str(version)
         from tabpfn import TabPFNRegressor
-        # the career matrix has ~12k training rows per horizon, past the model's advertised 10k; the
-        # KV-cache fit mode makes the two predictions per model (cohort, sigma holdout) cheap
+        # the career matrix has ~12k training rows per horizon, past the model's advertised 10k.
+        # fit_preprocessors re-encodes the training set on every predict (~1 min for 600 rows on an
+        # RTX 2060) but holds no GPU cache; fit_with_cache is faster per predict yet every fitted
+        # model keeps its cache on the GPU, and a harness cohort holds twelve of them (6 GB OOM)
         params.setdefault("ignore_pretraining_limits", True)
-        params.setdefault("fit_mode", "fit_with_cache")
+        params.setdefault("fit_mode", "fit_preprocessors")
         self.model = TabPFNRegressor(device=self.device, random_state=self.seed, **params)
         self.model.fit(np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32))
         return self

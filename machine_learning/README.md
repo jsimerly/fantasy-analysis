@@ -175,8 +175,10 @@ Setup, into `.venv`: `pip install --index-url https://download.pytorch.org/whl/c
 `pip install tabpfn`. The v2 weights download freely; v2.5 / v3 / v3.5 need a one-time licence
 acceptance at https://ux.priorlabs.ai (`TABPFN_TOKEN=<api key>` for headless runs). At the career
 matrix's size (~12k rows per horizon) one fit-and-predict takes about a minute on an RTX 2060, so
-a full eight-cohort run is about 1.5 h; the KV-cache fit mode and the pretraining-limit override
-are set by default (`career._TabPFN`).
+a full eight-cohort run is about two hours; the pretraining-limit override is set by default
+(`career._TabPFN`). The KV-cache fit mode (`fit_mode=fit_with_cache`) is faster per prediction but
+keeps every fitted model's cache on the GPU, which overflows 6 GB with the twelve models a harness
+cohort holds.
 
 Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
 the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,

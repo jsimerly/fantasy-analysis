@@ -245,6 +245,6 @@ class TestBackend:
         monkeypatch.delenv("TABPFN_MODEL_VERSION", raising=False)
         t = career._TabPFN("cpu", 7, {"n_estimators": 4, "model_version": "v2"}).fit(np.zeros((5, 3)), np.zeros(5), sample_weight=np.ones(5))
         assert t.predict(np.zeros((2, 3))).tolist() == [5.0, 5.0]
-        assert seen == {"device": "cpu", "random_state": 7, "n_estimators": 4, "ignore_pretraining_limits": True, "fit_mode": "fit_with_cache"}
+        assert seen == {"device": "cpu", "random_state": 7, "n_estimators": 4, "ignore_pretraining_limits": True, "fit_mode": "fit_preprocessors"}
         import os
         assert os.environ["TABPFN_MODEL_VERSION"] == "v2"
