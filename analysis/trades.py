@@ -47,6 +47,7 @@ if str(ML_SRC) not in sys.path:
     sys.path.insert(0, str(ML_SRC))
 import gcs_io  # noqa: E402
 import league as lg  # noqa: E402
+import pick_slots  # noqa: E402
 import lineup  # noqa: E402
 import market  # noqa: E402
 
@@ -123,9 +124,12 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
     trades = trades.with_columns((pl.col("leg") > 1).alias("in_season"), pl.col("rosters").list.len().alias("n_teams"))
 
     tp = _both(TX_PLAYERS).unique(["transaction_id", "player_id", "roster_id", "action"]).filter(pl.col("transaction_id").is_in(trades["transaction_id"]))
-    adds = tp.filter(pl.col("action") == "add").select("transaction_id", "player_id", pl.col("roster_id"))
+    adds = tp.filter(pl.col("action") == "add").select("transaction_id", "player_id", pl.col("roster_id"),
+                                                       pl.concat_str([pl.col("player_first_name"), pl.col("player_last_name")], separator=" ", ignore_nulls=True).alias("tp_name"),
+                                                       pl.col("player_position").alias("tp_pos"))
     drops = tp.filter(pl.col("action") == "drop").select("transaction_id", "player_id", pl.col("roster_id").alias("from_roster"))
     players = adds.join(drops, on=["transaction_id", "player_id"], how="left").with_columns(pl.lit("player").alias("asset"))
+    players = players.unique(["transaction_id", "player_id", "roster_id"])
 
     dp = _both(TX_PICKS).filter(pl.col("transaction_id").is_in(trades["transaction_id"]))
     # full_load (GraphQL dump) carries from/to with from_team_id = the NEW owner; the daily REST feed owner_id = new owner
@@ -268,15 +272,25 @@ def load_ktc_archive(today: date | None = None) -> pl.DataFrame:
             .unique(["pid", "valuation_date"]))
 
 
-def _ktc_to_sleeper() -> pl.DataFrame:
-    """KTC id -> Sleeper id (nflverse fantasy_player_ids, then dim_players_master)."""
+def _ktc_to_sleeper(fl: pl.DataFrame | None = None) -> pl.DataFrame:
+    """KTC id -> Sleeper id: nflverse fantasy_player_ids, then dim_players_master, then (for the
+    per-asset history) the player's name and position against nflverse's player list."""
     client = gcs_io._client()
     names = sorted(b.name for b in client.list_blobs(gcs_io.LAKE_BUCKET, prefix="bronze/nflverse/fantasy_player_ids/") if b.name.endswith(".parquet"))
-    nv = gcs_io.read_lake(names[-1]).filter(pl.col("ktc_id").is_not_null() & pl.col("sleeper_id").is_not_null()).select(
+    ids = gcs_io.read_lake(names[-1])
+    nv = ids.filter(pl.col("ktc_id").is_not_null() & pl.col("sleeper_id").is_not_null()).select(
         pl.col("ktc_id").cast(pl.Int64), pl.col("sleeper_id").cast(pl.Utf8).alias("pid"))
     pm = gcs_io.read_lake("silver/fantasy/dim_players_master/data.parquet").filter(pl.col("ktc_id").is_not_null()).select(
         pl.col("ktc_id").cast(pl.Int64), pl.col("player_key").cast(pl.Utf8).alias("pid"))
-    return pl.concat([nv, pm]).unique("ktc_id", keep="first")
+    out = pl.concat([nv, pm]).unique("ktc_id", keep="first")
+    if fl is not None and "slug" in fl.columns:
+        have = set(out["ktc_id"].to_list())
+        rest = (fl.filter(~pl.col("ktc_id").is_in(list(have))).select("ktc_id", pl.col("slug").str.replace(r"-\d+$", "").str.replace_all("-", " ").alias("player_name"), "position")
+                .with_columns(market.norm_name("player_name").alias("_n")).unique("ktc_id"))
+        by_name = ids.filter(pl.col("sleeper_id").is_not_null()).select(market.norm_name("name").alias("_n"), "position", pl.col("sleeper_id").cast(pl.Utf8).alias("pid")).unique(["_n", "position"])
+        more = rest.join(by_name, on=["_n", "position"], how="inner").select("ktc_id", "pid")
+        out = pl.concat([out, more]).unique("ktc_id", keep="first")
+    return out
 
 
 def ktc_history(today: date | None = None) -> pl.DataFrame:
@@ -286,7 +300,7 @@ def ktc_history(today: date | None = None) -> pl.DataFrame:
     parts = [hist.select(pl.col("player_key").alias("pid"), "valuation_date", pl.col("ktc_value").cast(pl.Float64).alias("ktc"))]
     fl = _full_load()
     if fl is not None:
-        players = fl.filter(~pl.col("slug").str.contains(r"^\d{4}-(early|mid|late)-") & (pl.col("sf_value") > 0)).join(_ktc_to_sleeper(), on="ktc_id", how="inner")
+        players = fl.filter(~pl.col("slug").str.contains(r"^\d{4}-(early|mid|late)-") & (pl.col("sf_value") > 0)).join(_ktc_to_sleeper(fl), on="ktc_id", how="inner")
         parts.append(players.select("pid", pl.col("ranking_date").alias("valuation_date"), pl.col("sf_value").alias("ktc")))
     parts.append(load_ktc_archive(today))
     return pl.concat(parts).unique(["pid", "valuation_date"], keep="first")
@@ -298,6 +312,68 @@ def _asof(values: pl.DataFrame, keys: list[str], at: pl.DataFrame, tolerance_day
     a = at.sort("at")
     j = a.join_asof(v.rename({"valuation_date": "_vd"}), left_on="at", right_on="_vd", by=keys, strategy="backward", tolerance=f"{tolerance_days}d")
     return j.rename({"ktc": out}).drop("_vd")
+
+
+class SlotContext:
+    """What the expected-slot pricing needs: the empirical tier table and prior, our leagues'
+    week-by-week standings (crawl for past seasons, Sleeper's daily team_state for the season in
+    progress), the week calendar, and (lineage, season) -> league id."""
+
+    def __init__(self):
+        self.table = pl.read_parquet(pick_slots.CACHE / "pick_tier_table.parquet") if (pick_slots.CACHE / "pick_tier_table.parquet").exists() else None
+        self.prior = pl.read_parquet(pick_slots.CACHE / "pick_prior_table.parquet") if (pick_slots.CACHE / "pick_prior_table.parquet").exists() else None
+        meta = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").select("league_id", pl.col("season").cast(pl.Int64), "league_lineage_id", pl.col("total_rosters").cast(pl.Int64))
+        self.league_of = {(r["league_lineage_id"], r["season"]): (r["league_id"], r["total_rosters"]) for r in meta.iter_rows(named=True)}
+        ours = set(meta["league_id"].to_list())
+        f = pick_slots.CACHE / "crawl_standings.parquet"
+        self.hist = pl.read_parquet(f).filter(pl.col("league_id").is_in(list(ours))) if f.exists() else None
+        try:
+            self.current = pick_slots.current_standings()
+        except Exception:  # noqa: BLE001
+            self.current = None
+        # week calendar: the last game date of each (season, week)
+        w = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet").group_by("season", "week").agg(pl.col("game_date").max().alias("week_end"))
+        self.weeks = {(int(r["season"]), int(r["week"])): r["week_end"] for r in w.iter_rows(named=True) if r["week_end"] is not None}
+
+    @staticmethod
+    def season_of(d: date) -> int:
+        return d.year if d.month >= 3 else d.year - 1
+
+    def played_by(self, season: int, d: date) -> int:
+        return sum(1 for (s, w), end in self.weeks.items() if s == season and end is not None and end < d)
+
+    def probs(self, lineage: str, pick_season: int, pick_orig: int, at: date) -> tuple[float, float, float] | None:
+        """P(Early, Mid, Late) for the original team's pick, as of ``at``; None = no view (Mid)."""
+        if self.table is None:
+            return None
+        s = self.season_of(at)
+        if pick_season != s + 1:
+            return None                                   # two or more drafts out: the market prices the tier flat
+        lid = self.league_of.get((lineage, s))
+        if lid is None:
+            return None
+        league_id, teams = lid
+        played = self.played_by(s, at)
+        if played >= 1:
+            row = None
+            if self.hist is not None:
+                h = self.hist.filter((pl.col("league_id") == league_id) & (pl.col("season") == s) & (pl.col("roster_id") == pick_orig) & (pl.col("played") <= played)).sort("played")
+                if h.height:
+                    row = h.row(-1, named=True)
+            if row is None and self.current is not None and self.current.height:
+                c = self.current.filter((pl.col("league_id") == league_id) & (pl.col("roster_id") == pick_orig) & (pl.col("as_of") <= at)).sort("as_of")
+                if c.height:
+                    row = c.row(-1, named=True)
+            if row is not None and row.get("played", 0) >= 1:
+                return pick_slots.tier_probs(self.table, int(row["played"]), int(row["rank_now"]), int(row["pf_rank"]), int(row["teams"] or teams or 12))
+        # preseason: last season's finish as the prior
+        if self.prior is not None and self.hist is not None:
+            prev = self.league_of.get((lineage, s - 1))
+            if prev is not None:
+                h = self.hist.filter((pl.col("league_id") == prev[0]) & (pl.col("season") == s - 1) & (pl.col("roster_id") == pick_orig) & (pl.col("week") == pl.col("last_week")))
+                if h.height:
+                    return pick_slots.prior_probs(self.prior, int(h["final_rank"][0]), int(h["teams"][0] or prev[1] or 12))
+        return None
 
 
 def pick_value_at(pk: pl.DataFrame, pick_prices: pl.DataFrame, offsets: tuple[int, ...] = (0, 1, -1, 2, -2, 3)) -> pl.DataFrame:
@@ -314,16 +390,25 @@ def pick_value_at(pk: pl.DataFrame, pick_prices: pl.DataFrame, offsets: tuple[in
         r = _asof(pick_prices, ["pick_season", "pick_round", "tier"], q, out="v").select("_i", "v")
         hit = r.filter(pl.col("v").is_not_null())
         got = pl.concat([got, hit.cast({"_i": got["_i"].dtype})])
-        left = left.filter(~pl.col("_i").is_in(hit["_i"]))
+        left = left.filter(~pl.col("_i").is_in(hit["_i"].implode()))
+    if left.height:
+        # not listed yet on that date (KTC adds a draft's picks ~2-3 years out): its first listed price, within a year
+        v = pick_prices.sort("valuation_date")
+        r = (left.select("_i", "pick_season", "pick_round", "tier", "at").sort("at")
+             .join_asof(v.rename({"valuation_date": "_vd"}), left_on="at", right_on="_vd", by=["pick_season", "pick_round", "tier"], strategy="forward", tolerance="365d")
+             .select("_i", pl.col("ktc").alias("v")))
+        got = pl.concat([got, r.filter(pl.col("v").is_not_null()).cast({"_i": got["_i"].dtype})])
     return got
 
 
 def value_at(legs: pl.DataFrame, at: pl.Series, hv: pl.DataFrame, pick_prices: pl.DataFrame | None, today: date | None = None,
-             teams_by_league: dict[str, int] | None = None) -> pl.Series:
+             teams_by_league: dict[str, int] | None = None, slots: "SlotContext | None" = None) -> pl.Series:
     """Each leg's KTC value at its own date ``at``: null when the date is in the future, 0 when it has
-    arrived but the asset has no price, a player by his id, a pick as a pick -- the Mid tier of its
-    round until the draft order is known (January of the draft year), its slot's tier after, frozen
-    at the last pre-draft price once the draft has happened."""
+    arrived but the asset has no price, a player by his id, a pick as a pick -- for next year's draft
+    the tier its original team is likely to land in (P(Early / Mid / Late) from that team's record and
+    scoring so far, last season's finish before week 1; ``slots``), the Mid tier for drafts further
+    out, its actual slot's tier once the order is known (January of the draft year), and frozen at
+    the last pre-draft price once the draft has happened."""
     today = today or date.today()
     L = legs.with_row_index("_i").with_columns(at.alias("at"))
     L = L.with_columns(pl.when(pl.col("asset") == "player").then(pl.col("player_id")).otherwise(None).alias("pid"))
@@ -348,8 +433,29 @@ def value_at(legs: pl.DataFrame, at: pl.Series, hv: pl.DataFrame, pick_prices: p
         rows = pk.select("_i", "pick_season", "pick_round", "league_id" if "league_id" in pk.columns else pl.lit(None, pl.Utf8).alias("league_id"),
                          pl.col("draft_slot") if has_slot else pl.lit(None, pl.Int64).alias("draft_slot"), known.alias("known"), pl.col("at_eff").alias("at"))
         tiers = [slot_tier(s, teams.get(lg)) if (k and s is not None) else "Mid" for lg, s, k in zip(rows["league_id"].to_list(), rows["draft_slot"].to_list(), rows["known"].to_list())]
-        rows = rows.with_columns(pl.Series("tier", tiers)).select("_i", "pick_season", "pick_round", "tier", "at")
-        vals.append(pick_value_at(rows, pick_prices))
+        rows = rows.with_columns(pl.Series("tier", tiers))
+        # expected tier for next year's draft from the original team's standing (one-hot where the slot is known)
+        pe, pm, pl_ = [], [], []
+        src = pk.select("_i", "lineage_id" if "lineage_id" in pk.columns else pl.lit(None, pl.Utf8).alias("lineage_id"),
+                        "pick_orig" if "pick_orig" in pk.columns else pl.lit(None, pl.Int64).alias("pick_orig")).join(rows.select("_i", "pick_season", "tier", "known", "at"), on="_i")
+        for r in src.iter_rows(named=True):
+            p = None
+            if slots is not None and not r["known"] and r["lineage_id"] is not None and r["pick_orig"] is not None:
+                p = slots.probs(r["lineage_id"], int(r["pick_season"]), int(r["pick_orig"]), r["at"])
+            if p is None:
+                p = {"Early": (1.0, 0.0, 0.0), "Mid": (0.0, 1.0, 0.0), "Late": (0.0, 0.0, 1.0)}[r["tier"]]
+            pe.append(p[0]); pm.append(p[1]); pl_.append(p[2])
+        probs = src.select("_i").with_columns(pl.Series("p_early", pe), pl.Series("p_mid", pm), pl.Series("p_late", pl_))
+        base = rows.select("_i", "pick_season", "pick_round", "at")
+        by_tier = {tier: pick_value_at(base.with_columns(pl.lit(tier).alias("tier")), pick_prices).rename({"v": f"v_{tier}"}) for tier in ("Early", "Mid", "Late")}
+        ex = probs
+        for tier, d in by_tier.items():
+            ex = ex.join(d, on="_i", how="left")
+        # a missing tier price falls back to the Mid price (then to whichever exists)
+        ex = ex.with_columns(pl.coalesce([pl.col("v_Mid"), pl.col("v_Early"), pl.col("v_Late")]).alias("_any"))
+        ex = ex.with_columns([pl.coalesce([pl.col(f"v_{t}"), pl.col("_any")]).alias(f"v_{t}") for t in ("Early", "Mid", "Late")])
+        ex = ex.with_columns((pl.col("p_early") * pl.col("v_Early") + pl.col("p_mid") * pl.col("v_Mid") + pl.col("p_late") * pl.col("v_Late")).alias("v"))
+        vals.append(ex.select("_i", "v").filter(pl.col("v").is_not_null()))
     if vals:
         got = pl.concat(vals).unique("_i")
         out = out.drop("v").join(got, on="_i", how="left")
@@ -359,7 +465,8 @@ def value_at(legs: pl.DataFrame, at: pl.Series, hv: pl.DataFrame, pick_prices: p
 
 
 def price_horizons(legs: pl.DataFrame, hv: pl.DataFrame | None = None, pick_prices: pl.DataFrame | None = None,
-                   horizons: tuple[int, ...] = HORIZONS, today: date | None = None, teams_by_league: dict[str, int] | None = None) -> pl.DataFrame:
+                   horizons: tuple[int, ...] = HORIZONS, today: date | None = None, teams_by_league: dict[str, int] | None = None,
+                   slots: "SlotContext | None" = None) -> pl.DataFrame:
     """``v0`` (the trade date), ``v1`` .. (N+1, N+2 ... years later) and ``v_now`` per leg."""
     today = today or date.today()
     hv = ktc_history(today) if hv is None else hv
@@ -371,8 +478,8 @@ def price_horizons(legs: pl.DataFrame, hv: pl.DataFrame | None = None, pick_pric
     cols = []
     for m in horizons:
         at = legs.select((pl.col("date") + pl.duration(days=round(365.25 * m))).alias("at"))["at"] if m else legs["date"].alias("at")
-        cols.append(value_at(legs, at, hv, pick_prices, today, teams_by_league).alias(f"v{m}"))
-    cols.append(value_at(legs, pl.Series("at", [today] * legs.height, dtype=pl.Date), hv, pick_prices, today, teams_by_league).alias("v_now"))
+        cols.append(value_at(legs, at, hv, pick_prices, today, teams_by_league, slots).alias(f"v{m}"))
+    cols.append(value_at(legs, pl.Series("at", [today] * legs.height, dtype=pl.Date), hv, pick_prices, today, teams_by_league, slots).alias("v_now"))
     return legs.with_columns(cols)
 
 
@@ -457,6 +564,23 @@ def _vcols(legs: pl.DataFrame) -> list[str]:
     return [c for c in legs.columns if c == "v_now" or (c.startswith("v") and c[1:].isdigit())]
 
 
+def reversal_pairs(legs: pl.DataFrame, days: int = 10) -> pl.DataFrame:
+    """Transactions undone by a mirror trade between the same rosters within ``days``: each asset
+    goes back where it came from. Returns (transaction_id, reversed_by)."""
+    empty = pl.DataFrame(schema={"transaction_id": pl.Utf8, "reversed_by": pl.Utf8})
+    if not {"lineage_id", "date"} <= set(legs.columns):
+        return empty
+    part = lambda c: pl.coalesce([pl.col(c).cast(pl.Utf8), pl.lit("")]) if c in legs.columns else pl.lit("")   # noqa: E731
+    key = pl.concat_str([pl.col("asset"), part("player_id"), part("pick_season"), part("pick_round"), part("pick_orig"), part("faab")], separator="|")
+    L = legs.with_columns(key.alias("_k"))
+    sig = L.group_by("transaction_id").agg(pl.col("lineage_id").first(), pl.col("date").first(),
+                                           pl.concat_str([pl.col("_k"), pl.col("from_roster").cast(pl.Utf8), pl.col("roster_id").cast(pl.Utf8)], separator=">").sort().str.join(";").alias("fwd"),
+                                           pl.concat_str([pl.col("_k"), pl.col("roster_id").cast(pl.Utf8), pl.col("from_roster").cast(pl.Utf8)], separator=">").sort().str.join(";").alias("rev"))
+    j = sig.join(sig.select(pl.col("transaction_id").alias("reversed_by"), pl.col("lineage_id"), pl.col("date").alias("date2"), pl.col("fwd").alias("fwd2")), on="lineage_id", how="inner")
+    j = j.filter((pl.col("transaction_id") != pl.col("reversed_by")) & (pl.col("rev") == pl.col("fwd2")) & ((pl.col("date2") - pl.col("date")).dt.total_days().abs() <= days))
+    return j.select("transaction_id", "reversed_by").unique("transaction_id")
+
+
 def trade_table(trades: pl.DataFrame, legs: pl.DataFrame, fr: pl.DataFrame) -> pl.DataFrame:
     """One row per (trade, roster): the package received and given at every horizon, raw (``_sum``)
     and under KTC's combine (the trade's best asset at that horizon as the reference), the net
@@ -476,19 +600,21 @@ def trade_table(trades: pl.DataFrame, legs: pl.DataFrame, fr: pl.DataFrame) -> p
     def side(col: str) -> pl.DataFrame:
         aggs = [pl.len().alias("n"), (pl.col("asset") == "pick").sum().alias("picks"),
                 pl.col("wins_since").sum().alias("wins") if "wins_since" in L.columns else pl.lit(0.0).alias("wins"),
-                pl.col("label").str.join(" + ").alias("assets")]
+                pl.col("label").str.join(" + ").alias("assets"),
+                pl.col("label").filter(pl.col("v0") == 0).str.join(" + ").alias("unpriced_names") if "v0" in L.columns else pl.lit("").alias("unpriced_names")]
         for c in vcols:
             aggs += [pl.when(pl.col(c).is_null().any()).then(None).otherwise(pl.col(c).sum()).alias(f"{c}_sum"),
                      pl.when(pl.col(f"_pv_{c}").is_null().any()).then(None).otherwise(pl.col(f"_pv_{c}").sum()).alias(c),
                      ((pl.col(c) == 0) & pl.col(c).is_not_null()).sum().alias(f"{c}_unpriced")]
         return L.group_by(["transaction_id", col]).agg(aggs).rename({col: "roster_id"})
 
-    keep = ["n", "picks", "wins", "assets"] + [f"{c}{s}" for c in vcols for s in ("", "_sum", "_unpriced")]
+    keep = ["n", "picks", "wins", "assets", "unpriced_names"] + [f"{c}{s}" for c in vcols for s in ("", "_sum", "_unpriced")]
     recv = side("roster_id").rename({c: f"recv_{c}" for c in keep})
     give = side("from_roster").rename({c: f"give_{c}" for c in keep})
     t = recv.join(give, on=["transaction_id", "roster_id"], how="full", coalesce=True)
     t = t.join(trades.select("transaction_id", "lineage_id", "league_name", "season", "date", "leg", "in_season", "n_teams"), on="transaction_id", how="left")
     t = t.join(fr.select("lineage_id", "roster_id", "manager"), on=["lineage_id", "roster_id"], how="left")
+    t = t.join(reversal_pairs(legs), on="transaction_id", how="left").with_columns(pl.col("reversed_by").is_not_null().alias("reversal"))
     t = t.with_columns([pl.col(c).fill_null(0.0) for c in ("recv_wins", "give_wins")] + [pl.col(c).fill_null(0) for c in ("recv_n", "give_n", "recv_picks", "give_picks")])
     nets = [(pl.col(f"recv_{c}") - pl.col(f"give_{c}")).alias(f"net_{c}") for c in vcols]
     nets += [(pl.col(f"recv_{c}_sum") - pl.col(f"give_{c}_sum")).alias(f"net_{c}_sum") for c in vcols]
@@ -504,6 +630,8 @@ def manager_table(tt: pl.DataFrame, min_seasons: float = 0.0) -> pl.DataFrame:
     """Per lineage and manager: trades, the calculator's verdict at the time, the package values at
     N+1 .. and today, win rates by value at each horizon, net wins delivered."""
     scored = tt.filter(pl.col("seasons_since") >= min_seasons) if "seasons_since" in tt.columns else tt
+    if "reversal" in scored.columns:
+        scored = scored.filter(~pl.col("reversal"))          # a trade undone within days is not a trade
     vcols = [c[4:] for c in tt.columns if c.startswith("net_v") and not c.endswith("_sum")]
     aggs = [pl.len().alias("trades"), pl.col("in_season").mean().alias("in_season_share"),
             pl.col("recv_wins").sum().alias("wins_in"), pl.col("give_wins").sum().alias("wins_out"), pl.col("net_wins").sum().alias("net_wins"),
@@ -526,10 +654,19 @@ def build(through: date | None = None) -> dict[str, pl.DataFrame]:
     fr = franchises()
     xw = _crosswalk()
     legs = legs.join(xw.select("pid", "name", "pos"), left_on="player_id", right_on="pid", how="left")
+    # every player leg gets a label: the crosswalk's name, else Sleeper's own, else "<TEAM> DEF" for a defense
+    is_def = pl.col("player_id").is_not_null() & ~pl.col("player_id").str.contains(r"^\d+$")
+    legs = legs.with_columns(
+        pl.coalesce([pl.col("name"), pl.when(is_def).then(pl.col("player_id") + pl.lit(" DEF")).otherwise(None), pl.when(pl.col("tp_name") != "").then(pl.col("tp_name")).otherwise(None), pl.col("player_id")]).alias("name"),
+        pl.coalesce([pl.col("pos"), pl.when(is_def).then(pl.lit("DEF")).otherwise(None), pl.col("tp_pos")]).alias("pos"))
     legs = legs.join(xw.select(pl.col("pid").alias("drafted_player_id"), pl.col("name").alias("drafted_name"), pl.col("pos").alias("drafted_pos")), on="drafted_player_id", how="left")
     meta = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet")
     teams_by_league = {r["league_id"]: int(r["total_rosters"]) for r in meta.select("league_id", "total_rosters").iter_rows(named=True) if r["total_rosters"]}
-    legs = price_horizons(legs, today=today, teams_by_league=teams_by_league)
+    try:
+        slots = SlotContext()
+    except Exception as e:  # noqa: BLE001
+        print("expected-slot pricing unavailable:", str(e)[:120]); slots = None
+    legs = price_horizons(legs, today=today, teams_by_league=teams_by_league, slots=slots)
     settings = gcs_io.read_lake(SETTINGS_PATH)
     weeks = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
     season_df = gcs_io.read_lake("silver/fantasy/fact_player_season/data.parquet")

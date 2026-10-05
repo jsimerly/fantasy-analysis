@@ -49,6 +49,8 @@ def summarise(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
 
 def patterns(tt: pl.DataFrame, legs: pl.DataFrame, min_seasons: float) -> dict[str, pl.DataFrame]:
     old = tt.filter(pl.col("seasons_since") >= min_seasons)
+    if "reversal" in old.columns:
+        old = old.filter(~pl.col("reversal"))
     two = old.filter(pl.col("n_teams") == 2)
     out = {}
     # the calculator's verdict at the time vs what the market said later and what the players delivered
@@ -130,6 +132,7 @@ def main() -> None:
     partners = (others.join(others.rename({"roster_id": "r2", "manager": "m2"}), on="transaction_id", how="inner")
                 .filter(pl.col("roster_id") != pl.col("r2")).group_by(["transaction_id", "roster_id"]).agg(pl.col("m2").sort().str.join(" & ").alias("partners")))
     log_cols = (["transaction_id", "league_name", "season", "date", "leg", "in_season", "n_teams", "roster_id", "manager", "partners", "recv_assets", "give_assets",
+                 "recv_unpriced_names", "give_unpriced_names", "reversal", "reversed_by",
                  "recv_n", "give_n", "recv_picks", "give_picks", "recv_v0_sum", "give_v0_sum", "fair_v0"]
                 + [f"{s}_{c}" for c in H for s in ("recv", "give")] + [f"{s}_{c}_sum" for c in H for s in ("recv", "give")] + ["recv_wins", "give_wins", "seasons_since"])
     log = tt.join(partners, on=["transaction_id", "roster_id"], how="left").select([c for c in dict.fromkeys(log_cols) if c in tt.columns or c == "partners"])
