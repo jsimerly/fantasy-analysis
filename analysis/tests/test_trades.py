@@ -18,6 +18,12 @@ def test_ids_parses_sleeper_roster_lists():
     assert trades._ids(None) == [] and trades._ids("") == []
 
 
+def test_faab_parses_both_lake_shapes():
+    assert trades._faab('["4,10,16"]') == [(4, 10, 16)]
+    assert trades._faab('[{"amount": 25, "receiver": 10, "sender": 7}]') == [(7, 10, 25)]
+    assert trades._faab(None) == [] and trades._faab("[]") == [] and trades._faab("null") == [] and trades._faab('["1,2,0"]') == []
+
+
 def test_ktc_combine_is_convex_and_penalises_quantity():
     # one 8000 asset beats two 4000 assets under the calculator although the raw sums are equal
     one, two = trades.ktc_combine([8000], 8000), trades.ktc_combine([4000, 4000], 8000)

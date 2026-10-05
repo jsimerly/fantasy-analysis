@@ -74,6 +74,28 @@ def _ids(s: str | None) -> list[int]:
         return [int(x) for x in s.strip("[]").split(",") if x.strip()]
 
 
+def _faab(s) -> list[tuple[int, int, int]]:
+    """Sleeper's waiver_budget on a trade -> [(sender, receiver, amount)]. Two shapes in the lake:
+    the GraphQL dump's ["4,10,16"] strings and the REST feed's [{"sender": 7, "receiver": 10, "amount": 25}]."""
+    if s is None or (isinstance(s, str) and s.strip() in ("", "[]", "null")):
+        return []
+    try:
+        items = json.loads(s) if isinstance(s, str) else list(s)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for it in items:
+        try:
+            if isinstance(it, dict):
+                out.append((int(it["sender"]), int(it["receiver"]), int(it["amount"])))
+            else:
+                a, b, c = [int(x) for x in str(it).split(",")]
+                out.append((a, b, c))
+        except Exception:  # noqa: BLE001
+            continue
+    return [x for x in out if x[2] > 0]
+
+
 # ------------------------------------------------------------------------------ loading
 def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
     """(trades, legs). ``legs``: transaction_id, lineage_id, league_id, season, date, leg,
@@ -101,7 +123,11 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
     picks = dp.select("transaction_id", new_owner.cast(pl.Int64).alias("roster_id"), prev_owner.cast(pl.Int64).alias("from_roster"),
                       pl.col("season").cast(pl.Int64).alias("pick_season"), pl.col("round").cast(pl.Int64).alias("pick_round"),
                       pl.col("roster_id").cast(pl.Int64).alias("pick_orig")).unique().with_columns(pl.lit("pick").alias("asset"))
-    legs = pl.concat([players, picks], how="diagonal_relaxed").join(
+    # FAAB dollars sent in a trade: an asset leg with no market price, so the side that paid in budget still shows what it gave
+    faab_rows = [{"transaction_id": tid, "roster_id": recv, "from_roster": send, "faab": amt, "asset": "faab"}
+                 for tid, wb in tx.select("transaction_id", "waiver_budget").iter_rows() for send, recv, amt in _faab(wb)]
+    faab = pl.DataFrame(faab_rows, schema={"transaction_id": pl.Utf8, "roster_id": pl.Int64, "from_roster": pl.Int64, "faab": pl.Int64, "asset": pl.Utf8})
+    legs = pl.concat([players, picks, faab], how="diagonal_relaxed").join(
         trades.select("transaction_id", "lineage_id", "league_id", "season", "date", "leg"), on="transaction_id", how="inner")
     return trades, legs
 
@@ -331,6 +357,7 @@ def trade_table(trades: pl.DataFrame, legs: pl.DataFrame, fr: pl.DataFrame) -> p
     vcols = _vcols(legs)
     name = pl.when(pl.col("asset") == "pick").then(
         pl.format("{} R{} pick", pl.col("pick_season"), pl.col("pick_round")) + pl.when(pl.col("drafted_name").is_not_null()).then(pl.format(" ({})", pl.col("drafted_name"))).otherwise(pl.lit(""))
+    ).when(pl.col("asset") == "faab").then(pl.format("${} FAAB", pl.col("faab")) if "faab" in legs.columns else pl.lit("FAAB")
     ).otherwise(pl.col("name"))
     L = legs.with_columns(name.alias("label"))
     # the trade's best asset at each horizon (both sides) is the combine's reference; a horizon is defined for a side only when every leg has arrived
