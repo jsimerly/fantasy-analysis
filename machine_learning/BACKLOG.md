@@ -355,6 +355,23 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     (average of the two models' ppg / games projections). Accept the winner on `spearman_war_top`
     with the paired test (|t| > 2.4), as every other change. The pretrained weights need a one-time
     PriorLabs licence acceptance (`TABPFN_TOKEN` for headless runs).
+    **Set-up (2026-10-05):** `career.HorizonModels(backend="xgb"|"tabpfn"|"blend")`, harness
+    `--backend` / `--tabpfn-params`; tabpfn 9.1.0 + torch cu126 in the ML venv; the 3.5 weights are
+    licence-gated (owner's one-time login), the v2 weights are open, so the first round is TabPFN v2.
+    One fit-and-predict at the matrix's size is about a minute on the RTX 2060 (fit_preprocessors;
+    the KV-cache mode overflowed 6 GB with twelve fitted models per cohort).
+    **Market backtest, 3 years, cohorts 2020–22 (366 priced players), TabPFN v2 vs the trees:**
+    rank agreement with realized WAR 0.709 vs 0.685 (KTC 0.678), better in every cohort (0.715 /
+    0.715 / 0.699 vs 0.691 / 0.681 / 0.684), top-decile hits 0.33 / 0.42 / 0.50 vs 0.22 / 0.33 /
+    0.44, edge corr 0.353 vs 0.319; swaps 58 at +0.53 wins each (67 % won, 30.9 wins in total) vs
+    63 at +0.42 (68 %, 26.2). Where it differs: the market's top 24 (0.432 vs 0.321, KTC 0.358 —
+    TabPFN beats the market at the top where the trees lose to it), QBs (0.653 vs 0.620, KTC
+    0.665), RB buys (+1.05 per swap, 89 % won), 29–32-year-old buys (+0.71 vs +0.05); rookies still
+    below the market (0.484 vs 0.462, KTC 0.514). Bias is smaller (+0.28 vs +0.31 wins), i.e. less
+    shrinkage of the top (item 18). Same inputs, same targets, same cohorts: the estimator alone
+    moved the market backtest by +0.024. The harness's own top-150 metric on these three cohorts is
+    mixed (0.564 / 0.608 / 0.640 vs 0.580 / 0.637 / 0.591), so the acceptance rests on the full
+    eight-cohort paired run (below).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
@@ -413,6 +430,30 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     pattern of mistakes (in-season panic sells, paying for last month's form, pick fever, position
     bias, trading with one partner); and the counterparties each manager loses to. Output: a
     Trades tab (per-league leaderboard, trade log with the three prices, manager profiles).
+    **First cut, 2026-10-05 (`src/trades.py`, `scripts/trade_report.py`; KTC then / now and
+    realized WAR since; the model's walk-forward price still to come).** 298 completed trades,
+    932 asset legs (519 players, 492 priced at the trade date; 413 picks, 297 priced, 277 resolved
+    to the rookie taken), 454 trade sides at least a season old. Stuck in High School is the
+    trading league (245 of the 298). Scorecards (net wins delivered since, trades ≥ 1 season old):
+    Brayton Green +11.0 over 65 trades, Noah Smyth +10.7 (61 % won), Alex Walker +8.2, Spencer
+    Carella +4.3 (buys picks: +14 net); Jake Kliest −2.6 on 54 trades (the volume trader, 104 wins
+    in and 107 out), Anthony Golden −4.9, the owner −6.4 (30 trades, 50 % won, but one −11.2 trade:
+    Henry, Hill, Engram and the pick that became Bowers out for Taylor, Ertz and a 2nd in April
+    2022, 26.0k KTC given for 11.0k), Alex Piroozi −6.6, Timmy Becker −11.3 (55 % of trades lost).
+    Patterns, two-team trades: (1) KTC's verdict at the time is barely a predictor: the side the
+    market favoured won 52 % and lost 45 % (+0.12 wins); (2) **pick fever is real**: the side that
+    took picks for players lost 60 % of the time (−0.24 wins per side) although the market called
+    those trades even (+0.2k KTC to the pick side) — picks deliver fewer wins than their price, as
+    item 15's curve said; (3) consolidation helps a little: the side getting the single most
+    valuable asset won 52 % (+0.13 wins); (4) in-season and offseason trades have the same win
+    rate (46–47 %), in-season swings are larger; (5) wins per 1,000 KTC of the players bought:
+    QB 0.34, TE 0.34, RB 0.33, WR 0.28; (6) pairs to watch: Becker vs Green 0 of 6, Piroozi vs
+    Kliest 1 of 4, Kliest vs Green 18 trades at −4.3. Data: the silver KTC fact lists only today's
+    ~430 players, so the bronze archive (2020-04 → 2024-08, by Sleeper id) prices the rest;
+    dim_players_master's gsis ids are sparse and padded, nflverse `fantasy_player_ids` is the
+    crosswalk. Next: the model's walk-forward value at the trade date as the third price (who
+    would have been right with the model), a Trades tab on the page, and realized wins per season
+    elapsed so 2021 and 2025 trades compare.
 
 26. **Valuing the owner's own roster: bench players and the range of outcomes.** Suspicion: the
     roster layer slightly undervalues bench players, and the cause may be that the projection is
