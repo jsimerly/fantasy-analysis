@@ -384,7 +384,10 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     0.605 on the top-150 metric — no better than either parent (vs the trees −0.002, t = −0.2; vs
     TabPFN −0.008, t = 0.8), everyone-projected 0.627 (= TabPFN), top-12 bias 0.287 (between the
     two), position-share error 0.097. Averaging does not add anything here, so the candidate is
-    TabPFN on its own. Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
+    TabPFN on its own. Market backtest 2020–22 (3 yr) for the three: rank agreement 0.709 TabPFN /
+    0.700 blend / 0.685 trees (KTC 0.678); swaps +0.53 (67 % won) / +0.53 (72 %) / +0.42 (68 %);
+    at the market's top 24 TabPFN 0.432, blend 0.386, trees 0.321 vs KTC 0.358. Same order on
+    every slice: TabPFN ≥ blend > trees. Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
     licence login is a one-time step there, `TABPFN_TOKEN` for headless runs);
     whichever passes the paired test on `spearman_war_top` becomes production. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
