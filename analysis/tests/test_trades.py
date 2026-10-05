@@ -34,23 +34,35 @@ def test_ktc_combine_is_convex_and_penalises_quantity():
     assert abs(float(trades.pv(np.array([10099.0]), 10099.0)[0]) - expect) < 1e-6
 
 
-def test_value_at_prices_players_picks_and_future_as_null():
+def test_value_at_prices_players_and_picks_as_picks():
     hv = pl.DataFrame({"pid": ["1", "1", "9"], "valuation_date": [date(2022, 1, 1), date(2023, 1, 1), date(2023, 6, 1)], "ktc": [5000.0, 6000.0, 3000.0]})
-    picks = pl.DataFrame({"valuation_date": [date(2022, 1, 1)], "pick_season": [2023], "pick_round": [1], "tier": ["Mid"], "ktc": [4000.0]})
+    picks = pl.DataFrame({"valuation_date": [date(2022, 1, 1), date(2023, 2, 1), date(2023, 4, 1), date(2023, 2, 1), date(2023, 4, 1)],
+                          "pick_season": [2023] * 5, "pick_round": [1] * 5, "tier": ["Mid", "Mid", "Mid", "Early", "Early"], "ktc": [4000.0, 4200.0, 4300.0, 6000.0, 6500.0]})
     legs = pl.DataFrame({
-        "asset": ["player", "pick", "pick", "player"], "player_id": ["1", None, None, "DEF"],
-        "pick_season": [None, 2023, 2023, None], "pick_round": [None, 1, 1, None],
-        "drafted_player_id": [None, "9", "9", None], "draft_date": [None, date(2023, 5, 15), date(2023, 5, 15), None],
-        "date": [date(2022, 2, 1)] * 4})
+        "asset": ["player", "pick", "pick", "player", "pick"], "player_id": ["1", None, None, "DEF", None],
+        "pick_season": [None, 2023, 2023, None, 2023], "pick_round": [None, 1, 1, None, 1],
+        "drafted_player_id": [None, "9", "9", None, "9"], "draft_date": [None, date(2023, 5, 15), date(2023, 5, 15), None, date(2023, 5, 15)],
+        "draft_slot": [None, 2, 2, None, None], "league_id": ["L"] * 5,
+        "date": [date(2022, 2, 1)] * 5})
     today = date(2024, 1, 1)
-    at = pl.Series("at", [date(2022, 2, 1), date(2022, 2, 1), date(2023, 7, 1), date(2022, 2, 1)])
-    v = trades.value_at(legs, at, hv, picks, today).to_list()
+    at = pl.Series("at", [date(2022, 2, 1), date(2022, 2, 1), date(2023, 7, 1), date(2022, 2, 1), date(2023, 7, 1)])
+    v = trades.value_at(legs, at, hv, picks, today, teams_by_league={"L": 12}).to_list()
     assert v[0] == 5000.0                 # the player at the trade date
-    assert v[1] == 4000.0                 # the pick as a pick before its draft
-    assert v[2] == 3000.0                 # the pick as the drafted player after the draft
+    assert v[1] == 4000.0                 # the pick as a pick before the order is known: Mid tier
+    assert v[2] == 6500.0                 # after the draft: frozen at the last pre-draft price, at its slot's tier (slot 2 of 12 = Early), never the drafted player
     assert v[3] == 0.0                    # a team defense: arrived, no price
-    fut = trades.value_at(legs, pl.Series("at", [date(2025, 1, 1)] * 4), hv, picks, today).to_list()
-    assert all(x is None for x in fut)    # a horizon that has not arrived
+    assert v[4] == 4300.0                 # slot unknown: Mid, frozen at the last pre-draft price
+    fut = trades.value_at(legs, pl.Series("at", [date(2025, 1, 1)] * 5), hv, picks, today, teams_by_league={"L": 12}).to_list()
+    assert all(x is None for x in fut)          # a horizon that has not arrived is null for every asset, consumed picks included
+
+
+def test_pick_value_falls_back_to_another_season_at_the_same_distance():
+    # no 2023 Mid 1st price in October 2022, but the 2024 Mid 1st a year later is known
+    picks = pl.DataFrame({"valuation_date": [date(2023, 10, 1)], "pick_season": [2024], "pick_round": [1], "tier": ["Mid"], "ktc": [5100.0]})
+    pk = pl.DataFrame({"_i": pl.Series([0], dtype=pl.UInt32), "pick_season": [2023], "pick_round": [1], "tier": ["Mid"], "at": [date(2022, 10, 11)]})
+    got = trades.pick_value_at(pk, picks)
+    assert got.height == 1 and got["v"][0] == 5100.0
+    assert trades.slot_tier(1, 12) == "Early" and trades.slot_tier(5, 12) == "Mid" and trades.slot_tier(12, 12) == "Late" and trades.slot_tier(None, 12) == "Mid"
 
 
 def _fixture():

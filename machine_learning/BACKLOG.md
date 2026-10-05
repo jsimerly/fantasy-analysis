@@ -372,6 +372,17 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     moved the market backtest by +0.024. The harness's own top-150 metric on these three cohorts is
     mixed (0.564 / 0.608 / 0.640 vs 0.580 / 0.637 / 0.591), so the acceptance rests on the full
     eight-cohort paired run (below).
+    **Harness, cohorts 2015–2022, TabPFN v2 (`tabpfn_v2_weekly`) vs the trees (`current_w`), paired:**
+    top-150 rank agreement 0.613 vs 0.603 (+0.010, t = 0.8, 4 of 8 cohorts) — not past the line;
+    everyone-projected agreement 0.627 vs 0.623 (+0.004, t = 3.2, 7 of 8); top-12 bias 0.270 vs
+    0.302 wins (less shrinkage of the top, t = 3.7, 7 of 8); wins MAE on the top 150 0.511 vs 0.518
+    (t = 1.9); top-decile hits 0.677 vs 0.686 (t = −0.9); position-share error 0.104 vs 0.092
+    (worse, t = −2.1). Reading: the foundation model is a slightly better ranker and clearly less
+    shrunk at the top, with the same inputs and no tuning, and it beat the trees on the 2020–22
+    market backtest by more than the harness shows — but the primary metric is not significant,
+    so **not adopted on its own**. Next: the blend (xgb + TabPFN v2 mean, queued), then TabPFN-3.5
+    once the owner has accepted the licence (`TABPFN_TOKEN`); whichever passes the paired test on
+    `spearman_war_top` becomes production. Cost: ~2 h per eight-cohort run on the RTX 2060.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
