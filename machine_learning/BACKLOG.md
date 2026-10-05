@@ -457,8 +457,18 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     bias (item 9, now measured). An empirical games table (`--calibrate games_table`, mean
     realized games by position × age bucket × prior tier, learnt per cohort) replacing the games
     model scores 0.609 vs 0.603 on the top-150 metric (t = 1.4) but hurts everyone-projected
-    ordering (0.616 vs 0.623, t = 3.9) and position shares; the starters-and-mid-only and
-    blended variants are being tested. (2) The college data build is in:
+    ordering (0.616 vs 0.623, t = 3.9) and position shares. Narrower variants (3-yr harness, paired
+    vs `current_w`): starters-and-mid only, fringe keeps the model (`games_table:tiers:1.0`) 0.607
+    (t = 0.8), everyone 0.623 = 0.623, top-12 bias 0.296 vs 0.302 (t = 3.3), share error 0.095 vs
+    0.092 (t = −2.6); a 50/50 blend of table and model for those tiers (`games_table:tiers:0.5`)
+    0.608 (t = 1.0), top decile 0.688 vs 0.686 (8 of 8), top-12 bias 0.297 (t = 4.9, 8 of 8), share
+    error 0.093 (t = −1.6). Market backtest 2020–22 for the blend: 0.687 vs 0.685, under-25s 0.641
+    vs 0.638, rookies 0.466 vs 0.462, swaps +0.47 vs +0.42 (70 % won), 25–28 buys +0.76 vs +0.64.
+    Consistent in direction, never past the line — as expected, because rank metrics at three
+    years barely see a games correction whose weight is in years 3–10; the five-year harness
+    (`--horizon 5`, cohorts 2015–2020) is the test that can, results below. Production note: the
+    in-season rookie tail is extrapolated from the career tails of young players with a history, so
+    a games correction to the career model lifts rookies through that ratio automatically. (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best
