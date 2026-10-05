@@ -41,6 +41,8 @@ def main() -> None:
                     help="per-year discount rate: the coming season at full weight, season k at (1-rate)^(k-1); "
                          "1.0 = this season only")
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator")
+    ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
@@ -57,7 +59,14 @@ def main() -> None:
     print("starters per position:", {k: round(v, 1) for k, v in starters.items()})
     print("replacement ppg:", {k: round(v, 2) for k, v in rep.items()})
 
-    models = career.HorizonModels(H, device=args.device).fit(df, as_of_season=last)
+    tabpfn_params = {}
+    for kv in args.tabpfn_params:
+        k, v = kv.split("=", 1)
+        try:
+            tabpfn_params[k] = int(v)
+        except ValueError:
+            tabpfn_params[k] = v
+    models = career.HorizonModels(H, device=args.device, backend=args.backend, tabpfn_params=tabpfn_params).fit(df, as_of_season=last)
     sigma = models.estimate_sigma(df, as_of_season=last)
     print("out-of-sample ppg spread by horizon (all positions):",
           {k: round(v["__all__"], 2) for k, v in sigma.items()})

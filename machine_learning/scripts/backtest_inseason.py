@@ -54,12 +54,12 @@ def week_end_date(wk: pl.DataFrame, season: int, week: int) -> date:
     return (d + timedelta(days=1)) if d is not None else date(season, 9, 1) + timedelta(weeks=week)
 
 
-def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str):
+def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, backend: str = "xgb", tabpfn_params: dict | None = None):
     """Career-model projections off every player's row in season ``as_of`` (their latest
     complete season), plus the out-of-sample spread, trained only on outcomes known by then.
     Projected games are capped by the population age-survival prior (survivorship at the
     oldest ages). Returns (predictions, sigma, survival)."""
-    m = career.HorizonModels(H, device=device).fit(season_df, as_of_season=as_of)
+    m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params).fit(season_df, as_of_season=as_of)
     sigma = m.estimate_sigma(season_df, as_of_season=as_of)
     survival = career.AgeSurvival().fit(season_df.filter((pl.col("season") + 1) <= as_of))
     pred = survival.cap_games(m.predict(season_df.filter(pl.col("season") == as_of)), H)
@@ -75,7 +75,17 @@ def main() -> None:
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--depth", action="store_true", help="add the depth-chart standing features (BACKLOG 11; neutral in the 2021-24 backtest, so opt-in)")
+    ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator for the multi-year tail (the in-season model itself stays xgboost)")
+    ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
     args = ap.parse_args()
+    tabpfn_params = {}
+    for kv in args.tabpfn_params:
+        k, v = kv.split("=", 1)
+        try:
+            tabpfn_params[k] = int(v)
+        except ValueError:
+            tabpfn_params[k] = v
+
     weeks = [int(w) for w in args.weeks.split(",")]
 
     wk, season = load_inputs()
@@ -93,7 +103,8 @@ def main() -> None:
         cur = int(wk["season"].max())
         w_now = int(wk.filter(pl.col("season") == cur)["week"].max())
         rep = replacement.replacement_levels(season, starters)
-        tail, sigma, survival = career_tail(season, last_complete, rep, args.device)
+        tail, sigma, survival = career_tail(season, last_complete, rep, args.device, args.backend, tabpfn_params)
+        backend_tag = args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
         m = inseason.InSeasonModels(device=args.device).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = survival.cap_games(snap, [1], col="next_games_hat")
@@ -120,7 +131,8 @@ def main() -> None:
             print("\nBiggest movers since preseason in the model's own ranking (moved_up = preseason IV rank - in-season IV rank):")
             print(movers.sort("moved_up", descending=True).select(show).head(10)); print(movers.sort("moved_up").select(show).head(10))
         run = datetime.now(timezone.utc).date().isoformat()
-        p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left"),
+        p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left")
+                                    .with_columns(pl.lit(backend_tag).alias("career_backend")),
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")
         print("\nwrote", p)
         return

@@ -262,8 +262,9 @@ def main() -> None:
             print("owned picks attached:", {lid: sum(len(x.get("picks", [])) for x in tl) for lid, tl in teams.items()})
         except Exception as e:  # noqa: BLE001
             print("owned picks: skipped:", str(e)[:200])
+    career_backend = proj["career_backend"][0] if "career_backend" in proj.columns and proj.height else "xgb"
     out = {
-        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary,
+        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary, "career_backend": career_backend,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
