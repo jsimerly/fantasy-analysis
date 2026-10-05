@@ -12,6 +12,11 @@ dependencies = [
     "numpy>=2.0",
 ]
 
+[project.optional-dependencies]
+# the TabPFN backend of the career model (`run_experiment.py --backend tabpfn`); install torch from
+# the CUDA index first for GPU inference: pip install --index-url https://download.pytorch.org/whl/cu126 torch
+tabpfn = ["tabpfn>=9.1", "torch>=2.5"]
+
 [dependency-groups]
 dev = ["pytest>=8.0"]
 

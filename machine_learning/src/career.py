@@ -116,16 +116,73 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
 
 
 # ----------------------------------------------------------------------------- models
+BACKENDS = ("xgb", "tabpfn", "blend")
+
+
+class _TabPFN:
+    """TabPFN regressor behind the xgboost-shaped ``fit(X, y, sample_weight) / predict(X)`` the
+    horizon models use. A pretrained tabular foundation model: ``fit`` stores the training set and
+    ``predict`` runs in-context regression over it, so there is nothing to tune and the GPU does the
+    work at prediction time. Missing values pass through as NaN. Sample weights are not supported
+    by the model and are ignored (``weight`` variants are an xgboost-only experiment)."""
+
+    def __init__(self, device: str = "cpu", seed: int = 0, params: dict | None = None):
+        self.device, self.seed, self.params = device, seed, dict(params or {})
+        self.model = None
+
+    def fit(self, X, y, sample_weight=None):
+        import os
+        params = dict(self.params)
+        # which pretrained weights: "v2" (open), "v2.5" / "v3" / "v3.5" (one-time licence acceptance,
+        # TABPFN_TOKEN for headless runs); the package reads TABPFN_MODEL_VERSION at import
+        version = params.pop("model_version", None)
+        if version:
+            os.environ["TABPFN_MODEL_VERSION"] = str(version)
+        from tabpfn import TabPFNRegressor
+        # the career matrix has ~12k training rows per horizon, past the model's advertised 10k; the
+        # KV-cache fit mode makes the two predictions per model (cohort, sigma holdout) cheap
+        params.setdefault("ignore_pretraining_limits", True)
+        params.setdefault("fit_mode", "fit_with_cache")
+        self.model = TabPFNRegressor(device=self.device, random_state=self.seed, **params)
+        self.model.fit(np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32))
+        return self
+
+    def predict(self, X):
+        return np.asarray(self.model.predict(np.asarray(X, dtype=np.float32)), dtype=float)
+
+
+class _Blend:
+    """Mean of several estimators' predictions (the xgb + tabpfn blend of the bake-off)."""
+
+    def __init__(self, members):
+        self.members = list(members)
+
+    def fit(self, X, y, sample_weight=None):
+        for m in self.members:
+            m.fit(X, y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X):
+        return np.mean([np.asarray(m.predict(X), dtype=float) for m in self.members], axis=0)
+
+
 class HorizonModels:
     """One (ppg, games) model pair per horizon. ``fit`` then ``predict``."""
 
     def __init__(self, horizons: Iterable[int], device: str = "cpu", seed: int = 0,
                  features: list[str] | None = None, calibrate: bool = False, holdout: int = 3,
                  quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84),
-                 target: str = "level", weight: str | None = None, **params):
+                 target: str = "level", weight: str | None = None,
+                 backend: str = "xgb", tabpfn_params: dict | None = None, **params):
         self.horizons = list(horizons)
         self.device = device
         self.seed = seed
+        # backend: "xgb" (production trees), "tabpfn" (pretrained tabular foundation model, in-context
+        # regression on the same frame and targets) or "blend" (mean of the two). The games and ppg
+        # models of every horizon use the same backend; quantile models stay xgboost.
+        if backend not in BACKENDS:
+            raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
+        self.backend, self.tabpfn_params = backend, dict(tabpfn_params or {})
         self.features = list(features) if features is not None else None   # None = FEATURES (production)
         # True / "both": ppg and games lines; "ppg": ppg only (games lines hurt: a least-squares line
         # through a 0-or-14 target pulls starters' games down); "games": games only; False: none
@@ -157,9 +214,21 @@ class HorizonModels:
         self.opp_models: dict[int, XGBRegressor] = {}
         self.eff_models: dict[int, XGBRegressor] = {}
 
-    def _new(self) -> XGBRegressor:
+    def _xgb(self) -> XGBRegressor:
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed,
                             n_jobs=-1, **self.params)
+
+    def _new(self):
+        if self.backend == "tabpfn":
+            return _TabPFN(self.device, self.seed, self.tabpfn_params)
+        if self.backend == "blend":
+            return _Blend([self._xgb(), _TabPFN(self.device, self.seed, self.tabpfn_params)])
+        return self._xgb()
+
+    def _kw(self) -> dict:
+        """Constructor arguments that a temporary (holdout) copy of these models must share."""
+        return dict(features=self.features, target=self.target, weight=self.weight,
+                    backend=self.backend, tabpfn_params=self.tabpfn_params, **self.params)
 
     def feature_frame(self, df: pl.DataFrame) -> pl.DataFrame:
         """The design matrix. Default: the production feature set (``horizon_feature_frame``).
@@ -245,7 +314,7 @@ class HorizonModels:
     def _fit_tier_adjust(self, train: pl.DataFrame, as_of_season: int | None, min_n: int = 15) -> None:
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - self.holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, target=self.target, weight=self.weight, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, **self._kw()).fit(train, as_of_season=cut)
         adj: dict[int, dict[tuple[str, str], float]] = {}
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
@@ -273,7 +342,7 @@ class HorizonModels:
         undoes that shrinkage where the holdout says it exists, position by position."""
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - self.holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, target=self.target, weight=self.weight, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, **self._kw()).fit(train, as_of_season=cut)
         cal: dict[int, dict[str, tuple]] = {}
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
@@ -320,7 +389,7 @@ class HorizonModels:
         """
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - holdout
-        tmp = HorizonModels(self.horizons, self.device, self.seed, features=self.features, **self.params).fit(train, as_of_season=cut)
+        tmp = HorizonModels(self.horizons, self.device, self.seed, **self._kw()).fit(train, as_of_season=cut)
         sigma: dict[int, dict[str, float]] = {}
         for k in self.horizons:
             rows = train.filter(

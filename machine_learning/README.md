@@ -168,12 +168,45 @@ cross-position scale; `--realized-replacement` scores against another yardstick.
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
 cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
 
+`--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts:
+`tabpfn` is TabPFN (a pretrained tabular foundation model doing in-context regression; use
+`--device cuda` and `--tabpfn-params model_version=v2 n_estimators=4`), `blend` averages the two.
+Setup, into `.venv`: `pip install --index-url https://download.pytorch.org/whl/cu126 torch` then
+`pip install tabpfn`. The v2 weights download freely; v2.5 / v3 / v3.5 need a one-time licence
+acceptance at https://ux.priorlabs.ai (`TABPFN_TOKEN=<api key>` for headless runs). At the career
+matrix's size (~12k rows per horizon) one fit-and-predict takes about a minute on an RTX 2060, so
+a full eight-cohort run is about 1.5 h; the KV-cache fit mode and the pretraining-limit override
+are set by default (`career._TabPFN`).
+
 Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
 the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,
 top-decile precision, and points MAE per horizon. Summaries append to
 `gs://fantasy-football-ml/dynasty-value/experiments/ledger.parquet` with the group list and git
 commit, so the leaderboard compares like for like (same horizon, same cohorts). A change to the
 production feature set is accepted only when it wins there.
+
+## Model vs market backtest — are we beating KTC, and where
+
+`scripts/market_backtest.py` scores each cohort the way a manager would have used the model: the
+career model is trained on seasons ≤ T, its projection of the next 1 / 2 / 3 seasons (in WAR) is
+set beside KTC's dynasty value the following February, and both are compared with the WAR the
+players then delivered. KTC is daily from 2020-04, so cohorts run 2020 to the last observable one
+(2022 at three years, 2024 at one). It reports rank agreement with realized WAR for the model and
+for KTC on the same priced players, the disagreement test (does our gap to the market predict the
+market's error), realized wins per 1,000 KTC of the players we called cheap vs rich, all of it by
+cohort, position, age band, experience and market tier, and a swap test: each February every
+player the model calls rich is paired with the closest-priced player it calls cheap (KTC within
+`--tol`, both at least `--min-gap` ranks of disagreement) and the realized WAR the swap gained is
+counted. `--backends xgb tabpfn` runs the bake-off on the same footing.
+
+```
+scripts/market_backtest.py --horizons 3 1 2 --backends xgb --replacement weekly --out <dir>
+scripts/market_backtest.py --horizons 3 --backends xgb tabpfn --device cuda --tabpfn-params model_version=v2 n_estimators=4 --out <dir>
+```
+
+Writes `players.parquet` (every priced player with ranks, calls and segments), `pairs.parquet`
+(the swaps) and `summary.json` (every table) to `--out`; it does not write to the lake or the
+ledger. Results are kept in `BACKLOG.md` item 23.
 
 ## Phase 2 — intrinsic value
 

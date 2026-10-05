@@ -207,3 +207,44 @@ class TestTargetAndWeights:
         with pytest.raises(ValueError):
             career.HorizonModels([1], weight="fpts")
 
+
+
+class TestBackend:
+    def test_backend_validation_and_blend(self):
+        import pytest
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], backend="torch")
+        m = career.HorizonModels([1], backend="tabpfn", tabpfn_params={"n_estimators": 4})
+        assert m.backend == "tabpfn" and m._kw()["tabpfn_params"] == {"n_estimators": 4}
+        from xgboost import XGBRegressor
+        assert isinstance(career.HorizonModels([1])._new(), XGBRegressor)
+        assert isinstance(career.HorizonModels([1], backend="blend")._new(), career._Blend)
+
+    def test_blend_averages_members(self):
+        class Const:
+            def __init__(self, c):
+                self.c = c
+            def fit(self, X, y, sample_weight=None):
+                return self
+            def predict(self, X):
+                return np.full(len(X), self.c)
+        b = career._Blend([Const(1.0), Const(3.0)]).fit(np.zeros((4, 2)), np.zeros(4))
+        assert b.predict(np.zeros((4, 2))).tolist() == [2.0] * 4
+
+    def test_tabpfn_wrapper_ignores_weights_and_sets_defaults(self, monkeypatch):
+        import sys, types
+        seen = {}
+        class Fake:
+            def __init__(self, **kw):
+                seen.update(kw)
+            def fit(self, X, y):
+                self.n = len(X); return self
+            def predict(self, X):
+                return np.ones(len(X)) * self.n
+        monkeypatch.setitem(sys.modules, "tabpfn", types.SimpleNamespace(TabPFNRegressor=Fake))
+        monkeypatch.delenv("TABPFN_MODEL_VERSION", raising=False)
+        t = career._TabPFN("cpu", 7, {"n_estimators": 4, "model_version": "v2"}).fit(np.zeros((5, 3)), np.zeros(5), sample_weight=np.ones(5))
+        assert t.predict(np.zeros((2, 3))).tolist() == [5.0, 5.0]
+        assert seen == {"device": "cpu", "random_state": 7, "n_estimators": 4, "ignore_pretraining_limits": True, "fit_mode": "fit_with_cache"}
+        import os
+        assert os.environ["TABPFN_MODEL_VERSION"] == "v2"

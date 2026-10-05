@@ -341,3 +341,108 @@ WAR, cohorts 2015–2022 (market-free). Current model 0.580.
 Net: the current model stands; the top-tier shrinkage (item 18) is real but none of the post-hoc
 fixes improved the held-out ordering. Next candidates are inputs, not corrections: opportunity /
 efficiency split (5), college production (17), and the in-season model's own tier bias.
+
+## Programme (2026-10-05): best model first, then rookies, then the leagues' trading
+The owner's order of work. Items 22–23 come first and run together (the bake-off is scored on
+the same backtest that answers "are we beating the market"); 24 after the winner is chosen; 25 last.
+
+22. **Model bake-off: TabPFN-3.5 (GPU) against the XGBoost career model.** The harness gets a
+    `--backend tabpfn` switch (`career.HorizonModels(backend=...)`): the same feature frame, the
+    same per-horizon games / ppg targets, the same walk-forward cohorts and the same WAR objective,
+    so the only thing that changes is the estimator (a pretrained tabular foundation model doing
+    in-context regression on the ~10–15k training rows per horizon, on the owner's RTX 2060).
+    Variants to score: TabPFN-3.5 default, TabPFN-3.5 with the residual target, and a blend
+    (average of the two models' ppg / games projections). Accept the winner on `spearman_war_top`
+    with the paired test (|t| > 2.4), as every other change. The pretrained weights need a one-time
+    PriorLabs licence acceptance (`TABPFN_TOKEN` for headless runs).
+
+23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
+    daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
+    season end vs KTC the following February", against what the players then delivered. Report
+    per cohort and per horizon (1 / 2 / 3 years so 2023–25 count too): rank agreement with realized
+    WAR for the model and for KTC on the same priced players, top-decile hit rate, and the
+    disagreement test (does our gap to the market predict the market's error); broken down by
+    position, age band, experience (rookies / years 1–2 / veterans) and market tier (top 24, 25–60,
+    61–120, rest). Then the money question as a trade simulation: each February, swap the players
+    the model calls rich for the ones it calls cheap at equal KTC, and count the realized WAR
+    gained; by segment, so the answer is "we win on 27–31-year-old QBs and lose on rookies", not
+    one number. Output: `scripts/market_backtest.py` + a Backtest tab on the page.
+    **Results, current model (xgb, weekly line), 2026-10-05.** Three years out, cohorts 2020–22
+    (366 priced players): rank agreement with realized WAR 0.685 for the model vs 0.678 for KTC —
+    a tie on ordering. The disagreements are where the value is: the third of players we liked
+    more than the market finished 11.9 ranks better than KTC had them, the third we liked less
+    9.5 ranks worse (edge corr 0.32); the cheap third returned 0.244 realized wins per 1,000 KTC
+    against 0.179 for the rich third. Swap test (63 pairs, equal KTC, ≥ 10 ranks of disagreement
+    on both sides): +0.42 wins per swap over three years, 68 % of swaps won, 26 wins in total
+    (the model had said +0.52). Two years out (2020–23, 586 players): 0.681 vs 0.671, 126 swaps
+    at +0.29 (58 %). One year out (2020–24, 857): 0.624 vs 0.612, 214 swaps at +0.19 mean but a
+    median of zero (49 % won): most one-year swaps are between players who both delivered
+    nothing, so the one-year edge is a few big hits. By cohort (3-yr): 2020 the market was better
+    (0.691 vs 0.724, swaps net zero, 91 priced players in KTC's first year); 2021 and 2022 ours
+    (0.681 vs 0.654 with +9.3 wins over 17 swaps, 88 % won; 0.684 vs 0.665 with +16.9 over 37,
+    60 %). **Where we win:** market ranks 25–60 (0.44 vs 0.32, edge 0.36) and 61–120 (tie on
+    ordering, swaps +0.39); veterans of four-plus years (swaps +0.43, 69 %) and buys aged 25–28
+    (+0.64, 79 %); RB buys (+0.84 per swap, 75 %) and WR buys (+0.37, 71 %); WR sells (+0.62,
+    70 %) and QB sells (+0.41, 83 %). **Where the market wins:** the top 24 (0.32 vs 0.36; the
+    market's top decile hit rate beat ours in 2020 and 2021, 0.44 / 0.42 vs 0.22 / 0.33, ours won
+    2022 0.44 vs 0.38), rookies (0.46 vs 0.51, edge 0.07; buying the rookies we liked won 19 % of
+    16 one-year swaps and 10 % of 10 two-year swaps), players under 25 (0.64 vs 0.69), QB
+    ordering (0.62 vs 0.67, though QB sells paid), and TE is a wash (0.53 vs 0.55, edge 0.04).
+    Reading: the model is not a better ranker than the market overall; it is a better judge of
+    established players in the middle of the market, and the market knows more than we do about
+    rookies and the top tier (resale value, role security: items 16, 17, 18). The one-year numbers
+    say the model's edge is a multi-year edge — it is right about careers more than about next season.
+
+24. **College and early-career players: overvalued by the market or misvalued by us.** Item 16 says
+    the market's rookies finished 13.7 ranks worse than priced and the model's rookie ranks were
+    off by 2.4, i.e. hypothesis A (the dynasty community overpays) on the evidence so far; but the
+    model only sees draft slot and a few games, so B (we misvalue them) is untested on inputs it
+    does not have. Make sure the data can answer it: (a) college production from CFBD through
+    nflverse draft ids (item 17b, a DE ingestion), (b) NFL draft capital, combine and age at draft
+    (nflverse draft_picks / combine, in the lake), (c) the resale-value test from item 16 (do
+    rookies hold price for a year regardless of production, which would make the premium rational
+    for a trader even if wrong about wins). Then re-run item 23's segments on rookies / year-2
+    players with the winning model.
+
+25. **The leagues' trading: who trades well, the worst trades ever, and where managers slip.**
+    From `fact_transactions` (trades with both sides' assets and the date) priced three ways:
+    KTC at the trade date (what the market said), the model's value at the trade date (walk-
+    forward, what we would have said) and realized WAR after the trade (what actually happened,
+    through the end of the window). Per manager: value given vs received on each basis, win rate,
+    best and worst deals; league-wide: the worst trades of all time by realized WAR swing, the
+    pattern of mistakes (in-season panic sells, paying for last month's form, pick fever, position
+    bias, trading with one partner); and the counterparties each manager loses to. Output: a
+    Trades tab (per-league leaderboard, trade log with the three prices, manager profiles).
+
+26. **Valuing the owner's own roster: bench players and the range of outcomes.** Suspicion: the
+    roster layer slightly undervalues bench players, and the cause may be that the projection is
+    collapsed to one number per player per year too early. Today a player's spread (`h{k}_ppg_sigma`,
+    one per position and horizon) enters only through the expected-excess-over-replacement
+    integral in `value.py`; the trade builder and the roster tables then take that expectation and
+    only draw availability (in / out by week), never the rate. A bench player's worth to a roster is
+    an option: he pays in the states where a starter is hurt or fades AND he is good, and those
+    states are correlated with his own upside (young players with wide spreads). Test, through the
+    roster layer: (a) carry the full distribution (quantile models, item 6, or empirical residual
+    draws by position × age × horizon) into the roster Monte Carlo so lineups are re-optimised over
+    rate draws as well as availability draws; (b) compare the roster's expected wins from the
+    distribution with the single-number version per bench player; (c) check against history:
+    did benches with more spread (young, high-sigma players) produce more realized starts and wins
+    than their point projections said, cohorts 2015–2024, using the leagues' own rosters where we
+    have them. Accept if the distributional roster value predicts realized team wins better than
+    the point version (item 14's acceptance test).
+
+27. **Neural / distributional models for the things trees cannot express (owner, 2026-10-05).**
+    The owner's hypothesis: features that failed as inputs to the trees (a team move, a depth-chart
+    change, a new quarterback) may matter as *spread* rather than *level* — a player who moved
+    teams has a wider range of next-season outcomes, and a point-regression tree can only shift his
+    mean. Item 12's test (the std of outcomes does not widen with a move, conditioned on playing
+    6+ games) argues against it, but that test was one slice, not a model. Two ways to let the
+    model say so: (a) TabPFN regression already returns a full predictive distribution per row (its
+    output is a histogram over the target), so the bake-off (item 22) can score the per-player
+    spread it implies against realized residuals — if a mover's distribution is wider, the feature
+    is doing exactly what the owner expects, for free; (b) a small heteroscedastic network (mean and
+    log-variance heads, Gaussian likelihood, the same frame) as a third bake-off entrant, scored on
+    the ordering (`spearman_war_top`) AND on calibration of the spread (coverage of 16–84 %
+    intervals by position / mover / rookie). Either feeds item 26 (range of outcomes in the roster
+    layer) and item 6 (player-specific uncertainty) with a spread that depends on the inputs rather
+    than one sigma per position.

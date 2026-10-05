@@ -52,6 +52,8 @@ class ExperimentConfig:
     fixed_scale: dict = field(default_factory=dict)   # position -> factor on value (iv / war / par), a fixed cross-position calibration to test
     target: str = "level"            # career.HorizonModels target: level | residual | opportunity
     weight: str | None = None        # career.HorizonModels relevance weights: None | ppg | ppg2
+    backend: str = "xgb"             # career.HorizonModels estimator: xgb | tabpfn | blend
+    tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
 def top_decile_precision(score: np.ndarray, realized: np.ndarray, frac: float = 0.1) -> float:
@@ -91,6 +93,7 @@ def position_scales(df: pl.DataFrame, models, rep: dict, H: list[int], T: int, c
     position's distribution under-count that position's PAR)."""
     cut = T - holdout
     tmp = career.HorizonModels(H, device=cfg.device, features=fg.feature_columns(fg.resolve(cfg.groups)), calibrate=cfg.calibrate,
+                               backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
                                quantile_sigma=cfg.quantile_sigma, target=cfg.target, weight=cfg.weight, **cfg.params).fit(df, as_of_season=cut)
     tmp.estimate_sigma(df, as_of_season=cut)
     out = {}
@@ -120,10 +123,13 @@ def run_experiment(
     rep_for: Callable[[int], dict[str, float]],
     market_for: Callable[[pl.DataFrame, int], pl.DataFrame],
     realized_rep_for: Callable[[int], dict[str, float]] | None = None,
+    collect: list | None = None,
 ) -> tuple[pl.DataFrame, dict]:
     """``matrix`` is the career matrix (``career.build_career_matrix``) for the configured horizons;
     ``rep_for(T)`` gives replacement ppg as of T; ``market_for(cohort, T)`` attaches ``ktc_value``.
-    ``realized_rep_for`` scores realized value / WAR on another replacement level (default: the same)."""
+    ``realized_rep_for`` scores realized value / WAR on another replacement level (default: the same).
+    ``collect`` (a list) receives every scored cohort frame (projection, market, realized per player)
+    for analyses beyond the ledger's metrics, e.g. the market backtest."""
     groups = fg.resolve(cfg.groups)
     cols = fg.feature_columns(groups)
     df = fg.assemble(matrix, groups, ctx)
@@ -133,7 +139,8 @@ def run_experiment(
         rep = rep_for(T)
         rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
-                                      target=cfg.target, weight=cfg.weight, **cfg.params).fit(df, as_of_season=T)
+                                      target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
+                                      **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
         cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
@@ -152,6 +159,8 @@ def run_experiment(
             sc = pl.col("position").replace_strict({k: float(v) for k, v in cfg.fixed_scale.items()}, default=1.0, return_dtype=pl.Float64)
             cohort = cohort.with_columns((pl.col("iv") * sc).alias("iv"), (pl.col("war") * sc).alias("war"), (pl.col("par") * sc).alias("par"))
         cohort = market_for(cohort, T)
+        if collect is not None:
+            collect.append(cohort.with_columns(pl.lit(T).alias("cohort"), pl.lit(cfg.name).alias("variant")))
         obs = cohort.filter(pl.col("realized_iv").is_not_null())
         priced = obs.filter(pl.col("ktc_value").is_not_null())
         row = {"name": cfg.name, "cohort": T, "n_all": obs.height, "n_priced": priced.height}
@@ -211,6 +220,7 @@ def run_experiment(
                "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "target": cfg.target, "weight": cfg.weight or "",
+               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else ""),
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -220,7 +230,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "backend", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players
