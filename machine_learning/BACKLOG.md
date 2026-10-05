@@ -468,8 +468,15 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     after 4 / 8 / 12 weeks vs 32 % for Mid-for-everyone. The page's Draft slots tab shows every
     current team's outlook and the tables. Pick prices now come from every KTC source in the lake
     (the silver fact had no 2023 picks after 2022-05 and no 2025 picks after 2024-08), with a
-    same-distance-to-draft fallback across seasons. Open: an ordered regression for the preseason
-    prior (roster value + returning record); XGBoost only if it beats that out of sample. 298 completed trades,
+    same-distance-to-draft fallback across seasons. **Slot curve (owner, 2026-10-05: "the 1.01 is
+    worth way more than the 1.12"):** KTC's tier prices flatten the round, so the value of each
+    slot comes from what the player taken there was worth on KTC a month after the draft, over
+    586k crawl rookie picks: 1.01 ≈ 1.46× the round mean, 1.12 ≈ 0.80× (1.8× apart), 2.01 above a
+    late 1st. A pick is priced as the round's level that day × the expected curve value over the
+    team's slot distribution (twelfths), so after week 3 of 2026 a 0–3 team's 2027 1st reads 7.3k
+    against 5.2k for a 3–0 team's, where the tier version had 6.7k vs 5.3k. Open: an ordered
+    regression for the preseason prior (roster value + returning record); XGBoost only if it
+    beats that out of sample; a layout for three-team trades. 298 completed trades,
     932 asset legs (519 players, 492 priced at the trade date; 413 picks, 297 priced, 277 resolved
     to the rookie taken), 454 trade sides at least a season old. Stuck in High School is the
     trading league (245 of the 298). Scorecards (net wins delivered since, trades ≥ 1 season old):

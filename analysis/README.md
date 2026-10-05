@@ -61,8 +61,15 @@ league leader. `pick_slots.build_standings` turns the 10,000-league crawl's week
 (`bronze/sleeper_crawl/history/matchups`, 26,769 league-seasons, 2017–2025) into cumulative
 records by week and the final regular-season rank; `tier_table` is the empirical
 P(Early / Mid / Late third of the draft order | weeks played, record fifth, points-for fifth),
-`prior_table` the same given last season's finish (the preseason prior). No fitting: the table is
-the model, with the expected slot alongside. `trades.SlotContext` applies it at any trade date
+`prior_table` the same given last season's finish (the preseason prior); `slot_table` /
+`slot_prior` the full distribution over twelfths of the order. No fitting: the table is the
+model, with the expected slot alongside. `slot_curve` is the market's value of each slot: the
+median KTC value of the player taken there a month after the draft, over 586k picks in the
+crawl's rookie drafts (2021–2025), relative to the round's mean (1.01 ≈ 1.46×, 1.12 ≈ 0.80×, so
+the top pick is 1.8 times the last pick of the round; a 2.01 is worth more than a late 1st). KTC
+itself only prices individual slots once the order is set, so a pick's value at any date is the
+round's price level that day (the mean of KTC's Early / Mid / Late prices) times the expected
+curve value over the team's slot distribution — a known slot takes its own curve value. `trades.SlotContext` applies it at any trade date
 from our leagues' standings (the crawl for past seasons, Sleeper's daily `team_state` snapshots
 for the season in progress). Calibration on our own leagues' seasons: the table names the right
 third 59 / 72 / 81 % of the time after 4 / 8 / 12 weeks (44 % from the preseason prior) against
