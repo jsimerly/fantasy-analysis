@@ -51,6 +51,10 @@ TX = "bronze/sleeper/transactions/transactions"
 TX_PLAYERS = "bronze/sleeper/transactions/transaction_players"
 TX_PICKS = "bronze/sleeper/transactions/draft_picks"
 POS = ["QB", "RB", "WR", "TE"]
+# trades the owner asked to drop from every table (transaction_id -> why)
+EXCLUDED_TRANSACTIONS = {
+    "948106660671827968": "2023-04-02 Stuck, Simerly-Becker: a joke trade (owner, 2026-10-05)",
+}
 HORIZONS = (0, 1, 2, 3)          # years after the trade at which the packages are re-priced
 TOLERANCE_DAYS = 90              # a value is "at" a date if KTC priced the asset within this many days before it
 
@@ -104,6 +108,7 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
     meta = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").select(
         "league_id", "league_name", pl.col("season").cast(pl.Int64), "league_lineage_id")
     tx = _both(TX).unique("transaction_id").filter((pl.col("type") == "trade") & (pl.col("status") == "complete"))
+    tx = tx.filter(~pl.col("transaction_id").is_in(list(EXCLUDED_TRANSACTIONS)))
     tx = tx.with_columns(pl.from_epoch(pl.col("created") // 1000, time_unit="s").dt.date().alias("date"))
     tx = tx.join(meta, on="league_id", how="inner")
     tx = tx.with_columns(pl.col("roster_ids").map_elements(_ids, return_dtype=pl.List(pl.Int64)).alias("rosters"))
