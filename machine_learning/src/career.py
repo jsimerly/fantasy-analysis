@@ -569,8 +569,17 @@ class AgeSurvival:
     model is over-optimistic (it is ~15 games for anyone under 30).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tiered: bool = False) -> None:
+        # tiered: a curve per (position, prior tier) as well: an elite 31-year-old is held to the elite
+        # 31-year-olds' continuation odds, not the roster filler's (the good ones last longer, and the data says so)
         self.coef: dict[str, tuple[float, float]] = {}      # position -> (intercept, slope on age)
+        self.tier_coef: dict[tuple[str, str], tuple[float, float]] = {}
+        self.tiered = tiered
+
+    @staticmethod
+    def tier_expr() -> pl.Expr:
+        ppg, games = pl.col("ppg").fill_null(0.0), pl.col("games").fill_null(0)
+        return pl.when((ppg >= 12) & (games >= 10)).then(pl.lit("starter")).when((ppg >= 8) & (games >= 8)).then(pl.lit("mid")).otherwise(pl.lit("fringe"))
 
     def fit(self, season_df: pl.DataFrame) -> "AgeSurvival":
         from sklearn.linear_model import LogisticRegression
@@ -582,20 +591,30 @@ class AgeSurvival:
                 continue
             lr = LogisticRegression().fit(sub[["age_at_season"]].to_numpy(), sub["h1_played"].to_numpy().astype(int))
             self.coef[pos] = (float(lr.intercept_[0]), float(lr.coef_[0][0]))
+        if self.tiered:
+            rows = rows.with_columns(self.tier_expr().alias("_tier"))
+            for (pos, tier), sub in rows.group_by(["position", "_tier"]):
+                if sub.height < 50 or sub["h1_played"].n_unique() < 2:
+                    continue
+                lr = LogisticRegression().fit(sub[["age_at_season"]].to_numpy(), sub["h1_played"].to_numpy().astype(int))
+                self.tier_coef[(str(pos), str(tier))] = (float(lr.intercept_[0]), float(lr.coef_[0][0]))
         return self
 
-    def p_next(self, position: str, age: np.ndarray) -> np.ndarray:
-        if position not in self.coef:
+    def p_next(self, position: str, age: np.ndarray, tier: str | None = None) -> np.ndarray:
+        c = self.tier_coef.get((position, tier)) if tier is not None else None
+        if c is None:
+            c = self.coef.get(position)
+        if c is None:
             return np.ones_like(np.asarray(age, float))
-        b0, b1 = self.coef[position]
+        b0, b1 = c
         return 1.0 / (1.0 + np.exp(-(b0 + b1 * np.asarray(age, float))))
 
-    def survival(self, position: str, age: np.ndarray, k: int) -> np.ndarray:
+    def survival(self, position: str, age: np.ndarray, k: int, tier: str | None = None) -> np.ndarray:
         """P(plays in season age+k | plays now) = product of the yearly continuation odds."""
         age = np.asarray(age, float)
         s = np.ones_like(age)
         for j in range(k):
-            s = s * self.p_next(position, age + j)
+            s = s * self.p_next(position, age + j, tier)
         return s
 
     def cap_games(self, df: pl.DataFrame, horizons: Iterable[int], age_col: str = "age_at_season",
@@ -615,9 +634,15 @@ class AgeSurvival:
             if name not in df.columns:
                 continue
             cap = np.full(df.height, float(MAX_GAMES))
+            tiers = df.select(self.tier_expr().alias("_t"))["_t"].to_numpy() if (self.tiered and "ppg" in df.columns) else None
             for p in np.unique(pos):
                 m = pos == p
-                cap[m] = MAX_GAMES * self.survival(str(p), age[m], k)
+                if tiers is None:
+                    cap[m] = MAX_GAMES * self.survival(str(p), age[m], k)
+                else:
+                    for t_ in np.unique(tiers[m]):
+                        mm = m & (tiers == t_)
+                        cap[mm] = MAX_GAMES * self.survival(str(p), age[mm], k, str(t_))
             if min_age is not None:
                 cap = np.where(age >= min_age, cap, float(MAX_GAMES))
             cols.append(pl.Series(name, np.minimum(df[name].to_numpy().astype(float), cap)))

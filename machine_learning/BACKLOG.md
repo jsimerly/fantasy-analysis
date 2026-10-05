@@ -499,7 +499,18 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     vs 0.704, t = 2.7) while shrinking the top even less (bias 0.094 / 0.104). So the survival prior
     stays, as a prior for the ages beyond the data's reach only; a cap from 33 instead of 30 is the
     untested refinement (30+ starters uncapped: 9.2 / 8.0 / 6.5 at years 3–5 vs 9.1 / 6.5 / 4.9
-    real; capped from 30: 5.6 / 3.8 / 2.5). (2) The college data build is in:
+    real; capped from 30: 5.6 / 3.8 / 2.5).
+    **Tier-aware survival (owner: "an elite WR is more likely to play to 35 than a bad one"), tested
+    2026-10-05.** True in the data and already in the games model (30+ starters uncapped 12.8 /
+    11.0 / 9.2 / 8.0 / 6.5 games vs 30+ mid 9.7 / 6.3 / 4.1 / 2.5 / 1.7; real 12.7 / 11.0 / 9.1 /
+    6.5 / 4.9 vs 8.4 / 6.2 / 3.7 / 2.3 / 1.0); the cap was the tier-blind part. Continuation odds
+    fitted per (position, prior tier) and applied from 30 (`--cap 30+t`): 30–32 starters now
+    12.9 / 11.3 / 9.6 / 7.9 / 6.4 vs 12.6 / 11.5 / 9.9 / 7.9 / 6.4 real, mid and fringe within a
+    game; 33+ starters still too flat at years 4–5 (8.0 / 6.6 vs 5.1 / 3.4; n = 43). Harness vs
+    the plain cap from 30: top-150 equal (0.605 vs 0.607 at 3 yr, 0.606 vs 0.609 at 5 yr), top
+    decile a touch lower (0.684 vs 0.692; 0.692 vs 0.704, t = 2.0), top-12 bias 0.091 vs 0.135
+    and 0.087 vs 0.162 (t = 8, every cohort). Next: tiered from 30 with the population curve
+    taking over from 34 (`30+t34`), to fix the oldest group without losing the rest. (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best

@@ -144,9 +144,9 @@ def run_experiment(
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
                                       stacked=cfg.stacked, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
-        survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
+        survival = career.AgeSurvival(tiered=str(cfg.cap).endswith("t")).fit(df.filter((pl.col("season") + 1) <= T))
         pred = models.predict(df.filter(pl.col("season") == T))
-        cap = str(cfg.cap)
+        cap = str(cfg.cap).rstrip("t")            # "30+t": tiered survival curves, cap from 30
         if cap == "none":
             cohort = pred
         elif cap.endswith("+"):
