@@ -175,8 +175,13 @@ class HorizonModels:
                  features: list[str] | None = None, calibrate: bool = False, holdout: int = 3,
                  quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84),
                  target: str = "level", weight: str | None = None,
-                 backend: str = "xgb", tabpfn_params: dict | None = None, **params):
+                 backend: str = "xgb", tabpfn_params: dict | None = None, stacked: bool = False, **params):
         self.horizons = list(horizons)
+        # stacked: every horizon's training rows in one frame with "years ahead" (and age + years ahead)
+        # as features, one games model and one ppg model for all horizons; the decay over time is then
+        # learnt from the features jointly instead of per horizon (each horizon's model hedging on its own)
+        self.stacked = stacked
+        self.stacked_models: dict[str, object] = {}
         self.device = device
         self.seed = seed
         # backend: "xgb" (production trees), "tabpfn" (pretrained tabular foundation model, in-context
@@ -243,7 +248,7 @@ class HorizonModels:
     def _kw(self) -> dict:
         """Constructor arguments that a temporary (holdout) copy of these models must share."""
         return dict(features=self.features, target=self.target, weight=self.weight,
-                    backend=self.backend, tabpfn_params=self.tabpfn_params,
+                    backend=self.backend, tabpfn_params=self.tabpfn_params, stacked=self.stacked,
                     calibrate=(f"games_table:{self.games_scope}:{self.games_weight}" if self.calibrate == "games_table" else False), **self.params)
 
     def feature_frame(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -265,9 +270,45 @@ class HorizonModels:
                 cols.append(pl.Series(c, [None] * df.height, dtype=pl.Float64))
         return pl.DataFrame(cols)
 
+    def _stack_X(self, df: pl.DataFrame, k: int) -> np.ndarray:
+        X = self.feature_frame(df).to_numpy()
+        age = df["age_at_season"].cast(pl.Float64, strict=False).fill_null(27.0).to_numpy().astype(float) if "age_at_season" in df.columns else np.full(df.height, 27.0)
+        return np.column_stack([X, np.full(df.height, float(k)), age + k])
+
+    def _fit_stacked(self, train: pl.DataFrame, as_of_season: int | None) -> None:
+        Xg, yg, wg, Xp, yp, wp = [], [], [], [], [], []
+        for k in self.horizons:
+            rows = train.filter(pl.col(f"h{k}_observable"))
+            if as_of_season is not None:
+                rows = rows.filter((pl.col("season") + k) <= as_of_season)
+            played = rows.filter(pl.col(f"h{k}_played"))
+            if rows.height == 0 or played.height == 0:
+                raise ValueError(f"horizon {k}: no observable training outcomes (as_of={as_of_season})")
+            Xg.append(self._stack_X(rows, k)); yg.append(rows[f"h{k}_games"].to_numpy().astype(float))
+            w = self._weights(rows); wg.append(w if w is not None else np.ones(rows.height))
+            y = played[f"h{k}_ppg"].to_numpy().astype(float)
+            if self.target == "residual":
+                y = y - played["ppg"].fill_null(0.0).to_numpy().astype(float)
+            Xp.append(self._stack_X(played, k)); yp.append(y)
+            w = self._weights(played); wp.append(w if w is not None else np.ones(played.height))
+        g = self._new().fit(np.vstack(Xg), np.concatenate(yg), sample_weight=np.concatenate(wg) if self.weight else None)
+        p = self._new().fit(np.vstack(Xp), np.concatenate(yp), sample_weight=np.concatenate(wp) if self.weight else None)
+        self.stacked_models = {"games": g, "ppg": p}
+        for k in self.horizons:                      # the per-horizon slots point at the shared models
+            self.games_models[k], self.ppg_models[k] = g, p
+
     def fit(self, train: pl.DataFrame, as_of_season: int | None = None) -> "HorizonModels":
         """Train every horizon. ``as_of_season`` restricts outcomes to those observed by the end
         of that season (row season + k <= as_of): the leak-safe way to train "as of" a past year."""
+        if self.stacked:
+            self._fit_stacked(train, as_of_season)
+            if self.calibrate == "tier":
+                self._fit_tier_adjust(train, as_of_season)
+            elif self.calibrate == "games_table":
+                self._fit_games_table(train, as_of_season)
+            elif self.calibrate:
+                self._fit_calibration(train, as_of_season)
+            return self
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable"))
             if as_of_season is not None:
@@ -355,6 +396,11 @@ class HorizonModels:
         return w * w if self.weight == "ppg2" else w
 
     def _ppg_hat(self, k: int, X: np.ndarray, df: pl.DataFrame) -> np.ndarray:
+        if self.stacked:
+            raw = self.stacked_models["ppg"].predict(self._stack_X(df, k))
+            if self.target == "residual":
+                raw = raw + df["ppg"].fill_null(0.0).to_numpy().astype(float)
+            return np.clip(raw, 0.0, None)
         if self.target == "opportunity" and k in self.opp_models:
             return np.clip(self.opp_models[k].predict(X), 0.0, None) * np.clip(self.eff_models[k].predict(X), 0.0, None)
         raw = self.ppg_models[k].predict(X)
@@ -471,7 +517,7 @@ class HorizonModels:
         cols = []
         sigma = getattr(self, "sigma", None)
         for k in self.horizons:
-            games = np.clip(self.games_models[k].predict(X), 0.0, MAX_GAMES)
+            games = np.clip((self.stacked_models["games"].predict(self._stack_X(df, k)) if self.stacked else self.games_models[k].predict(X)), 0.0, MAX_GAMES)
             ppg = self._ppg_hat(k, X, df)
             if self.games_table:
                 games = self._apply_games_table(df, k, games)
@@ -553,8 +599,14 @@ class AgeSurvival:
         return s
 
     def cap_games(self, df: pl.DataFrame, horizons: Iterable[int], age_col: str = "age_at_season",
-                  col: str = "h{k}_games_hat") -> pl.DataFrame:
-        """Cap each horizon's projected games at MAX_GAMES x survival (per row's position/age)."""
+                  col: str = "h{k}_games_hat", min_age: float | None = None) -> pl.DataFrame:
+        """Cap each horizon's projected games at MAX_GAMES x survival (per row's position/age).
+
+        The survival curve is the population's yearly continuation odds (every player, fringe
+        included: ~0.8 a year at 23), so an unconditional cap binds on young starters from year two
+        (0.8^3 x 17 = 8 games at year three for players who actually play 11). ``min_age`` applies
+        the cap only from that age, where the games model has little data and survivorship is the
+        real question; None keeps the historical behaviour (every row)."""
         cols = []
         pos = df["position"].to_numpy()
         age = df[age_col].fill_null(27.0).to_numpy().astype(float)
@@ -562,10 +614,12 @@ class AgeSurvival:
             name = col.format(k=k)
             if name not in df.columns:
                 continue
-            cap = np.empty(df.height)
+            cap = np.full(df.height, float(MAX_GAMES))
             for p in np.unique(pos):
                 m = pos == p
                 cap[m] = MAX_GAMES * self.survival(str(p), age[m], k)
+            if min_age is not None:
+                cap = np.where(age >= min_age, cap, float(MAX_GAMES))
             cols.append(pl.Series(name, np.minimum(df[name].to_numpy().astype(float), cap)))
         return df.with_columns(cols)
 

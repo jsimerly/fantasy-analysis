@@ -53,6 +53,8 @@ class ExperimentConfig:
     target: str = "level"            # career.HorizonModels target: level | residual | opportunity
     weight: str | None = None        # career.HorizonModels relevance weights: None | ppg | ppg2
     backend: str = "xgb"             # career.HorizonModels estimator: xgb | tabpfn | blend
+    stacked: bool = False            # one games / ppg model over all horizons with years-ahead as a feature
+    cap: str = "30+"                 # age-survival cap on projected games: "30+" (from that age, production) | all (every row, pre-2026-10-05) | none
     tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
@@ -140,10 +142,17 @@ def run_experiment(
         rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
-                                      **cfg.params).fit(df, as_of_season=T)
+                                      stacked=cfg.stacked, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         survival = career.AgeSurvival().fit(df.filter((pl.col("season") + 1) <= T))
-        cohort = survival.cap_games(models.predict(df.filter(pl.col("season") == T)), H)
+        pred = models.predict(df.filter(pl.col("season") == T))
+        cap = str(cfg.cap)
+        if cap == "none":
+            cohort = pred
+        elif cap.endswith("+"):
+            cohort = survival.cap_games(pred, H, min_age=float(cap[:-1]))
+        else:
+            cohort = survival.cap_games(pred, H)
         cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep_real, H, cfg.discount_rate)
         # the same thing in wins: projected WAR and realized WAR on the league's curve
         import war as _war
@@ -220,7 +229,7 @@ def run_experiment(
                "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "target": cfg.target, "weight": cfg.weight or "",
-               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else ""),
+               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else ""),
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())

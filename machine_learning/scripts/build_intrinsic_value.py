@@ -43,6 +43,7 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
+    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games: 30+ (default) | all | none")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
@@ -72,7 +73,9 @@ def main() -> None:
           {k: round(v["__all__"], 2) for k, v in sigma.items()})
     current = df.filter(pl.col("season") == last)
     survival = career.AgeSurvival().fit(df.filter(pl.col("season") < last))
-    pred = survival.cap_games(models.predict(current), H)            # population age prior on availability
+    pred = models.predict(current)
+    if args.cap != "none":                                            # population age prior on availability, from age 30 by default
+        pred = survival.cap_games(pred, H, min_age=float(args.cap[:-1]) if args.cap.endswith("+") else None)
     pred = pred.with_columns([(pl.col(f"h{k}_games_hat") * pl.col(f"h{k}_ppg_hat")).alias(f"h{k}_fpts_hat") for k in H])
     proj = value.intrinsic_value(pred, rep, H, args.discount_rate)
     proj = market.attach_market(proj, today)

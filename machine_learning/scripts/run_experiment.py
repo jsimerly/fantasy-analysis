@@ -117,6 +117,8 @@ def main() -> None:
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb",
                     help="estimator: xgb (production trees), tabpfn (TabPFN foundation model, use --device cuda) or blend (mean of both)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. n_estimators=4")
+    ap.add_argument("--stacked", action="store_true", help="one games / ppg model over all horizons, years-ahead as a feature (instead of one pair per horizon)")
+    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games: 30+ (default, as production) | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
     ap.add_argument("--calibrate", nargs="?", const="both", default=False,
                     help="walk-forward recalibration: both (default when given) | ppg | games | tier | games_table[:all|tiers[:weight]] (empirical games by position x age x tier; tiers = starters and mid only; weight = the table's share of a blend)")
@@ -180,7 +182,7 @@ def main() -> None:
                                   params=params, calibrate=args.calibrate, quantile_sigma=args.quantile_sigma, curve=curve,
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
-                                  target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params)
+                                  target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):

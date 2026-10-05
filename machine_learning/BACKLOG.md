@@ -473,9 +473,23 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     best players is also shrunk (item 18): more games × an excess near zero is still near zero,
     so games and ppg tails need fixing together. Standing: directionally right on every test,
     never past the line; adoption is the owner's call (the measured gap itself is not in doubt).
-    Production note: the
-    in-season rookie tail is extrapolated from the career tails of young players with a history, so
-    a games correction to the career model lifts rookies through that ratio automatically. (2) The college data build is in:
+    **Resolved 2026-10-05: it was the age-survival cap, not the games model.** A pooled model with
+    years-ahead as a feature (`--stacked`) scored exactly the current 0.603 and produced the same
+    tail, which pointed past the model: `AgeSurvival.cap_games` multiplied every projection by the
+    population's yearly continuation odds (~0.8 at 23, fringe included), so a 23-year-old starter's
+    12.6 / 11.7 / 11.0 / 10.6 / 8.6 projected games became 12.6 / 10.4 / 8.0 / 6.1 / 4.5. Without
+    the cap the games model alone is right for every tier and age (starters < 24: 12.8 / 12.0 /
+    11.3 / 10.5 / 9.3 vs 13.1 / 12.0 / 11.5 / 11.1 / 10.2 real; fringe matches to a tenth); only
+    30+ starters need it (model 12.8 / 11.0 / 9.2 / 8.0 / 6.5 vs 12.7 / 11.0 / 9.1 / 6.5 / 4.9).
+    Harness, cap only from age 30 (`--cap 30+`) vs the old cap: 3 yr 0.607 vs 0.603 (t = 1.1),
+    top decile 0.692 vs 0.686, top-12 bias 0.135 vs 0.302 wins (t = 23, 8 of 8); 5 yr 0.609 vs
+    0.601 (t = 1.6, 5 of 6), top decile 0.704 vs 0.690 (6 of 6), top-12 bias 0.162 vs 0.446
+    (t = 21), wins MAE 0.660 vs 0.645 (t = −1.3). No cap at all is similar with a worse MAE.
+    **Adopted:** the cap applies from age 30 in the career model, the in-season tail and the
+    next-season games (`--cap`, default `30+`, in `backtest_inseason.py`, `build_intrinsic_value.py`,
+    `weekly_refresh.py`, the harness). The games table (above) is superseded; the ppg tail for the
+    best players (item 18) is now the remaining shrinkage. The rookie tail is extrapolated from
+    young players' career tails, so rookies rise with this automatically. (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best
