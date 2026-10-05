@@ -489,7 +489,17 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     next-season games (`--cap`, default `30+`, in `backtest_inseason.py`, `build_intrinsic_value.py`,
     `weekly_refresh.py`, the harness). The games table (above) is superseded; the ppg tail for the
     best players (item 18) is now the remaining shrinkage. The rookie tail is extrapolated from
-    young players' career tails, so rookies rise with this automatically. (2) The college data build is in:
+    young players' career tails, so rookies rise with this automatically.
+    **Why a post-processing cap at all (owner's question):** the in-model version — the pooled model
+    with years-ahead and age + years-ahead as features, no cap — learns the decline to age 32 on its
+    own (30–32 starters: 12.6 / 11.3 / 9.4 / 7.5 / 6.7 games vs 12.6 / 11.5 / 9.9 / 7.9 / 6.4 real)
+    but extrapolates flat past 33 (8.9 / 7.5 / 6.7 vs 8.2 / 5.1 / 3.4), because the training data
+    has too few 33-year-olds who became 37; and it scores below the capped per-horizon model (3 yr
+    0.593 vs 0.607, top decile 0.673 vs 0.692 with t = 2.3; 5 yr 0.604 vs 0.609, top decile 0.675
+    vs 0.704, t = 2.7) while shrinking the top even less (bias 0.094 / 0.104). So the survival prior
+    stays, as a prior for the ages beyond the data's reach only; a cap from 33 instead of 30 is the
+    untested refinement (30+ starters uncapped: 9.2 / 8.0 / 6.5 at years 3–5 vs 9.1 / 6.5 / 4.9
+    real; capped from 30: 5.6 / 3.8 / 2.5). (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best
