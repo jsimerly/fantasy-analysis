@@ -131,8 +131,8 @@ def main() -> None:
                 .filter(pl.col("roster_id") != pl.col("r2")).group_by(["transaction_id", "roster_id"]).agg(pl.col("m2").sort().str.join(" & ").alias("partners")))
     log_cols = (["transaction_id", "league_name", "season", "date", "leg", "in_season", "n_teams", "roster_id", "manager", "partners", "recv_assets", "give_assets",
                  "recv_n", "give_n", "recv_picks", "give_picks", "recv_v0_sum", "give_v0_sum", "fair_v0"]
-                + [f"{s}_{c}" for c in H for s in ("recv", "give")] + ["recv_wins", "give_wins", "seasons_since"])
-    log = tt.join(partners, on=["transaction_id", "roster_id"], how="left").select([c for c in log_cols if c in tt.columns or c == "partners"])
+                + [f"{s}_{c}" for c in H for s in ("recv", "give")] + [f"{s}_{c}_sum" for c in H for s in ("recv", "give")] + ["recv_wins", "give_wins", "seasons_since"])
+    log = tt.join(partners, on=["transaction_id", "roster_id"], how="left").select([c for c in dict.fromkeys(log_cols) if c in tt.columns or c == "partners"])
     log = log.with_columns([pl.col(c).round(3) for c, d in zip(log.columns, log.dtypes) if d == pl.Float64])
     summary = {"managers": managers.to_dicts(), "worst": worst.to_dicts(), "best": best.to_dicts(), **{k: v.to_dicts() for k, v in pat.items()},
                "trade_log": log.sort("date", descending=True).to_dicts(),
