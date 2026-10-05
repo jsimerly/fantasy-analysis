@@ -168,7 +168,11 @@ cross-position scale; `--realized-replacement` scores against another yardstick.
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
 cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
 
-`--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts:
+`--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts (the same
+flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks
+the production career model; since 2026-10-05 the in-season refresh runs locally on
+`--backend tabpfn --tabpfn-params model_version=v2 --device cuda`, the Cloud Run job stays on
+`xgb`, and the written projections carry `career_backend`):
 `tabpfn` is TabPFN (a pretrained tabular foundation model doing in-context regression; use
 `--device cuda` and `--tabpfn-params model_version=v2 n_estimators=4`), `blend` averages the two.
 Setup, into `.venv`: `pip install --index-url https://download.pytorch.org/whl/cu126 torch` then

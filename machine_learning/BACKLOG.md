@@ -387,7 +387,15 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     TabPFN on its own. Market backtest 2020–22 (3 yr) for the three: rank agreement 0.709 TabPFN /
     0.700 blend / 0.685 trees (KTC 0.678); swaps +0.53 (67 % won) / +0.53 (72 %) / +0.42 (68 %);
     at the market's top 24 TabPFN 0.432, blend 0.386, trees 0.321 vs KTC 0.358. Same order on
-    every slice: TabPFN ≥ blend > trees. Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
+    every slice: TabPFN ≥ blend > trees. **Adopted for production on the owner's call (2026-10-05):**
+    the in-season refresh's multi-year tail (`backtest_inseason.py --current --backend tabpfn
+    --tabpfn-params model_version=v2 --device cuda`, via `weekly_refresh.py --backend tabpfn`) runs on
+    TabPFN v2; the in-season model itself (ROS / next season) stays xgboost, untested with TabPFN.
+    The paired test on the primary metric was not significant (t = 0.8), the owner accepted the
+    secondary and market-backtest evidence. Operational consequence: TabPFN needs a GPU, so the
+    Cloud Run weekly job (CPU, no torch in the image) keeps `xgb`; the TabPFN-backed refresh is a
+    local run that writes the same ML-bucket paths, and the page header names the career model
+    that produced each export (`career_backend`). Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
     licence login is a one-time step there, `TABPFN_TOKEN` for headless runs);
     whichever passes the paired test on `spearman_war_top` becomes production. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
