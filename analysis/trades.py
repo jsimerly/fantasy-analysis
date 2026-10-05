@@ -320,8 +320,12 @@ class SlotContext:
     progress), the week calendar, and (lineage, season) -> league id."""
 
     def __init__(self):
-        self.table = pl.read_parquet(pick_slots.CACHE / "pick_tier_table.parquet") if (pick_slots.CACHE / "pick_tier_table.parquet").exists() else None
-        self.prior = pl.read_parquet(pick_slots.CACHE / "pick_prior_table.parquet") if (pick_slots.CACHE / "pick_prior_table.parquet").exists() else None
+        rd = lambda n: pl.read_parquet(pick_slots.CACHE / n) if (pick_slots.CACHE / n).exists() else None   # noqa: E731
+        self.table, self.prior = rd("pick_tier_table.parquet"), rd("pick_prior_table.parquet")
+        self.slots, self.slot_prior_t = rd("pick_slot_table.parquet"), rd("pick_slot_prior.parquet")
+        curve = rd("pick_slot_curve.parquet")
+        # the market's slot curve: value of a slot relative to its round's mean (1.01 ~ 1.46, 1.12 ~ 0.80)
+        self.curve = {(int(r["round"]), int(r["bin"])): float(r["rel"]) for r in curve.iter_rows(named=True)} if curve is not None else {}
         meta = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").select("league_id", pl.col("season").cast(pl.Int64), "league_lineage_id", pl.col("total_rosters").cast(pl.Int64))
         self.league_of = {(r["league_lineage_id"], r["season"]): (r["league_id"], r["total_rosters"]) for r in meta.iter_rows(named=True)}
         ours = set(meta["league_id"].to_list())
@@ -341,6 +345,49 @@ class SlotContext:
 
     def played_by(self, season: int, d: date) -> int:
         return sum(1 for (s, w), end in self.weeks.items() if s == season and end is not None and end < d)
+
+    def rel(self, rnd: int, b: int) -> float:
+        return self.curve.get((int(rnd), int(b)), 1.0)
+
+    def slot_dist(self, lineage: str, pick_season: int, pick_orig: int, at: date) -> list[float] | None:
+        """P(slot twelfth 1..12) for the original team's pick as of ``at``, from its standing (or last
+        season's finish before week 1); None = no view."""
+        if self.slots is None:
+            return None
+        row, prev_rank, teams = self._standing(lineage, pick_season, pick_orig, at)
+        if row is not None:
+            return pick_slots.slot_probs(self.slots, int(row["played"]), int(row["rank_now"]), int(row["pf_rank"]), int(row["teams"] or teams or 12))
+        if prev_rank is not None and self.slot_prior_t is not None:
+            return pick_slots.slot_prior_probs(self.slot_prior_t, prev_rank, teams or 12)
+        return None
+
+    def _standing(self, lineage: str, pick_season: int, pick_orig: int, at: date):
+        """(standing row this season | None, last season's final rank | None, teams) for next year's pick; (None, None, None) otherwise."""
+        s = self.season_of(at)
+        if pick_season != s + 1:
+            return None, None, None
+        lid = self.league_of.get((lineage, s))
+        if lid is None:
+            return None, None, None
+        league_id, teams = lid
+        played = self.played_by(s, at)
+        row = None
+        if played >= 1:
+            if self.hist is not None:
+                h = self.hist.filter((pl.col("league_id") == league_id) & (pl.col("season") == s) & (pl.col("roster_id") == pick_orig) & (pl.col("played") <= played)).sort("played")
+                if h.height:
+                    row = h.row(-1, named=True)
+            if row is None and self.current is not None and self.current.height:
+                c = self.current.filter((pl.col("league_id") == league_id) & (pl.col("roster_id") == pick_orig) & (pl.col("as_of") <= at)).sort("as_of")
+                if c.height and c.row(-1, named=True).get("played", 0) >= 1:
+                    row = c.row(-1, named=True)
+        prev_rank, prev_teams = None, None
+        prev = self.league_of.get((lineage, s - 1))
+        if prev is not None and self.hist is not None:
+            h = self.hist.filter((pl.col("league_id") == prev[0]) & (pl.col("season") == s - 1) & (pl.col("roster_id") == pick_orig) & (pl.col("week") == pl.col("last_week")))
+            if h.height:
+                prev_rank, prev_teams = int(h["final_rank"][0]), int(h["teams"][0] or prev[1] or 12)
+        return row, prev_rank, (int(row["teams"]) if row is not None and row.get("teams") else (prev_teams or teams))
 
     def probs(self, lineage: str, pick_season: int, pick_orig: int, at: date) -> tuple[float, float, float] | None:
         """P(Early, Mid, Late) for the original team's pick, as of ``at``; None = no view (Mid)."""
@@ -435,26 +482,39 @@ def value_at(legs: pl.DataFrame, at: pl.Series, hv: pl.DataFrame, pick_prices: p
         tiers = [slot_tier(s, teams.get(lg)) if (k and s is not None) else "Mid" for lg, s, k in zip(rows["league_id"].to_list(), rows["draft_slot"].to_list(), rows["known"].to_list())]
         rows = rows.with_columns(pl.Series("tier", tiers))
         # expected tier for next year's draft from the original team's standing (one-hot where the slot is known)
-        pe, pm, pl_ = [], [], []
+        # the multiplier on the round's level: the slot's own curve value once the order is known, the expected
+        # curve value over the team's slot distribution for next year's draft, 1 (the Mid price) further out
+        mult, pe, pm, pl_ = [], [], [], []
         src = pk.select("_i", "lineage_id" if "lineage_id" in pk.columns else pl.lit(None, pl.Utf8).alias("lineage_id"),
-                        "pick_orig" if "pick_orig" in pk.columns else pl.lit(None, pl.Int64).alias("pick_orig")).join(rows.select("_i", "pick_season", "tier", "known", "at"), on="_i")
+                        "pick_orig" if "pick_orig" in pk.columns else pl.lit(None, pl.Int64).alias("pick_orig"), "pick_round",
+                        "league_id" if "league_id" in pk.columns else pl.lit(None, pl.Utf8).alias("league_id"),
+                        "draft_slot" if "draft_slot" in pk.columns else pl.lit(None, pl.Int64).alias("draft_slot")).join(rows.select("_i", "pick_season", "tier", "known", "at"), on="_i")
         for r in src.iter_rows(named=True):
-            p = None
-            if slots is not None and not r["known"] and r["lineage_id"] is not None and r["pick_orig"] is not None:
-                p = slots.probs(r["lineage_id"], int(r["pick_season"]), int(r["pick_orig"]), r["at"])
+            m, p = None, None
+            if slots is not None and r["known"] and r["draft_slot"] is not None and teams.get(r["league_id"]):
+                b = (int(r["draft_slot"]) - 1) * pick_slots.BINS // int(teams[r["league_id"]]) + 1
+                m = slots.rel(r["pick_round"], b)
+            elif slots is not None and not r["known"] and r["lineage_id"] is not None and r["pick_orig"] is not None:
+                dist = slots.slot_dist(r["lineage_id"], int(r["pick_season"]), int(r["pick_orig"]), r["at"])
+                if dist is not None:
+                    m = sum(pb * slots.rel(r["pick_round"], b + 1) for b, pb in enumerate(dist))
+                    p = (sum(dist[:4]), sum(dist[4:8]), sum(dist[8:]))
             if p is None:
-                p = {"Early": (1.0, 0.0, 0.0), "Mid": (0.0, 1.0, 0.0), "Late": (0.0, 0.0, 1.0)}[r["tier"]]
-            pe.append(p[0]); pm.append(p[1]); pl_.append(p[2])
-        probs = src.select("_i").with_columns(pl.Series("p_early", pe), pl.Series("p_mid", pm), pl.Series("p_late", pl_))
+                p = {"Early": (1.0, 0.0, 0.0), "Mid": (0.0, 1.0, 0.0), "Late": (0.0, 0.0, 1.0)}[r["tier"]] if m is None else p
+            mult.append(m); pe.append(p[0] if p else None); pm.append(p[1] if p else None); pl_.append(p[2] if p else None)
+        probs = src.select("_i").with_columns(pl.Series("mult", mult, dtype=pl.Float64), pl.Series("p_early", pe, dtype=pl.Float64), pl.Series("p_mid", pm, dtype=pl.Float64), pl.Series("p_late", pl_, dtype=pl.Float64))
         base = rows.select("_i", "pick_season", "pick_round", "at")
         by_tier = {tier: pick_value_at(base.with_columns(pl.lit(tier).alias("tier")), pick_prices).rename({"v": f"v_{tier}"}) for tier in ("Early", "Mid", "Late")}
         ex = probs
         for tier, d in by_tier.items():
             ex = ex.join(d, on="_i", how="left")
-        # a missing tier price falls back to the Mid price (then to whichever exists)
         ex = ex.with_columns(pl.coalesce([pl.col("v_Mid"), pl.col("v_Early"), pl.col("v_Late")]).alias("_any"))
         ex = ex.with_columns([pl.coalesce([pl.col(f"v_{t}"), pl.col("_any")]).alias(f"v_{t}") for t in ("Early", "Mid", "Late")])
-        ex = ex.with_columns((pl.col("p_early") * pl.col("v_Early") + pl.col("p_mid") * pl.col("v_Mid") + pl.col("p_late") * pl.col("v_Late")).alias("v"))
+        # the round's level that day: the mean of KTC's three tier prices; the value is level x multiplier where the
+        # slot view exists, else the tier expectation (one-hot Mid / the known tier) as before
+        ex = ex.with_columns(pl.mean_horizontal(["v_Early", "v_Mid", "v_Late"]).alias("level"))
+        ex = ex.with_columns(pl.when(pl.col("mult").is_not_null()).then(pl.col("level") * pl.col("mult"))
+                             .otherwise(pl.col("p_early") * pl.col("v_Early") + pl.col("p_mid") * pl.col("v_Mid") + pl.col("p_late") * pl.col("v_Late")).alias("v"))
         vals.append(ex.select("_i", "v").filter(pl.col("v").is_not_null()))
     if vals:
         got = pl.concat(vals).unique("_i")

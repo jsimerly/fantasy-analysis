@@ -60,16 +60,25 @@ def teams_now(ctx: trades.SlotContext, today: date) -> pl.DataFrame:
                 st = st.filter(pl.col("as_of") == last_as_of)
         if st is None or st.height == 0:
             continue
+        level = {rnd: sum(px.get((rnd, tier), 0.0) for tier in ("Early", "Mid", "Late")) / max(1, sum(1 for tier in ("Early", "Mid", "Late") if (rnd, tier) in px)) for rnd in (1, 2)}
         for r in st.iter_rows(named=True):
-            p = ctx.probs(lin, s + 1, int(r["roster_id"]), today) or (0.0, 1.0, 0.0)
+            dist = ctx.slot_dist(lin, s + 1, int(r["roster_id"]), today)
+            if dist is not None:
+                p = (sum(dist[:4]), sum(dist[4:8]), sum(dist[8:]))
+                exp_slot = sum(pb * ((b + 0.5) / pick_slots.BINS) * teams for b, pb in enumerate(dist))
+                v1 = level[1] * sum(pb * ctx.rel(1, b + 1) for b, pb in enumerate(dist))
+                v2 = level[2] * sum(pb * ctx.rel(2, b + 1) for b, pb in enumerate(dist))
+            else:
+                p = ctx.probs(lin, s + 1, int(r["roster_id"]), today) or (0.0, 1.0, 0.0)
+                exp_slot = (p[0] * (teams / 6.0) + p[1] * (teams / 2.0) + p[2] * (5 * teams / 6.0))
+                v1 = sum(p[i] * px.get((1, tier), 0.0) for i, tier in enumerate(("Early", "Mid", "Late")))
+                v2 = sum(p[i] * px.get((2, tier), 0.0) for i, tier in enumerate(("Early", "Mid", "Late")))
             mgr = fr.filter((pl.col("lineage_id") == lin) & (pl.col("roster_id") == r["roster_id"]))
-            exp_slot = (p[0] * (teams / 6.0) + p[1] * (teams / 2.0) + p[2] * (5 * teams / 6.0))      # midpoints of the thirds
-            v1 = sum(p[i] * px.get((1, tier), 0.0) for i, tier in enumerate(("Early", "Mid", "Late")))
-            v2 = sum(p[i] * px.get((2, tier), 0.0) for i, tier in enumerate(("Early", "Mid", "Late")))
             rows.append({"league_name": lg["league_name"], "lineage_id": lin, "roster_id": int(r["roster_id"]), "manager": mgr["manager"][0] if mgr.height else f"roster {r['roster_id']}",
                          "as_of": str(r["as_of"]), "played": int(r["played"]), "wins": float(r["wins"]), "pf": float(r["pf"]), "rank_now": int(r["rank_now"]), "pf_rank": int(r["pf_rank"]), "teams": int(teams or r["teams"]),
                          "p_early": p[0], "p_mid": p[1], "p_late": p[2], "exp_slot": exp_slot, "pick_season": s + 1,
-                         "first_value": v1, "second_value": v2, "first_mid": px.get((1, "Mid")), "second_mid": px.get((2, "Mid"))})
+                         "first_value": v1, "second_value": v2, "first_mid": px.get((1, "Mid")), "second_mid": px.get((2, "Mid")),
+                         "first_level": level[1], "second_level": level[2], "dist": dist})
     return pl.DataFrame(rows)
 
 
@@ -146,7 +155,9 @@ def main() -> None:
     summary = {"meta": {"run_date": datetime.now(timezone.utc).date().isoformat(), "league_seasons": int(st.select("league_id", "season").n_unique()), "team_weeks": int(st.height),
                         "seasons": [int(st["season"].min()), int(st["season"].max())], "pick_season": int(ctx.season_of(today) + 1)},
                "teams": tn.to_dicts(), "calibration": cal.to_dicts(), "by_week": bw.to_dicts(), "prior": prior.to_dicts() if prior is not None else [],
-               "table": table.filter(pl.col("played") <= 14).to_dicts()}
+               "table": table.filter(pl.col("played") <= 14).to_dicts(),
+               "curve": [{"round": k[0], "bin": k[1], "rel": v} for k, v in sorted(ctx.curve.items())],
+               "curve_n": int(pl.read_parquet(pick_slots.CACHE / "pick_slot_curve.parquet")["n"].sum()) if (pick_slots.CACHE / "pick_slot_curve.parquet").exists() else None}
     (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
     print(f"wrote {out}")
     if args.publish:

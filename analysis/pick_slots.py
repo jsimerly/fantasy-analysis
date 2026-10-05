@@ -187,6 +187,107 @@ def prior_probs(prior: pl.DataFrame, prev_rank: int, teams: int) -> tuple[float,
     return (float(row["p_early"][0]), float(row["p_mid"][0]), float(row["p_late"][0])) if row.height else None
 
 
+BINS = 12   # slot resolution: twelfths of the draft order (a 12-team league's slots; a 10-team league maps onto them)
+
+
+def load_crawl_drafts() -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Rookie drafts (linear, a few rounds) in the crawl and their picks: (draft_id, league_id, season, teams,
+    draft_date, superflex) and (draft_id, round, draft_slot, player_id)."""
+    dr_parts, dp_parts = [], []
+    for n in _parts("drafts"):
+        try:
+            d = gcs_io.read_lake(n)
+            keep = [c for c in ("draft_id", "league_id", "season", "type", "start_time", "settings") if c in d.columns]
+            dr_parts.append(d.select(keep))
+        except Exception as e:  # noqa: BLE001
+            print("skip", n, str(e)[:60])
+    for n in _parts("draft_picks"):
+        try:
+            d = gcs_io.read_lake(n)
+            keep = [c for c in ("draft_id", "round", "draft_slot", "pick_no", "player_id", "roster_id") if c in d.columns]
+            dp_parts.append(d.select(keep))
+        except Exception as e:  # noqa: BLE001
+            print("skip", n, str(e)[:60])
+    dr = pl.concat(dr_parts, how="diagonal_relaxed").unique("draft_id")
+    st = pl.col("settings").cast(pl.Utf8)      # Sleeper's draft settings JSON: rounds, teams, slots_super_flex ...
+    dr = dr.with_columns(st.str.json_path_match(r"$.rounds").cast(pl.Int64, strict=False).alias("rounds"),
+                         st.str.json_path_match(r"$.teams").cast(pl.Int64, strict=False).alias("teams"),
+                         (st.str.json_path_match(r"$.slots_super_flex").cast(pl.Int64, strict=False) > 0).alias("superflex"),
+                         pl.col("season").cast(pl.Int64), pl.col("start_time").cast(pl.Int64).alias("_ms"))
+    dr = dr.filter((pl.col("type") == "linear") & (pl.col("rounds") <= 6) & pl.col("_ms").is_not_null())
+    dr = dr.with_columns(pl.from_epoch(pl.col("_ms") // 1000, time_unit="s").dt.date().alias("draft_date"))
+    dr = dr.select("draft_id", "league_id", "season", "teams", "draft_date", "superflex")
+    dp = pl.concat(dp_parts, how="diagonal_relaxed").unique(["draft_id", "pick_no"]).select(
+        "draft_id", pl.col("round").cast(pl.Int64), pl.col("draft_slot").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8))
+    return dr, dp
+
+
+def slot_curve(hv: pl.DataFrame, seasons: tuple[int, ...] = (2021, 2022, 2023, 2024, 2025), days_after: int = 30, min_n: int = 25) -> pl.DataFrame:
+    """The market's value of a draft slot: the median KTC value (superflex) of the player taken at each
+    slot, ``days_after`` the draft, over the crawl's rookie drafts; by round and twelfth of the order.
+    ``rel`` is that value relative to the round's mean across slots, so it can be applied to KTC's
+    tier prices on any date (the shape from here, the level from the market that day)."""
+    dr, dp = load_crawl_drafts()
+    dr = dr.filter(pl.col("season").is_in(list(seasons)) & pl.col("draft_date").is_not_null() & pl.col("teams").is_between(8, 16))
+    picks = dp.join(dr, on="draft_id", how="inner").filter(pl.col("round") <= 4)
+    picks = picks.with_columns(((pl.col("draft_slot") - 1) * BINS // pl.col("teams") + 1).alias("bin"), (pl.col("draft_date") + pl.duration(days=days_after)).alias("at"))
+    v = hv.sort("valuation_date")
+    picks = picks.sort("at").join_asof(v.rename({"pid": "player_id", "valuation_date": "_vd"}), left_on="at", right_on="_vd", by="player_id", strategy="backward", tolerance="45d")
+    picks = picks.filter(pl.col("ktc").is_not_null() & (pl.col("ktc") > 0))
+    curve = picks.group_by(["round", "bin"]).agg(pl.len().alias("n"), pl.col("ktc").median().alias("value"), pl.col("ktc").mean().alias("value_mean"),
+                                                 pl.col("superflex").mean().alias("sf_share")).sort(["round", "bin"])
+    curve = curve.filter(pl.col("n") >= min_n)
+    return curve.with_columns((pl.col("value") / pl.col("value").mean().over("round")).alias("rel"))
+
+
+def slot_table(st: pl.DataFrame) -> pl.DataFrame:
+    """P(final slot bin | weeks played, record fifth, points-for fifth): the full distribution the tier table summarises."""
+    s = st.with_columns(((pl.col("teams") - pl.col("final_rank")) * BINS // pl.col("teams") + 1).alias("bin"),
+                        ((pl.col("rank_now") - 1) * 5 // pl.col("teams")).alias("rk5"), ((pl.col("pf_rank") - 1) * 5 // pl.col("teams")).alias("pf5"))
+    g = s.group_by(["played", "rk5", "pf5", "bin"]).agg(pl.len().alias("n"))
+    return g.with_columns((pl.col("n") / pl.col("n").sum().over(["played", "rk5", "pf5"])).alias("p")).sort(["played", "rk5", "pf5", "bin"])
+
+
+def slot_prior(st: pl.DataFrame) -> pl.DataFrame:
+    """P(final slot bin | last season's final-rank fifth)."""
+    fin = st.filter(pl.col("week") == pl.col("last_week")).select("league_id", "season", "roster_id", "teams", "final_rank")
+    lin = load_lineages()
+    fin = fin.join(lin, on=["league_id", "season"], how="left").with_columns(pl.coalesce([pl.col("lineage_id"), pl.col("league_id")]).alias("lineage_id"))
+    prev = fin.select("lineage_id", (pl.col("season") + 1).alias("season"), "roster_id", ((pl.col("final_rank") - 1) * 5 // pl.col("teams")).alias("prev5"))
+    both = fin.join(prev, on=["lineage_id", "season", "roster_id"], how="inner").with_columns(((pl.col("teams") - pl.col("final_rank")) * BINS // pl.col("teams") + 1).alias("bin"))
+    g = both.group_by(["prev5", "bin"]).agg(pl.len().alias("n"))
+    return g.with_columns((pl.col("n") / pl.col("n").sum().over("prev5")).alias("p")).sort(["prev5", "bin"])
+
+
+def slot_probs(table: pl.DataFrame, played: int, rank_now: int, pf_rank: int, teams: int, min_n: int = 30) -> list[float] | None:
+    """P(bin 1..BINS) from the slot table; the points-for dimension is dropped for thin cells."""
+    rk5, pf5 = (rank_now - 1) * 5 // teams, (pf_rank - 1) * 5 // teams
+    cell = table.filter((pl.col("played") == played) & (pl.col("rk5") == rk5) & (pl.col("pf5") == pf5))
+    if cell.height == 0 or cell["n"].sum() < min_n:
+        cell = table.filter((pl.col("played") == played) & (pl.col("rk5") == rk5)).group_by("bin").agg(pl.col("n").sum())
+        if cell.height == 0:
+            return None
+        cell = cell.with_columns((pl.col("n") / pl.col("n").sum()).alias("p"))
+    out = [0.0] * BINS
+    for b, p_ in zip(cell["bin"].to_list(), cell["p"].to_list()):
+        if 1 <= b <= BINS:
+            out[b - 1] = float(p_)
+    s = sum(out)
+    return [x / s for x in out] if s > 0 else None
+
+
+def slot_prior_probs(prior: pl.DataFrame, prev_rank: int, teams: int) -> list[float] | None:
+    cell = prior.filter(pl.col("prev5") == (prev_rank - 1) * 5 // teams)
+    if cell.height == 0:
+        return None
+    out = [0.0] * BINS
+    for b, p_ in zip(cell["bin"].to_list(), cell["p"].to_list()):
+        if 1 <= b <= BINS:
+            out[b - 1] = float(p_)
+    s = sum(out)
+    return [x / s for x in out] if s > 0 else None
+
+
 def build(max_parts: int | None = None, cache: bool = True) -> dict[str, pl.DataFrame]:
     CACHE.mkdir(exist_ok=True)
     f = CACHE / "crawl_standings.parquet"
@@ -196,7 +297,7 @@ def build(max_parts: int | None = None, cache: bool = True) -> dict[str, pl.Data
         st = build_standings(load_matchups(max_parts), load_season_meta())
         if cache:
             st.write_parquet(f)
-    return {"standings": st, "tiers": tier_table(st), "prior": prior_table(st)}
+    return {"standings": st, "tiers": tier_table(st), "prior": prior_table(st), "slots": slot_table(st), "slot_prior": slot_prior(st)}
 
 
 if __name__ == "__main__":
@@ -207,5 +308,14 @@ if __name__ == "__main__":
         print(tt.filter(pl.col("played").is_in([0, 4, 8, 12])).sort(["played", "rk5", "pf5"]).head(30))
     tt.write_parquet(CACHE / "pick_tier_table.parquet")
     R["prior"].write_parquet(CACHE / "pick_prior_table.parquet")
+    R["slots"].write_parquet(CACHE / "pick_slot_table.parquet")
+    R["slot_prior"].write_parquet(CACHE / "pick_slot_prior.parquet")
     with pl.Config(tbl_rows=10):
         print(R["prior"])
+    # the market's slot curve needs the KTC player history: built by trades.ktc_history()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import trades
+    curve = slot_curve(trades.ktc_history())
+    curve.write_parquet(CACHE / "pick_slot_curve.parquet")
+    with pl.Config(tbl_rows=60):
+        print(curve)
