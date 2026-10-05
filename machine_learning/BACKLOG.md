@@ -384,7 +384,8 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     0.605 on the top-150 metric — no better than either parent (vs the trees −0.002, t = −0.2; vs
     TabPFN −0.008, t = 0.8), everyone-projected 0.627 (= TabPFN), top-12 bias 0.287 (between the
     two), position-share error 0.097. Averaging does not add anything here, so the candidate is
-    TabPFN on its own. Next: TabPFN-3.5 once the owner has accepted the licence (`TABPFN_TOKEN`);
+    TabPFN on its own. Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
+    licence login is a one-time step there, `TABPFN_TOKEN` for headless runs);
     whichever passes the paired test on `spearman_war_top` becomes production. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
