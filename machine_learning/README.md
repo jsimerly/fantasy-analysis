@@ -151,6 +151,7 @@ leak-free against KTC the following February:
 | `role` | fact_depth_chart_week | depth entering / leaving the season, best depth, starter share, moves, overall position rank |
 | `trend` | fact_player_week | second-half vs first-half ppg / targets / touches, last-4 form |
 | `situation` | fact_player_season | changed team this season / last season |
+| `college` | fact_college_player_season + dim_college_crosswalk (CFBD) | final-season dominator / yards per team play / usage / touch share, best dominator, breakout age, college seasons, final team's SP+, early declaration — static per player, null until the CFBD tables exist |
 
 ```
 scripts/run_experiment.py --list-groups

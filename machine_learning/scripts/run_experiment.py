@@ -118,8 +118,8 @@ def main() -> None:
                     help="estimator: xgb (production trees), tabpfn (TabPFN foundation model, use --device cuda) or blend (mean of both)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. n_estimators=4")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
-    ap.add_argument("--calibrate", nargs="?", const="both", default=False, choices=["both", "ppg", "games", "tier"],
-                    help="walk-forward recalibration per position and horizon: both (default when given), ppg or games")
+    ap.add_argument("--calibrate", nargs="?", const="both", default=False,
+                    help="walk-forward recalibration: both (default when given) | ppg | games | tier | games_table[:all|tiers[:weight]] (empirical games by position x age x tier; tiers = starters and mid only; weight = the table's share of a blend)")
     ap.add_argument("--quantile-sigma", action="store_true", help="player-specific projection spread from quantile models")
     ap.add_argument("--position-scale", action="store_true", help="scale each position's value by its holdout realized/projected PAR share")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")

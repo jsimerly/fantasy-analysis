@@ -191,6 +191,19 @@ class HorizonModels:
         # "tier": additive ppg adjustment per position x prior-season tier (rank by ppg within position),
         # keyed on what the player WAS rather than on the projection -- the conditioning under which the
         # shrinkage of good players shows up out of sample
+        # "games_table": projected games per horizon replaced by the empirical mean realized games of
+        # the training rows in the same (position, age bucket, prior tier) — attrition and injury
+        # read off history for players like this one, instead of the games model's horizon decay
+        # "games_table[:scope[:weight]]": scope "all" | "tiers" (starter and mid tiers only, the fringe keeps
+        # the model), weight = share of the table in a blend with the model's games (1 = replace)
+        self.games_table: dict | None = None
+        self.games_scope, self.games_weight = "all", 1.0
+        if isinstance(calibrate, str) and calibrate.startswith("games_table"):
+            parts = calibrate.split(":")
+            self.games_scope = parts[1] if len(parts) > 1 and parts[1] else "all"
+            self.games_weight = float(parts[2]) if len(parts) > 2 and parts[2] else 1.0
+            calibrate = "games_table"
+        self._calibrate_arg = calibrate
         self.calibrate = "both" if calibrate is True else (calibrate or False)
         self.holdout = holdout
         self.calibration: dict | None = None
@@ -230,7 +243,8 @@ class HorizonModels:
     def _kw(self) -> dict:
         """Constructor arguments that a temporary (holdout) copy of these models must share."""
         return dict(features=self.features, target=self.target, weight=self.weight,
-                    backend=self.backend, tabpfn_params=self.tabpfn_params, **self.params)
+                    backend=self.backend, tabpfn_params=self.tabpfn_params,
+                    calibrate=(f"games_table:{self.games_scope}:{self.games_weight}" if self.calibrate == "games_table" else False), **self.params)
 
     def feature_frame(self, df: pl.DataFrame) -> pl.DataFrame:
         """The design matrix. Default: the production feature set (``horizon_feature_frame``).
@@ -288,9 +302,51 @@ class HorizonModels:
                 self.quantile_models[k] = (lo, hi)
         if self.calibrate == "tier":
             self._fit_tier_adjust(train, as_of_season)
+        elif self.calibrate == "games_table":
+            self._fit_games_table(train, as_of_season)
         elif self.calibrate:
             self._fit_calibration(train, as_of_season)
         return self
+
+    @staticmethod
+    def _bucket_exprs() -> list[pl.Expr]:
+        age = pl.col("age_at_season")
+        ab = pl.when(age < 24).then(pl.lit("<24")).when(age < 27).then(pl.lit("24-26")).when(age < 30).then(pl.lit("27-29")).otherwise(pl.lit("30+"))
+        ppg, games = pl.col("ppg").fill_null(0.0), pl.col("games").fill_null(0)
+        tier = pl.when((ppg >= 12) & (games >= 10)).then(pl.lit("starter")).when((ppg >= 8) & (games >= 8)).then(pl.lit("mid")).otherwise(pl.lit("fringe"))
+        return [ab.alias("_ab"), tier.alias("_tier")]
+
+    def _fit_games_table(self, train: pl.DataFrame, as_of_season: int | None, min_n: int = 20) -> None:
+        """Mean realized games per horizon by (position, age bucket, tier), then (position, tier),
+        then (tier), from training rows whose outcome was known by ``as_of_season``."""
+        rows = train.with_columns(self._bucket_exprs())
+        table: dict[int, dict] = {}
+        for k in self.horizons:
+            obs = rows.filter(pl.col(f"h{k}_observable"))
+            if as_of_season is not None:
+                obs = obs.filter((pl.col("season") + k) <= as_of_season)
+            obs = obs.with_columns(pl.col(f"h{k}_games").fill_null(0).cast(pl.Float64).alias("_g"))
+            lvl3 = {(p_, a, ti): (float(m), int(n)) for p_, a, ti, m, n in
+                    obs.group_by(["position", "_ab", "_tier"]).agg(pl.col("_g").mean(), pl.len()).iter_rows() if n >= min_n}
+            lvl2 = {(p_, ti): float(m) for p_, ti, m, n in obs.group_by(["position", "_tier"]).agg(pl.col("_g").mean(), pl.len()).iter_rows() if n >= min_n}
+            lvl1 = {ti: float(m) for ti, m in obs.group_by("_tier").agg(pl.col("_g").mean()).iter_rows()}
+            table[k] = {"l3": lvl3, "l2": lvl2, "l1": lvl1}
+        self.games_table = table
+
+    def _apply_games_table(self, df: pl.DataFrame, k: int, games: np.ndarray) -> np.ndarray:
+        if not self.games_table or k not in self.games_table:
+            return games
+        tb = self.games_table[k]
+        b = df.with_columns(self._bucket_exprs())
+        out = games.copy()
+        for i, (p_, a, ti) in enumerate(zip(b["position"].to_list(), b["_ab"].to_list(), b["_tier"].to_list())):
+            if self.games_scope == "tiers" and ti == "fringe":
+                continue
+            v = tb["l3"].get((p_, a, ti))
+            v = v[0] if v is not None else tb["l2"].get((p_, ti), tb["l1"].get(ti))
+            if v is not None:
+                out[i] = self.games_weight * v + (1.0 - self.games_weight) * games[i]
+        return np.clip(out, 0.0, MAX_GAMES)
 
     def _weights(self, rows: pl.DataFrame) -> np.ndarray | None:
         if not self.weight:
@@ -417,6 +473,8 @@ class HorizonModels:
         for k in self.horizons:
             games = np.clip(self.games_models[k].predict(X), 0.0, MAX_GAMES)
             ppg = self._ppg_hat(k, X, df)
+            if self.games_table:
+                games = self._apply_games_table(df, k, games)
             if self.calibration:
                 games, ppg = self._apply_calibration(df, k, games, ppg)
             if self.tier_adjust:

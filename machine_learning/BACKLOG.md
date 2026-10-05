@@ -447,6 +447,24 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     rookies hold price for a year regardless of production, which would make the premium rational
     for a trader even if wrong about wins). Then re-run item 23's segments on rookies / year-2
     players with the winning model.
+    **2026-10-05, two findings and the data build.** (1) "Not a single 2026 rookie is a value" is
+    the games tail, not the rate: the model gives Jeremiyah Love 12.6 / 13.8 / 12.9 / 13.3 / 14.3
+    ppg over five years but 11.2 / 13.3 / 7.2 / 4.7 / 3.3 games. Walk-forward on 2015–2020
+    cohorts, starters under 24 actually played 13.1 / 12.0 / 11.5 / 11.1 / 10.2 games in years
+    1–5 against the games model's 12.7 / 10.4 / 8.1 / 6.1 / 4.5; 24–26-year-old starters 12.4 /
+    12.3 / 11.0 / 9.7 / 8.7 vs 12.4 / 9.5 / 7.0 / 5.1 / 3.5. The rookie tail is extrapolated from
+    those same decaying games, and discounting compounds it, so young players carry the whole
+    bias (item 9, now measured). An empirical games table (`--calibrate games_table`, mean
+    realized games by position × age bucket × prior tier, learnt per cohort) replacing the games
+    model scores 0.609 vs 0.603 on the top-150 metric (t = 1.4) but hurts everyone-projected
+    ordering (0.616 vs 0.623, t = 3.9) and position shares; the starters-and-mid-only and
+    blended variants are being tested. (2) The college data build is in:
+    `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
+    `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
+    feature group (final-season dominator, yards per team play, usage and touch shares, best
+    dominator, breakout age, college seasons, final team's SP+, early declaration). Once the owner
+    runs the backfill and the silver job, the harness run is `--groups base,career,college` and the
+    rookie residual test (item 16).
 
 25. **The leagues' trading: who trades well, the worst trades ever, and where managers slip.**
     From `fact_transactions` (trades with both sides' assets and the date) priced three ways:

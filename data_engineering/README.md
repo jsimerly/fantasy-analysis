@@ -15,6 +15,7 @@ src/
   fantasycalc_ingestion/  daily_ingestion.py
   nflverse_ingestion/     *_ingestion.py, backfill_seasonal.py (daily reconcile of seasonal history)
   fantasypros_ingestion/  projections_scraper.py   (local-only; not deployed)
+  cfbd_ingestion/         client.py, backfill.py   (College Football Data; local backfill, CFBD_API_KEY)
   silver_fantasy/         dim_*.py, fact_*.py, utils.py, _staging/
 tests/                    per-package; pytest in importlib mode, gql/nflreadpy stubs + fake_gcs
 Dockerfile                single image for all jobs (uv base, PYTHONPATH=/app/src)
@@ -42,6 +43,26 @@ PYTHONPATH=src uv run python -m silver_fantasy.fact_player_season
 
 Local runs read `GCS_BUCKET_NAME` (+ `AUTH_TOKEN`, `LOCAL_DB_URI`) from `.env` (gitignored).
 In Cloud Run these come from `--set-env-vars` instead.
+
+## College data (CFBD)
+
+`cfbd_ingestion.backfill` pulls College Football Data into `bronze/cfbd/<dataset>/season=YYYY/`
+(player season stats, player usage shares, rosters, SP+ ratings, team season volume, FBS teams,
+NFL draft picks with college athlete ids). It needs a free key from
+https://collegefootballdata.com/key in `.env` as `CFBD_API_KEY`; the free tier is metered per
+month, so the job writes one file per (dataset, season) and skips what exists. Then
+`silver_fantasy.fact_college_player_season` builds the per-(player, season) college fact (box
+score, usage, team SP+ and volume, yards / td / touch shares, dominator, breakout flags) and
+`dim_college_crosswalk` (CFBD id → gsis id by draft year + overall pick, then name + position),
+which the ML `college` feature group reads.
+
+```bash
+PYTHONPATH=src uv run python -m cfbd_ingestion.backfill --start 2010 --end 2025      # ~100 calls, a few minutes
+PYTHONPATH=src uv run python -m silver_fantasy.fact_college_player_season
+```
+
+Not scheduled: college seasons change once a year; rerun both after each NFL draft
+(`--datasets draft_picks --force` for the new class).
 
 ## Deploy
 

@@ -28,6 +28,8 @@ import model as one_year
 DEPTH_PATH = "silver/fantasy/fact_depth_chart_week/data.parquet"
 INJURY_PATH = "silver/fantasy/fact_player_injury_week/data.parquet"
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
+COLLEGE_PATH = "silver/fantasy/fact_college_player_season/data.parquet"
+COLLEGE_XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
 KEY = ["player_id", "season"]
 
 
@@ -60,6 +62,20 @@ class Context:
         if self._weeks is None:
             self._weeks = self._load(WEEK_PATH)
         return self._weeks
+
+    _college: pl.DataFrame | None = None
+
+    @property
+    def college(self) -> pl.DataFrame | None:
+        """College production per player keyed by gsis id (None until the CFBD lake tables exist)."""
+        if self._college is None:
+            try:
+                fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
+            except Exception:  # noqa: BLE001 - not ingested yet
+                self._college = pl.DataFrame()
+            else:
+                self._college = college_per_player(fact, xw)
+        return self._college if self._college.height else None
 
 
 @dataclass(frozen=True)
@@ -198,6 +214,42 @@ def build_rookie(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     )
 
 
+# ------------------------------------------------------------------------------ college
+COLLEGE_COLS = ["col_dominator_last", "col_dominator_best", "col_yptp_last", "col_usage_last", "col_breakout_age",
+                "col_seasons", "col_team_sp_last", "col_early_declare", "col_touch_share_last"]
+
+
+def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
+    """One row per gsis id: the final college season's shares and usage, the best dominator, the
+    breakout age (age in the first season with dominator >= 0.20), seasons played, the final team's
+    SP+ rating, and early declaration (final class year <= 3)."""
+    f = fact.sort(["cfbd_id", "season"])
+    last = f.group_by("cfbd_id").agg(
+        pl.col("dominator").last().alias("col_dominator_last"), pl.col("dominator").max().alias("col_dominator_best"),
+        pl.col("yards_per_team_play").last().alias("col_yptp_last"),
+        (pl.col("usage_overall").last() if "usage_overall" in f.columns else pl.lit(None, pl.Float64)).alias("col_usage_last"),
+        pl.col("touch_share").last().alias("col_touch_share_last"),
+        pl.len().alias("col_seasons"), pl.col("team_sp").last().alias("col_team_sp_last"),
+        (pl.col("class_year").last() if "class_year" in f.columns else pl.lit(None, pl.Int64)).alias("_class_last"),
+        pl.col("breakout_season_dom").first().alias("_breakout"))
+    x = xw.filter(pl.col("gsis_id").is_not_null()).select("cfbd_id", "gsis_id", "birth_date", "draft_year").unique("cfbd_id")
+    out = last.join(x, on="cfbd_id", how="inner")
+    by = pl.col("birth_date").cast(pl.Utf8).str.slice(0, 4).cast(pl.Int64, strict=False)
+    return out.with_columns(
+        (pl.col("_breakout") - by).cast(pl.Float64).alias("col_breakout_age"),
+        (pl.col("_class_last") <= 3).cast(pl.Float64).alias("col_early_declare"),
+        pl.col("col_seasons").cast(pl.Float64)).select(["gsis_id"] + COLLEGE_COLS).unique("gsis_id")
+
+
+def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """Join the per-player college row onto every season row (static over a career); nulls when the
+    lake has no college data for the player or at all."""
+    col = ctx.college
+    if col is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in COLLEGE_COLS if c not in matrix.columns])
+    return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
+
+
 # ---------------------------------------------------------------------------- registry
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
@@ -207,6 +259,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "trend": FeatureGroup("trend", TREND_COLS, build_trend, "fact_player_week (second half vs first half, last 4)"),
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
+    "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 
