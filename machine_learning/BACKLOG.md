@@ -380,9 +380,13 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     (worse, t = −2.1). Reading: the foundation model is a slightly better ranker and clearly less
     shrunk at the top, with the same inputs and no tuning, and it beat the trees on the 2020–22
     market backtest by more than the harness shows — but the primary metric is not significant,
-    so **not adopted on its own**. Next: the blend (xgb + TabPFN v2 mean, queued), then TabPFN-3.5
-    once the owner has accepted the licence (`TABPFN_TOKEN`); whichever passes the paired test on
-    `spearman_war_top` becomes production. Cost: ~2 h per eight-cohort run on the RTX 2060.
+    so **not adopted on its own**. **Blend (`blend_v2_weekly`, mean of the trees and TabPFN v2):**
+    0.605 on the top-150 metric — no better than either parent (vs the trees −0.002, t = −0.2; vs
+    TabPFN −0.008, t = 0.8), everyone-projected 0.627 (= TabPFN), top-12 bias 0.287 (between the
+    two), position-share error 0.097. Averaging does not add anything here, so the candidate is
+    TabPFN on its own. Next: TabPFN-3.5 once the owner has accepted the licence (`TABPFN_TOKEN`);
+    whichever passes the paired test on `spearman_war_top` becomes production. Both runs went
+    through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
