@@ -209,7 +209,7 @@ def main() -> None:
     def latest_summary(name: str):
         paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
         return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
-    performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason")}
+    performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
     try:
         import experiments
         led = experiments.load_ledger()

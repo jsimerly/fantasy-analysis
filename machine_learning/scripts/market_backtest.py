@@ -17,18 +17,23 @@ Per variant (``--backends xgb tabpfn blend``) and horizon:
     disagreement) and count the realized WAR the swap gained -- the trade a manager with the model
     would have made against one without it.
 
-Writes ``players.parquet``, ``pairs.parquet`` and ``summary.json`` to ``--out`` (default:
-``experiments/backtest`` under the ML bucket is NOT written; this is a local report).
+Writes ``players.parquet``, ``pairs.parquet`` and ``summary.json`` to ``--out``. ``--from DIR ...``
+re-scores saved runs instead of training (so variants run separately can be merged into one
+report), and ``--publish`` writes the summary to the ML bucket
+(``backtests/market/run_date=<today>/summary.json``), where the export picks it up for the page's
+Model performance tab.
 
 Usage:
   scripts/market_backtest.py --horizons 3 1 --backends xgb --replacement weekly --out <dir>
-  scripts/market_backtest.py --horizons 3 --backends xgb tabpfn --device cuda --out <dir>
+  scripts/market_backtest.py --horizons 3 --backends tabpfn --device cuda --tabpfn-params model_version=v2 n_estimators=4 --out <dir2>
+  scripts/market_backtest.py --from <dir> <dir2> --out <merged> --publish
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -38,6 +43,7 @@ import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 
 import experiments as ex  # noqa: E402
+import gcs_io  # noqa: E402
 import value  # noqa: E402
 from run_experiment import build_context  # noqa: E402
 
@@ -172,6 +178,8 @@ def main() -> None:
     ap.add_argument("--tol", type=float, default=0.15, help="KTC tolerance for a swap pair (fraction of the sold player's value)")
     ap.add_argument("--min-gap", type=float, default=10, help="minimum model-vs-market rank gap on both sides of a swap")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--from", dest="from_dirs", nargs="*", default=[], help="re-score these runs' players.parquet instead of training")
+    ap.add_argument("--publish", action="store_true", help="write the summary to the ML bucket (backtests/market/run_date=<today>/summary.json)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -185,7 +193,13 @@ def main() -> None:
 
     frames: list[pl.DataFrame] = []
     ledger_rows = []
-    for h in args.horizons:
+    if args.from_dirs:
+        for d in args.from_dirs:
+            f = pl.read_parquet(Path(d) / "players.parquet")
+            frames.append(f.select([c for c in KEEP if c in f.columns]))
+            print(f"{d}: {f.height} priced rows, variants {f['variant'].unique().to_list()}, horizons {f['horizon'].unique().to_list()}")
+        args.horizons = sorted({int(h) for f in frames for h in f["horizon"].unique().to_list()})
+    for h in (args.horizons if not args.from_dirs else []):
         H = list(range(1, h + 1))
         bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement)
         print(f"horizon {h}: cohorts {bc.cohorts[0]}-{bc.cohorts[-1]}")
@@ -233,8 +247,20 @@ def main() -> None:
             p = pairs.filter(pl.col("horizon") == hm).sort("gain")
             print(p.select("variant", "cohort", "sell", "sell_ktc", "sell_real", "buy", "buy_ktc", "buy_real", "gain").head(8))
             print(p.select("variant", "cohort", "sell", "sell_ktc", "sell_real", "buy", "buy_ktc", "buy_real", "gain").tail(8))
-    (out / "summary.json").write_text(json.dumps({k: t.to_dicts() for k, t in tables.items()} | {"ledger": ledger_rows}, indent=1, default=str), encoding="utf-8")
+    hm = max(args.horizons)
+    top = pairs.filter(pl.col("horizon") == hm).sort("gain") if pairs.height else pairs
+    cols = ["variant", "cohort", "sell", "sell_pos", "sell_ktc", "sell_real", "buy", "buy_pos", "buy_ktc", "buy_real", "gain"]
+    summary = {k: t.to_dicts() for k, t in tables.items()} | {
+        "ledger": ledger_rows,
+        "top_swaps": (top.select(cols).head(10).to_dicts() + top.select(cols).tail(10).to_dicts()) if pairs.height else [],
+        "meta": {"horizons": args.horizons, "variants": sorted(df["variant"].unique().to_list()), "cohorts": f"{df['cohort'].min()}-{df['cohort'].max()}",
+                 "n_priced": df.height, "tol": args.tol, "min_gap": args.min_gap, "replacement": args.replacement,
+                 "run_date": datetime.now(timezone.utc).date().isoformat()},
+    }
+    (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
     print(f"\nwrote {out}")
+    if args.publish:
+        print("published", gcs_io.write_ml_json(summary, "backtests", "market", f"run_date={summary['meta']['run_date']}", "summary.json"))
 
 
 if __name__ == "__main__":
