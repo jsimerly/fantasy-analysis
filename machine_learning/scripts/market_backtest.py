@@ -175,6 +175,8 @@ def main() -> None:
     ap.add_argument("--target", choices=["level", "residual", "opportunity"], default="level")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--tabpfn-params", nargs="*", default=[])
+    ap.add_argument("--calibrate", default=False, help="career.HorizonModels calibrate option, e.g. games_table:tiers:0.5")
+    ap.add_argument("--suffix", default="", help="appended to the variant name (to tell calibrated runs apart)")
     ap.add_argument("--tol", type=float, default=0.15, help="KTC tolerance for a swap pair (fraction of the sold player's value)")
     ap.add_argument("--min-gap", type=float, default=10, help="minimum model-vs-market rank gap on both sides of a swap")
     ap.add_argument("--out", required=True)
@@ -204,11 +206,11 @@ def main() -> None:
         bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement)
         print(f"horizon {h}: cohorts {bc.cohorts[0]}-{bc.cohorts[-1]}")
         for backend in args.backends:
-            cfg = ex.ExperimentConfig(name=f"{backend}_h{h}", groups=args.groups.split(","), horizons=H, cohorts=bc.cohorts, device=args.device,
-                                      curve=bc.curve, replacement=args.replacement, target=args.target, backend=backend, tabpfn_params=tp)
+            cfg = ex.ExperimentConfig(name=f"{backend}{args.suffix}_h{h}", groups=args.groups.split(","), horizons=H, cohorts=bc.cohorts, device=args.device,
+                                      curve=bc.curve, replacement=args.replacement, target=args.target, backend=backend, tabpfn_params=tp, calibrate=args.calibrate or False)
             got: list[pl.DataFrame] = []
             per_cohort, summary = ex.run_experiment(bc.matrix, cfg, bc.ctx, bc.rep_for, bc.market_for, collect=got)
-            frames += [g.with_columns(pl.lit(h).alias("horizon"), pl.lit(backend).alias("variant")) for g in got]
+            frames += [g.with_columns(pl.lit(h).alias("horizon"), pl.lit(backend + args.suffix).alias("variant")) for g in got]
             ledger_rows.append(summary)
             with pl.Config(tbl_rows=-1, tbl_width_chars=220, float_precision=3):
                 print(f"\n== {backend} h{h} ==")
