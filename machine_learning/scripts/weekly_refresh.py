@@ -51,7 +51,7 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--backend", default="xgb", choices=["xgb", "tabpfn", "blend"], help="career model estimator for the in-season refresh (tabpfn needs a GPU: run locally)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[])
-    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games (30+ | all | none)")
+    ap.add_argument("--cap", default="30+t", help="age-survival cap on projected games (30+t = tier-aware from 30, production | 30+ | all | none)")
     args = ap.parse_args()
     py = sys.executable
     season, week = current_season_week()

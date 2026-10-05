@@ -87,6 +87,15 @@ def read_lake_prefix(prefix: str, partition: str | None = None) -> pl.DataFrame:
     return pl.concat(frames, how="diagonal_relaxed")
 
 
+def latest_run_date(*parts: str, on_or_before: str | None = None, name: str = "metrics.json") -> str | None:
+    """Newest ``run_date=YYYY-MM-DD`` partition under ``parts`` that holds ``name`` (on or before a date, if given)."""
+    import re
+
+    pat = re.compile(r"run_date=(\d{4}-\d{2}-\d{2})/" + re.escape(name) + "$")
+    dates = {m.group(1) for m in map(pat.search, list_ml(*parts)) if m and (on_or_before is None or m.group(1) <= on_or_before)}
+    return max(dates) if dates else None
+
+
 def list_ml(*parts: str) -> list[str]:
     """Blob names (relative to this project's ML prefix) under ``parts``."""
     prefix = f"{PROJECT}/" + "/".join(parts)

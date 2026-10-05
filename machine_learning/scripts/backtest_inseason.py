@@ -54,26 +54,19 @@ def week_end_date(wk: pl.DataFrame, season: int, week: int) -> date:
     return (d + timedelta(days=1)) if d is not None else date(season, 9, 1) + timedelta(weeks=week)
 
 
-CAP_MIN_AGE = 30.0   # the population age-survival cap on projected games bound on every young starter (8 games in year 3 for players who play 11); it now applies only from this age
+SNAP_TIER_COLS = ("prev_ppg", "prev_games")   # a snapshot's prior tier is last season's (the row the career tail is off), not 3 weeks of this one
 
 
-def _cap(survival, df, horizons, cap: str = "30+", **kw):
-    if cap == "none":
-        return df
-    if cap.endswith("+"):
-        return survival.cap_games(df, horizons, min_age=float(cap[:-1]), **kw)
-    return survival.cap_games(df, horizons, **kw)
-
-
-def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, backend: str = "xgb", tabpfn_params: dict | None = None, cap: str = "30+"):
+def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, backend: str = "xgb", tabpfn_params: dict | None = None,
+                cap: str = career.DEFAULT_CAP):
     """Career-model projections off every player's row in season ``as_of`` (their latest
     complete season), plus the out-of-sample spread, trained only on outcomes known by then.
-    Projected games are capped by the population age-survival prior (survivorship at the
-    oldest ages). Returns (predictions, sigma, survival)."""
+    Projected games are capped by the age-survival prior per ``cap`` (career.apply_cap: from age
+    30, tier-aware, by default). Returns (predictions, sigma, survival)."""
     m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params).fit(season_df, as_of_season=as_of)
     sigma = m.estimate_sigma(season_df, as_of_season=as_of)
-    survival = career.AgeSurvival().fit(season_df.filter((pl.col("season") + 1) <= as_of))
-    pred = _cap(survival, m.predict(season_df.filter(pl.col("season") == as_of)), H, cap)
+    survival = career.fit_survival(season_df.filter((pl.col("season") + 1) <= as_of), cap)
+    pred = career.apply_cap(survival, m.predict(season_df.filter(pl.col("season") == as_of)), H, cap)
     return pred, sigma, survival
 
 
@@ -88,7 +81,7 @@ def main() -> None:
     ap.add_argument("--depth", action="store_true", help="add the depth-chart standing features (BACKLOG 11; neutral in the 2021-24 backtest, so opt-in)")
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator for the multi-year tail (the in-season model itself stays xgboost)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
-    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games: 30+ (default: only from age 30) | all (the pre-2026-10-05 behaviour) | none")
+    ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
     tabpfn_params = {}
     for kv in args.tabpfn_params:
@@ -119,7 +112,7 @@ def main() -> None:
         backend_tag = args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
         m = inseason.InSeasonModels(device=args.device).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
-        snap = _cap(survival, snap, [1], args.cap, col="next_games_hat")
+        snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
         snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate)
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
         # preseason view for the same players: the career model's IV off their 2025 row
@@ -146,18 +139,23 @@ def main() -> None:
         p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left")
                                     .with_columns(pl.lit(backend_tag).alias("career_backend")),
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")
-        print("\nwrote", p)
+        p2 = gcs_io.write_ml_json({
+            "run_date": run, "season": cur, "week": w_now, "as_of_season": last_complete, "career_backend": backend_tag, "cap": args.cap,
+            "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
+            "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
+        }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")
+        print("\nwrote", p, "\n     ", p2)
         return
 
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(season, starters, seasons=list(range(T - 5, T)))
-        tail, sigma, survival = career_tail(season, T - 1, rep, args.device)
+        tail, sigma, survival = career_tail(season, T - 1, rep, args.device, cap=args.cap)
         m = inseason.InSeasonModels(device=args.device).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
         for W in weeks:
             snap = m.predict(snaps.filter((pl.col("season") == T) & (pl.col("week") == W)))
-            snap = _cap(survival, snap, [1], args.cap, col="next_games_hat")
+            snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
             snap = snap.with_columns((pl.col("next_games_hat") * pl.col("next_ppg_hat")).alias("next_fpts_hat"))
             snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate)
             snap = market.attach_market(snap, week_end_date(wk, T, W), hist, xw).join(k_end, on="player_key", how="left")

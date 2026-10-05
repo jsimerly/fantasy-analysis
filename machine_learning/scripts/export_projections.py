@@ -122,8 +122,19 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
-    career_base = ("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}")
-    meta = gcs_io.read_ml_json(*career_base, "metrics.json")
+    # the run's metrics: an in-season refresh writes its own (since 2026-10-05); otherwise the career
+    # build of the run date, or the latest one before it (the preseason model is not rebuilt weekly)
+    own = ("inseason", f"season={args.season}", f"week={args.week}", f"run_date={args.run_date}")
+    career_run = gcs_io.latest_run_date("intrinsic_value", f"as_of_season={args.as_of_season}", on_or_before=args.run_date)
+    if career_run is None:
+        raise SystemExit(f"no career build for as_of_season={args.as_of_season} on or before {args.run_date}")
+    career_base = ("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}")
+    if args.source == "inseason" and any(p.endswith("metrics.json") for p in gcs_io.list_ml(*own)):
+        meta = gcs_io.read_ml_json(*own, "metrics.json")
+    else:
+        if career_run != args.run_date:
+            print(f"career build for run_date {args.run_date} not found; using {career_run}", flush=True)
+        meta = gcs_io.read_ml_json(*career_base, "metrics.json")
     rate = meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2))
     fc = fantasycalc_values()
     rd = redraft_values()

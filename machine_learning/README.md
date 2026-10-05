@@ -173,7 +173,10 @@ cohort (mean difference, standard error, t, cohorts won), which is how a small g
 flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks
 the production career model; since 2026-10-05 the in-season refresh runs locally on
 `--backend tabpfn --tabpfn-params model_version=v2 --device cuda`, the Cloud Run job stays on
-`xgb`, and the written projections carry `career_backend`):
+`xgb`, and the written projections carry `career_backend`; the in-season run also writes its own
+`metrics.json` — backend, cap, ppg spread, replacement line — which `build_war.py` and
+`export_projections.py` read, falling back to the latest career build on or before the run date,
+so the refresh does not need a preseason career build of the same day):
 `tabpfn` is TabPFN (a pretrained tabular foundation model doing in-context regression; use
 `--device cuda` and `--tabpfn-params model_version=v2 n_estimators=4`), `blend` averages the two.
 Setup, into `.venv`: `pip install --index-url https://download.pytorch.org/whl/cu126 torch` then
@@ -233,10 +236,16 @@ than from what the market thinks. Like a DCF for a company:
    not assumed). Direct multi-horizon models: real outcomes per horizon, no compounding of a
    one-year model, and outcomes not yet observable are censored. `estimate_sigma` measures the
    out-of-sample spread of each horizon's `ppg` projection on held-out recent seasons.
-   `career.AgeSurvival` is a population prior on availability: the games models see only the
-   survivors at the oldest ages (every 43-year-old QB season in the data is Tom Brady's), so
-   projected games at horizon k are capped at `17 × P(still playing k years out | position, age)`
-   from a logistic fit of year-over-year continuation. It only binds for old players.
+   `career.AgeSurvival` is a prior on availability for the ages beyond the data's reach: the games
+   models see only the survivors at the oldest ages (every 43-year-old QB season in the data is Tom
+   Brady's), so from age 30 projected games at horizon k are capped at
+   `17 × P(still playing k years out | position, prior tier, age)`, continuation odds fitted per
+   position and prior tier (starter / mid / fringe off the season the projection is from: an elite
+   31-year-old is held to the elite 31-year-olds' odds, and they last longer). Below 30 the games
+   model is right on its own and the cap does not apply (capping everyone cost young starters a
+   third of their year-3 games and made every rookie look worthless, BACKLOG 24). The spec lives in
+   `career.DEFAULT_CAP` (`30+t`); `--cap` on the harness, `backtest_inseason.py`,
+   `build_intrinsic_value.py` and `weekly_refresh.py` takes `30+t | 30+ | 30+t34 | all | none`.
 2. **Replacement level** (`src/replacement.py`): from the league's lineup in
    `dim_league_settings` (10-team superflex: ~20 QB / 24.5 RB / 34.5 WR / 11 TE starters),
    replacement ppg = the player just outside the starters, averaged over the last 5 seasons.

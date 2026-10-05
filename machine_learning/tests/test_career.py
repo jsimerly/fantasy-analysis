@@ -135,6 +135,55 @@ class TestAgeSurvival:
         pred = pl.DataFrame({"position": ["K"], "age_at_season": [45.0], "h1_games_hat": [16.0]})
         assert s.cap_games(pred, [1])["h1_games_hat"][0] == 16.0
 
+    def _tiered_table(self):
+        # starters (ppg 15, 14 games) keep playing to 36; fringe players (ppg 5, 6 games) stop by 31
+        rng = np.random.default_rng(5)
+        ages = rng.uniform(22, 40, 600)
+        starter = np.arange(600) % 2 == 0
+        p = np.where(starter, 1 / (1 + np.exp(-(18 - 0.5 * ages))), 1 / (1 + np.exp(-(12 - 0.4 * ages))))
+        return pl.DataFrame({"position": ["WR"] * 600, "age_at_season": ages, "games": np.where(starter, 14, 6),
+                             "ppg": np.where(starter, 15.0, 5.0), "h1_observable": [True] * 600, "h1_played": rng.random(600) < p})
+
+    def test_apply_cap_specs(self):
+        t = self._tiered_table()
+        pred = pl.DataFrame({"position": ["WR"] * 3, "age_at_season": [28.0, 32.0, 32.0], "ppg": [15.0, 15.0, 5.0], "games": [14, 14, 6],
+                             "h1_games_hat": [16.0] * 3, "h3_games_hat": [14.0] * 3})
+        assert career.apply_cap(career.fit_survival(t, "none"), pred, [1, 3], "none").equals(pred)
+        plain = career.apply_cap(career.fit_survival(t, "30+"), pred, [1, 3], "30+")
+        assert plain["h3_games_hat"][0] == 14.0                                  # 28, under 30: untouched
+        assert plain["h3_games_hat"][1] == plain["h3_games_hat"][2] < 14.0      # population curve is tier-blind
+        tiered = career.apply_cap(career.fit_survival(t, "30+t"), pred, [1, 3], "30+t")
+        assert tiered["h3_games_hat"][0] == 14.0
+        assert tiered["h3_games_hat"][1] > tiered["h3_games_hat"][2]           # the starter is held to the starters' odds
+        everyone = career.apply_cap(career.fit_survival(t, "all"), pred, [1, 3], "all")
+        assert everyone["h3_games_hat"][0] < 14.0                              # the pre-2026-10-05 behaviour binds on the young too
+        combo = career.apply_cap(career.fit_survival(t, "30+t34"), pred, [1, 3], "30+t34")
+        assert combo["h3_games_hat"][1] == tiered["h3_games_hat"][1]            # 32 < 34: the population curve has not taken over
+
+    def test_snapshot_tier_columns(self):
+        s = career.fit_survival(self._tiered_table(), "30+t")
+        snap = pl.DataFrame({"position": ["WR", "WR"], "age_at_season": [32.0, 32.0], "prev_ppg": [15.0, 5.0], "prev_games": [14, 6],
+                             "next_games_hat": [16.0, 16.0]})
+        out = career.apply_cap(s, snap, [1], "30+t", col="next_games_hat", tier_cols=("prev_ppg", "prev_games"))
+        assert out["next_games_hat"][0] > out["next_games_hat"][1]
+        blind = career.apply_cap(s, snap, [1], "30+t", col="next_games_hat")      # no ppg / games columns: population curve
+        assert blind["next_games_hat"][0] == blind["next_games_hat"][1]
+
+
+class TestLatestRunDate:
+    def test_picks_the_newest_on_or_before(self, monkeypatch):
+        import gcs_io
+        blobs = ["intrinsic_value/as_of_season=2025/run_date=2026-09-20/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-09-20/projections.parquet",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-01/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-09/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-12/projections.parquet"]
+        monkeypatch.setattr(gcs_io, "list_ml", lambda *parts: [b for b in blobs if b.startswith("/".join(parts))])
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025") == "2026-10-09"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025", on_or_before="2026-10-05") == "2026-10-01"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025", on_or_before="2026-10-12", name="projections.parquet") == "2026-10-12"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2024") is None
+
 
 class TestBaselines:
     def test_carry_forward_repeats_this_season(self):

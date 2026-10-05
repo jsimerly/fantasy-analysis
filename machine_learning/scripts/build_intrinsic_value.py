@@ -43,7 +43,7 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
-    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games: 30+ (default) | all | none")
+    ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all | none")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
@@ -72,10 +72,8 @@ def main() -> None:
     print("out-of-sample ppg spread by horizon (all positions):",
           {k: round(v["__all__"], 2) for k, v in sigma.items()})
     current = df.filter(pl.col("season") == last)
-    survival = career.AgeSurvival().fit(df.filter(pl.col("season") < last))
-    pred = models.predict(current)
-    if args.cap != "none":                                            # population age prior on availability, from age 30 by default
-        pred = survival.cap_games(pred, H, min_age=float(args.cap[:-1]) if args.cap.endswith("+") else None)
+    survival = career.fit_survival(df.filter(pl.col("season") < last), args.cap)
+    pred = career.apply_cap(survival, models.predict(current), H, args.cap)   # age-survival prior on availability (tier-aware, from 30, by default)
     pred = pred.with_columns([(pl.col(f"h{k}_games_hat") * pl.col(f"h{k}_ppg_hat")).alias(f"h{k}_fpts_hat") for k in H])
     proj = value.intrinsic_value(pred, rep, H, args.discount_rate)
     proj = market.attach_market(proj, today)
@@ -126,7 +124,7 @@ def main() -> None:
             "run_date": run, "as_of_season": last, "horizon": args.horizon, "discount_rate": args.discount_rate,
             "lineup": slots, "teams": teams, "starters": starters, "replacement_ppg": rep,
             "n_projected": proj.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
-            "ppg_sigma": sigma, "features": career.FEATURES, "model_params": models.params,
+            "ppg_sigma": sigma, "features": career.FEATURES, "model_params": models.params, "cap": args.cap,
         }, "intrinsic_value", f"as_of_season={last}", f"run_date={run}", "metrics.json")
         print(f"\nwrote {p1}\n      {p2}")
 

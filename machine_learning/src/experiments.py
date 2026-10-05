@@ -54,7 +54,7 @@ class ExperimentConfig:
     weight: str | None = None        # career.HorizonModels relevance weights: None | ppg | ppg2
     backend: str = "xgb"             # career.HorizonModels estimator: xgb | tabpfn | blend
     stacked: bool = False            # one games / ppg model over all horizons with years-ahead as a feature
-    cap: str = "30+"                 # age-survival cap on projected games: "30+" (from that age, production) | all (every row, pre-2026-10-05) | none
+    cap: str = career.DEFAULT_CAP    # age-survival cap on projected games: career.apply_cap specs ("30+t" production, "30+", "30+t34", all, none)
     tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
@@ -144,15 +144,9 @@ def run_experiment(
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
                                       stacked=cfg.stacked, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
-        survival = career.AgeSurvival(tiered=str(cfg.cap).endswith("t")).fit(df.filter((pl.col("season") + 1) <= T))
+        survival = career.fit_survival(df.filter((pl.col("season") + 1) <= T), cfg.cap)
         pred = models.predict(df.filter(pl.col("season") == T))
-        cap = str(cfg.cap).rstrip("t")            # "30+t": tiered survival curves, cap from 30
-        if cap == "none":
-            cohort = pred
-        elif cap.endswith("+"):
-            cohort = survival.cap_games(pred, H, min_age=float(cap[:-1]))
-        else:
-            cohort = survival.cap_games(pred, H)
+        cohort = career.apply_cap(survival, pred, H, cfg.cap)
         cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep_real, H, cfg.discount_rate)
         # the same thing in wins: projected WAR and realized WAR on the league's curve
         import war as _war

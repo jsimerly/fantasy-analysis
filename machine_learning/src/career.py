@@ -39,6 +39,10 @@ CAREER_FEATURES = ["career_seasons", "career_fpts", "career_games", "best_ppg"]
 FEATURES = one_year.FEATURE_COLS + CAREER_FEATURES
 
 MAX_GAMES = 17
+# age-survival cap on projected games (see AgeSurvival / apply_cap): "30+t" = tier-aware continuation
+# odds from age 30 (production since 2026-10-05) | "30+" population curve from 30 | "30+t34" tiered
+# from 30 with the population curve taking over from 34 | "all" every row (pre-2026-10-05) | "none"
+DEFAULT_CAP = "30+t"
 
 # A little more regularised than the one-year model: far horizons are noisier.
 DEFAULT_PARAMS = {**one_year.DEFAULT_PARAMS, "n_estimators": 300, "max_depth": 4}
@@ -577,8 +581,8 @@ class AgeSurvival:
         self.tiered = tiered
 
     @staticmethod
-    def tier_expr() -> pl.Expr:
-        ppg, games = pl.col("ppg").fill_null(0.0), pl.col("games").fill_null(0)
+    def tier_expr(ppg_col: str = "ppg", games_col: str = "games") -> pl.Expr:
+        ppg, games = pl.col(ppg_col).fill_null(0.0), pl.col(games_col).fill_null(0)
         return pl.when((ppg >= 12) & (games >= 10)).then(pl.lit("starter")).when((ppg >= 8) & (games >= 8)).then(pl.lit("mid")).otherwise(pl.lit("fringe"))
 
     def fit(self, season_df: pl.DataFrame) -> "AgeSurvival":
@@ -618,14 +622,17 @@ class AgeSurvival:
         return s
 
     def cap_games(self, df: pl.DataFrame, horizons: Iterable[int], age_col: str = "age_at_season",
-                  col: str = "h{k}_games_hat", min_age: float | None = None) -> pl.DataFrame:
+                  col: str = "h{k}_games_hat", min_age: float | None = None, plain_from: float | None = None,
+                  tier_cols: tuple[str, str] = ("ppg", "games")) -> pl.DataFrame:
         """Cap each horizon's projected games at MAX_GAMES x survival (per row's position/age).
 
         The survival curve is the population's yearly continuation odds (every player, fringe
         included: ~0.8 a year at 23), so an unconditional cap binds on young starters from year two
         (0.8^3 x 17 = 8 games at year three for players who actually play 11). ``min_age`` applies
         the cap only from that age, where the games model has little data and survivorship is the
-        real question; None keeps the historical behaviour (every row)."""
+        real question; None keeps the historical behaviour (every row). With tiered curves the
+        row's prior tier comes from ``tier_cols`` (ppg, games of the season the projection is off:
+        an in-season snapshot passes last season's ``prev_ppg`` / ``prev_games``)."""
         cols = []
         pos = df["position"].to_numpy()
         age = df[age_col].fill_null(27.0).to_numpy().astype(float)
@@ -634,7 +641,8 @@ class AgeSurvival:
             if name not in df.columns:
                 continue
             cap = np.full(df.height, float(MAX_GAMES))
-            tiers = df.select(self.tier_expr().alias("_t"))["_t"].to_numpy() if (self.tiered and "ppg" in df.columns) else None
+            tiers = (df.select(self.tier_expr(*tier_cols).alias("_t"))["_t"].to_numpy()
+                     if (self.tiered and all(c in df.columns for c in tier_cols)) else None)
             for p in np.unique(pos):
                 m = pos == p
                 if tiers is None:
@@ -645,8 +653,33 @@ class AgeSurvival:
                         cap[mm] = MAX_GAMES * self.survival(str(p), age[mm], k, str(t_))
             if min_age is not None:
                 cap = np.where(age >= min_age, cap, float(MAX_GAMES))
+            if plain_from is not None and self.tiered:
+                # the tier curves are fitted on 30-33-year-olds mostly and run too flat past that: the
+                # population curve takes over from ``plain_from`` (whichever cap is lower)
+                plain = np.full(df.height, float(MAX_GAMES))
+                for p in np.unique(pos):
+                    m = pos == p
+                    plain[m] = MAX_GAMES * self.survival(str(p), age[m], k)
+                cap = np.where(age >= plain_from, np.minimum(cap, plain), cap)
             cols.append(pl.Series(name, np.minimum(df[name].to_numpy().astype(float), cap)))
         return df.with_columns(cols)
+
+
+def fit_survival(season_df: pl.DataFrame, cap: str = DEFAULT_CAP) -> AgeSurvival:
+    """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs."""
+    return AgeSurvival(tiered="+t" in str(cap)).fit(season_df)
+
+
+def apply_cap(survival: AgeSurvival, df: pl.DataFrame, horizons: Iterable[int], cap: str = DEFAULT_CAP, **kw) -> pl.DataFrame:
+    """Apply a cap spec (see DEFAULT_CAP): none | all | "<age>+" | "<age>+t" | "<age>+t<age2>"."""
+    cap = str(cap)
+    if cap == "none":
+        return df
+    if "+" in cap:
+        start, rest = cap.split("+", 1)
+        plain_from = float(rest[1:]) if rest.startswith("t") and len(rest) > 1 else None
+        return survival.cap_games(df, horizons, min_age=float(start), plain_from=plain_from, **kw)
+    return survival.cap_games(df, horizons, **kw)
 
 
 # --------------------------------------------------------------------------- baselines

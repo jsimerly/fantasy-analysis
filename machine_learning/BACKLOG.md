@@ -509,8 +509,19 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     game; 33+ starters still too flat at years 4–5 (8.0 / 6.6 vs 5.1 / 3.4; n = 43). Harness vs
     the plain cap from 30: top-150 equal (0.605 vs 0.607 at 3 yr, 0.606 vs 0.609 at 5 yr), top
     decile a touch lower (0.684 vs 0.692; 0.692 vs 0.704, t = 2.0), top-12 bias 0.091 vs 0.135
-    and 0.087 vs 0.162 (t = 8, every cohort). Next: tiered from 30 with the population curve
-    taking over from 34 (`30+t34`), to fix the oldest group without losing the rest. (2) The college data build is in:
+    and 0.087 vs 0.162 (t = 8, every cohort). The combination (tiered from 30, population curve
+    from 34, `30+t34`) fixes the 33+ far tail (4.2 / 2.8 vs 5.1 / 3.4 real at years 4–5) by
+    under-projecting the near one (11.5 / 8.2 / 5.8 vs 12.8 / 10.6 / 8.2 at years 1–3, where the
+    value is) and scores between the two: ordering equal to both (0.607), top-12 bias 0.113 / 0.125
+    (vs 0.135 / 0.162 plain, 0.091 / 0.087 tiered; both t > 4.7), top decile 0.695 vs 0.704 plain
+    (t = 2.2) and 0.692 tiered (t = 1.0), share error 0.085 vs 0.094 tiered (t = 1.7).
+    **Adopted 2026-10-05: the tier-aware cap from 30 (`career.DEFAULT_CAP = "30+t"`)** — the only
+    variant that is right for 30–32-year-old starters, the one where projected games depend on how
+    good the player is (the owner's hypothesis, true in the data), the best top-12 bias; the 33+
+    far tail (n = 43, mostly QBs; years 4–5, discounted to 0.4) stays a known over-projection rather
+    than a tuned fix on 43 players. `career.fit_survival` / `career.apply_cap` parse the spec for the
+    harness, the in-season refresh (the snapshot's tier is last season's `prev_ppg` / `prev_games`,
+    not three weeks of this one) and the career build. (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best

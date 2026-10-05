@@ -118,7 +118,7 @@ def main() -> None:
                     help="estimator: xgb (production trees), tabpfn (TabPFN foundation model, use --device cuda) or blend (mean of both)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. n_estimators=4")
     ap.add_argument("--stacked", action="store_true", help="one games / ppg model over all horizons, years-ahead as a feature (instead of one pair per horizon)")
-    ap.add_argument("--cap", default="30+", help="age-survival cap on projected games: 30+ (default, as production) | all (the pre-2026-10-05 behaviour) | none")
+    ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default, as production: tier-aware from 30) | 30+ | 30+t34 | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
     ap.add_argument("--calibrate", nargs="?", const="both", default=False,
                     help="walk-forward recalibration: both (default when given) | ppg | games | tier | games_table[:all|tiers[:weight]] (empirical games by position x age x tier; tiers = starters and mid only; weight = the table's share of a blend)")

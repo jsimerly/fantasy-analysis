@@ -80,6 +80,25 @@ def sigma_from_career_meta(meta: dict) -> dict[int, dict[str, float]]:
     return {int(k): v for k, v in meta.get("ppg_sigma", {}).items()}
 
 
+def run_meta(args) -> tuple[dict, str]:
+    """The run's metrics (sigma, discount, replacement line) and the career run date to read from.
+
+    An in-season refresh writes its own ``metrics.json`` (since 2026-10-05); older runs, and the
+    career source, use the career build of the run date or, failing that, the latest one before it
+    (the refresh does not rebuild the preseason career model every week)."""
+    if args.source == "inseason":
+        own = ("inseason", f"season={args.season}", f"week={args.week}", f"run_date={args.run_date}")
+        if any(p.endswith("metrics.json") for p in gcs_io.list_ml(*own)):
+            return gcs_io.read_ml_json(*own, "metrics.json"), args.run_date
+    base = ("intrinsic_value", f"as_of_season={args.as_of_season}")
+    run = gcs_io.latest_run_date(*base, on_or_before=args.run_date)
+    if run is None:
+        raise SystemExit(f"no career build under {'/'.join(base)} on or before {args.run_date}")
+    if run != args.run_date:
+        print(f"career build for run_date {args.run_date} not found; using {run}", flush=True)
+    return gcs_io.read_ml_json(*base, f"run_date={run}", "metrics.json"), run
+
+
 def _latest(prefix: str) -> str:
     from google.cloud import storage
     return sorted(b.name for b in storage.Client().list_blobs(gcs_io.LAKE_BUCKET, prefix=prefix) if b.name.endswith(".parquet"))[-1]
@@ -205,15 +224,15 @@ def main() -> None:
     ap.add_argument("--dump", help="also write each league's projections / teams parquet to this local directory (for comparisons)")
     args = ap.parse_args()
 
-    career_meta = gcs_io.read_ml_json("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}", "metrics.json")
+    if args.source == "inseason" and (args.season is None or args.week is None):
+        ap.error("--season/--week required for --source inseason")
+    career_meta, career_run = run_meta(args)
     sigma = sigma_from_career_meta(career_meta)
     if args.source == "career":
-        proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={args.run_date}", "projections.parquet")
+        proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}", "projections.parquet")
         H = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_ppg_hat"))
         comps, span = war.career_components(H), f"preseason off {args.as_of_season}"
     else:
-        if args.season is None or args.week is None:
-            ap.error("--season/--week required for --source inseason")
         proj = gcs_io.read_ml_parquet("inseason", f"season={args.season}", f"week={args.week}", f"run_date={args.run_date}", "projections.parquet")
         tail = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_vorp_hat"))
         comps, span = war.inseason_components(tail), f"{args.season} through week {args.week}"
