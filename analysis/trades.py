@@ -1,4 +1,5 @@
-"""League trades, priced three ways (BACKLOG item 25).
+"""League trades, priced at the trade date and at N+1, N+2, ... years after it (machine_learning/BACKLOG.md
+item 25; analysis, not a model).
 
 Every completed trade in the owner's three dynasty lineages (Sleeper transactions, 2021 on) with
 both sides' assets:
@@ -7,37 +8,51 @@ both sides' assets:
   receiving and giving rosters, the league season, the date and the fantasy week (``leg``);
   pick legs carry the pick's season, round and original roster.
 * ``resolve_picks``: a traded pick whose draft has happened becomes the player taken with it
-  (drafts + draft order), so the pick can be scored on what it delivered.
-* ``price_ktc``: KTC dynasty (SF, standard) value of every asset at the trade date and today;
-  picks at the Mid tier of their round until the draft, the drafted player's value after.
-* ``realized_wins``: what every asset delivered after the trade, in wins above replacement in
-  the lineage's own units (weekly points vs the lineage's replacement line, through the win
-  curve), counted from the week after the trade to today.
-* ``manager_table``: per manager and lineage, value given vs received on each basis, net wins,
-  win rate, partners; ``trade_table`` scores each trade for each side.
+  (drafts + draft order), with the draft date.
+* ``price_horizons``: KTC dynasty (SF, standard) value of every asset at the trade date (N) and at
+  N+1, N+2, N+3 years and today. A pick is a pick (Mid tier of its round) until its draft and the
+  drafted player after it. A horizon that has not arrived yet is null ("not yet"), an asset with no
+  price on a date that has (a team defense, a pick before KTC priced picks) is 0.
+* ``ktc_combine``: KTC's trade-calculator combine (``processVNew``): a package's value is not the
+  sum of its parts, the best asset counts for more, so a two-for-one has to overpay in raw value.
+  Side values are combined with the trade's best asset as the reference.
+* ``realized_wins`` (secondary): what every asset delivered after the trade, in wins above
+  replacement in the lineage's own units (weekly points vs the lineage's weekly replacement line,
+  through its win curve), from the week after the trade to today.
+* ``trade_table``: one row per (trade, side) with the side's package value at each horizon, raw
+  and combined, the net against the other side, and the wins; ``manager_table``: per manager.
 
-Caveats: roster ids are mapped to today's franchise owners (an orphaned team's earlier trades are
-credited to its current owner); a 2026 pick traded before its draft is priced at the Mid tier of
-its round; points are scored under one scoring setting (fact_player_week).
+Caveats: roster ids map to today's franchise owners (an orphaned team's earlier trades are
+credited to its current owner); the silver KTC fact lists only today's ~430 players, so the bronze
+archive (2020-04 to 2024-08) prices the rest and a player who dropped off KTC between 2024-08 and
+2025-10 reads 0 in that window; one scoring setting for the wins.
 """
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-import gcs_io
-import league as lg
-import lineup
-import market
+# the wins yardstick (league spec, weekly replacement line, win curve) and the KTC history loader live in the ML package
+ML_SRC = Path(__file__).resolve().parents[1] / "machine_learning" / "src"
+if str(ML_SRC) not in sys.path:
+    sys.path.insert(0, str(ML_SRC))
+import gcs_io  # noqa: E402
+import league as lg  # noqa: E402
+import lineup  # noqa: E402
+import market  # noqa: E402
 
 SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 TX = "bronze/sleeper/transactions/transactions"
 TX_PLAYERS = "bronze/sleeper/transactions/transaction_players"
 TX_PICKS = "bronze/sleeper/transactions/draft_picks"
 POS = ["QB", "RB", "WR", "TE"]
+HORIZONS = (0, 1, 2, 3)          # years after the trade at which the packages are re-priced
+TOLERANCE_DAYS = 90              # a value is "at" a date if KTC priced the asset within this many days before it
 
 
 def _both(prefix: str) -> pl.DataFrame:
@@ -104,9 +119,9 @@ def franchises() -> pl.DataFrame:
 
 # ------------------------------------------------------------------------------ picks -> players
 def resolve_picks(legs: pl.DataFrame) -> pl.DataFrame:
-    """Add ``drafted_player_id`` (Sleeper) and ``draft_slot`` to pick legs whose draft has happened:
-    the lineage's linear draft of that season, the original roster's slot in the draft order, the
-    player taken at (round, slot)."""
+    """Add ``drafted_player_id`` (Sleeper), ``draft_slot`` and ``draft_date`` to pick legs whose draft
+    has happened: the lineage's linear draft of that season, the original roster's slot in the draft
+    order, the player taken at (round, slot)."""
     meta = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").select("league_id", pl.col("season").cast(pl.Int64), "league_lineage_id")
     dr = (gcs_io.read_lake_prefix("bronze/sleeper/drafts/drafts").unique("draft_id").filter(pl.col("type") == "linear")
           .join(meta, on="league_id", how="inner"))
@@ -121,18 +136,23 @@ def resolve_picks(legs: pl.DataFrame) -> pl.DataFrame:
             order = v if isinstance(v, dict) else (json.loads(v) if v else {})
         except Exception:  # noqa: BLE001
             order = {}
+        when = d.get("last_picked") or d.get("start_time")
+        ddate = date.fromtimestamp(when / 1000) if when else date(int(d["season"]), 5, 15)
         for user, slot in order.items():
             if slot is None:
                 continue
-            rows.append({"lineage_id": d["league_lineage_id"], "pick_season": int(d["season"]), "draft_id": d["draft_id"], "owner_id": str(user), "draft_slot": int(slot)})
+            rows.append({"lineage_id": d["league_lineage_id"], "pick_season": int(d["season"]), "draft_id": d["draft_id"], "owner_id": str(user),
+                         "draft_slot": int(slot), "draft_date": ddate})
+    empty = legs.with_columns(pl.lit(None, pl.Utf8).alias("drafted_player_id"), pl.lit(None, pl.Int64).alias("draft_slot"), pl.lit(None, pl.Date).alias("draft_date"))
     if not rows:
-        return legs.with_columns(pl.lit(None, pl.Utf8).alias("drafted_player_id"), pl.lit(None, pl.Int64).alias("draft_slot"))
+        return empty
     slots = pl.DataFrame(rows).join(fr, on=["lineage_id", "owner_id"], how="left")
     dp = gcs_io.read_lake_prefix("bronze/sleeper/drafts/draft_picks").unique(["draft_id", "pick_no"]).select(
         "draft_id", pl.col("round").cast(pl.Int64).alias("pick_round"), pl.col("draft_slot").cast(pl.Int64), pl.col("player_id").alias("drafted_player_id"))
-    res = (slots.select("lineage_id", "pick_season", "draft_id", pl.col("roster_id").alias("pick_orig"), "draft_slot")
+    res = (slots.select("lineage_id", "pick_season", "draft_id", pl.col("roster_id").alias("pick_orig"), "draft_slot", "draft_date")
            .join(dp, on=["draft_id", "draft_slot"], how="inner")
-           .select("lineage_id", "pick_season", "pick_round", "pick_orig", "draft_slot", "drafted_player_id").unique(["lineage_id", "pick_season", "pick_round", "pick_orig"]))
+           .select("lineage_id", "pick_season", "pick_round", "pick_orig", "draft_slot", "draft_date", "drafted_player_id")
+           .unique(["lineage_id", "pick_season", "pick_round", "pick_orig"]))
     return legs.join(res, on=["lineage_id", "pick_season", "pick_round", "pick_orig"], how="left")
 
 
@@ -142,66 +162,107 @@ def load_pick_prices() -> pl.DataFrame:
     import io
     pv = pl.read_parquet(io.BytesIO(gcs_io._client().bucket(gcs_io.LAKE_BUCKET).blob("silver/fantasy/fact_pick_values").download_as_bytes()))
     pv = pv.filter((pl.col("source_system") == "ktc") & (pl.col("market_type") == "DYNASTY") & (pl.col("qb_format") == "SF") & (pl.col("te_premium") == "Standard"))
-    return pv.select(pl.col("valuation_date").cast(pl.Utf8).str.slice(0, 10).str.to_date().alias("valuation_date"), pl.col("season").cast(pl.Int64).alias("pick_season"), pl.col("round").cast(pl.Int64).alias("pick_round"),
+    return pv.select(pl.col("valuation_date").cast(pl.Utf8).str.slice(0, 10).str.to_date().alias("valuation_date"),
+                     pl.col("season").cast(pl.Int64).alias("pick_season"), pl.col("round").cast(pl.Int64).alias("pick_round"),
                      "tier", pl.col("value").cast(pl.Float64).alias("ktc"))
 
 
-def load_ktc_archive() -> pl.DataFrame:
+def load_ktc_archive(today: date | None = None) -> pl.DataFrame:
     """KTC's historical dynasty (SF) player values from the bronze archive, 2020-04 to 2024-08, keyed
     by Sleeper id: the silver fact only carries today's ~430 listed players, so retired or dropped
-    players (Elliott, Cook, Carr) are priced from here."""
+    players (Elliott, Cook, Carr) are priced from here. Pick-tier rows (non-numeric ids, with
+    dirty future dates) are dropped."""
+    empty = pl.DataFrame({"pid": [], "valuation_date": [], "ktc": []}, schema={"pid": pl.Utf8, "valuation_date": pl.Date, "ktc": pl.Float64})
     try:
         df = gcs_io.read_lake_prefix("bronze/ktc/dynasty/local_load")
     except Exception:  # noqa: BLE001
-        return pl.DataFrame({"pid": [], "valuation_date": [], "ktc": []}, schema={"pid": pl.Utf8, "valuation_date": pl.Date, "ktc": pl.Float64})
-    return (df.filter(pl.col("sleeper_id").is_not_null() & (pl.col("value") > 0))
+        return empty
+    today = today or date.today()
+    return (df.filter(pl.col("sleeper_id").is_not_null() & pl.col("sleeper_id").cast(pl.Utf8).str.contains(r"^\d+$") & (pl.col("value") > 0))
             .select(pl.col("sleeper_id").cast(pl.Utf8).alias("pid"), pl.col("date").cast(pl.Date).alias("valuation_date"), pl.col("value").cast(pl.Float64).alias("ktc"))
+            .filter(pl.col("valuation_date") <= today)
             .unique(["pid", "valuation_date"]))
 
 
-def _asof(values: pl.DataFrame, keys: list[str], at: pl.DataFrame, tolerance_days: int = 30, out: str = "ktc") -> pl.DataFrame:
-    """Latest value on or before ``at.date`` within the tolerance, joined on ``keys``."""
+def ktc_history(today: date | None = None) -> pl.DataFrame:
+    """Player values by Sleeper id and date: the silver fact first, the archive where it has nothing."""
+    hist = market.load_ktc_history()
+    hv = hist.select(pl.col("player_key").alias("pid"), "valuation_date", pl.col("ktc_value").cast(pl.Float64).alias("ktc"))
+    return pl.concat([hv, load_ktc_archive(today)]).unique(["pid", "valuation_date"], keep="first")
+
+
+def _asof(values: pl.DataFrame, keys: list[str], at: pl.DataFrame, tolerance_days: int = TOLERANCE_DAYS, out: str = "ktc") -> pl.DataFrame:
+    """Latest value on or before ``at.at`` within the tolerance, joined on ``keys``."""
     v = values.sort("valuation_date")
-    a = at.sort("date")
-    j = a.join_asof(v.rename({"valuation_date": "_vd"}), left_on="date", right_on="_vd", by=keys, strategy="backward",
-                    tolerance=f"{tolerance_days}d")
+    a = at.sort("at")
+    j = a.join_asof(v.rename({"valuation_date": "_vd"}), left_on="at", right_on="_vd", by=keys, strategy="backward", tolerance=f"{tolerance_days}d")
     return j.rename({"ktc": out}).drop("_vd")
 
 
-def price_ktc(legs: pl.DataFrame, hist: pl.DataFrame | None = None, pick_prices: pl.DataFrame | None = None) -> pl.DataFrame:
-    """``ktc_then`` (at the trade date) and ``ktc_now`` (latest) per leg. Players by Sleeper id
-    (fact_asset_values_daily is keyed on the master player_key); picks at the Mid tier of their
-    round before the draft, the drafted player after."""
-    hist = market.load_ktc_history() if hist is None else hist
-    hv = hist.select(pl.col("player_key").alias("pid"), "valuation_date", pl.col("ktc_value").cast(pl.Float64).alias("ktc"))
-    hv = pl.concat([hv, load_ktc_archive()]).unique(["pid", "valuation_date"], keep="first")     # the fact first, the archive where it has nothing
-    latest = hv.filter(pl.col("valuation_date") >= hv["valuation_date"].max() - timedelta(days=7)).sort("valuation_date").unique("pid", keep="last").select("pid", pl.col("ktc").alias("ktc_now"))
-    # "then": a player by his id at the trade date; a pick as a pick (it was one at the time), Mid tier of its round
-    # "now": the player's latest value; a pick's drafted player if the draft has happened, else the pick tier today
-    legs = legs.with_row_index("_i").with_columns(
-        pl.when(pl.col("asset") == "player").then(pl.col("player_id")).otherwise(pl.col("drafted_player_id") if "drafted_player_id" in legs.columns else None).alias("pid"))
-    pl_legs = legs.filter((pl.col("asset") == "player") & pl.col("pid").is_not_null())
-    priced = _asof(hv, ["pid"], pl_legs.select("_i", "pid", "date"), out="ktc_then").select("_i", "ktc_then")
-    legs = legs.join(priced, on="_i", how="left").join(latest, on="pid", how="left")
+def value_at(legs: pl.DataFrame, at: pl.Series, hv: pl.DataFrame, pick_prices: pl.DataFrame | None, today: date | None = None) -> pl.Series:
+    """Each leg's KTC value at its own date ``at``: null when the date is in the future, 0 when it has
+    arrived but the asset has no price, a player by his id, a pick as its drafted player once the
+    draft has happened and as the Mid tier of its round before."""
+    today = today or date.today()
+    L = legs.with_row_index("_i").with_columns(at.alias("at"))
+    drafted = (pl.col("asset") == "pick") & pl.col("drafted_player_id").is_not_null() & pl.col("draft_date").is_not_null() & (pl.col("at") >= pl.col("draft_date"))
+    L = L.with_columns(pl.when(pl.col("asset") == "player").then(pl.col("player_id")).when(drafted).then(pl.col("drafted_player_id")).otherwise(None).alias("pid"))
+    arrived = L.filter(pl.col("at") <= today)
+    out = pl.DataFrame({"_i": L["_i"], "v": pl.Series([None] * L.height, dtype=pl.Float64)})
+    pp = arrived.filter(pl.col("pid").is_not_null()).select("_i", "pid", "at")
+    vals = []
+    if pp.height:
+        vals.append(_asof(hv, ["pid"], pp, out="v").select("_i", "v"))
+    pk = arrived.filter(pl.col("pid").is_null() & (pl.col("asset") == "pick")).select("_i", "pick_season", "pick_round", "at")
+    if pk.height and pick_prices is not None and pick_prices.height:
+        mid = pick_prices.filter(pl.col("tier").str.to_lowercase() == "mid").drop("tier")
+        vals.append(_asof(mid, ["pick_season", "pick_round"], pk, out="v").select("_i", "v"))
+    if vals:
+        got = pl.concat(vals).unique("_i")
+        out = out.drop("v").join(got, on="_i", how="left")
+    # arrived but unpriced -> 0; not arrived -> null
+    out = out.join(arrived.select("_i", pl.lit(True).alias("_arr")), on="_i", how="left")
+    return out.sort("_i").with_columns(pl.when(pl.col("_arr")).then(pl.col("v").fill_null(0.0)).otherwise(None).alias("v"))["v"]
+
+
+def price_horizons(legs: pl.DataFrame, hv: pl.DataFrame | None = None, pick_prices: pl.DataFrame | None = None,
+                   horizons: tuple[int, ...] = HORIZONS, today: date | None = None) -> pl.DataFrame:
+    """``v0`` (the trade date), ``v1`` .. (N+1, N+2 ... years later) and ``v_now`` per leg."""
+    today = today or date.today()
+    hv = ktc_history(today) if hv is None else hv
     if pick_prices is None:
         try:
             pick_prices = load_pick_prices()
         except Exception:  # noqa: BLE001
             pick_prices = None
-    if pick_prices is not None and pick_prices.height:
-        mid = pick_prices.filter(pl.col("tier").str.to_lowercase() == "mid").drop("tier")
-        pk = legs.filter(pl.col("asset") == "pick").select("_i", "pick_season", "pick_round", "date")
-        if pk.height:
-            p2 = _asof(mid, ["pick_season", "pick_round"], pk, tolerance_days=60, out="pick_then").select("_i", "pick_then")
-            legs = legs.join(p2, on="_i", how="left").with_columns(pl.coalesce([pl.col("ktc_then"), pl.col("pick_then")]).alias("ktc_then")).drop("pick_then")
-        last_day = mid["valuation_date"].max()
-        now_p = mid.filter(pl.col("valuation_date") == last_day).select("pick_season", "pick_round", pl.col("ktc").alias("pick_now"))
-        legs = legs.join(now_p, on=["pick_season", "pick_round"], how="left").with_columns(
-            pl.when(pl.col("ktc_now").is_null() & (pl.col("asset") == "pick")).then(pl.col("pick_now")).otherwise(pl.col("ktc_now")).alias("ktc_now")).drop("pick_now")
-    return legs.drop("_i")
+    cols = []
+    for m in horizons:
+        at = legs.select((pl.col("date") + pl.duration(days=round(365.25 * m))).alias("at"))["at"] if m else legs["date"].alias("at")
+        cols.append(value_at(legs, at, hv, pick_prices, today).alias(f"v{m}"))
+    cols.append(value_at(legs, pl.Series("at", [today] * legs.height, dtype=pl.Date), hv, pick_prices, today).alias("v_now"))
+    return legs.with_columns(cols)
 
 
-# ------------------------------------------------------------------------------ realized wins
+# ------------------------------------------------------------------------------ KTC's combine
+def pv(v: np.ndarray, vmax: np.ndarray | float) -> np.ndarray:
+    """KTC's trade calculator (processVNew): an asset's contribution to a package, given the best
+    asset in the trade (``vmax``). The curve is convex, so the best asset counts for more than its
+    share and a package of lesser pieces has to overpay in raw value."""
+    v = np.asarray(v, float)
+    vmax = np.maximum(np.asarray(vmax, float), 1.0)
+    return (0.1 * np.power(v / 10099.0, 1.4) + 0.7 * np.power(v / (1.05 * vmax), 1.25) + 0.2) * v
+
+
+def ktc_combine(values, vmax: float | None = None) -> float:
+    """A package's value under KTC's calculator; ``vmax`` defaults to the package's own best asset
+    (in a trade, pass the best asset across both sides)."""
+    v = np.asarray([x for x in values if x is not None], float)
+    if v.size == 0:
+        return 0.0
+    return float(pv(v, vmax if vmax is not None else v.max()).sum())
+
+
+# ------------------------------------------------------------------------------ realized wins (secondary)
 def _crosswalk() -> pl.DataFrame:
     """Sleeper id -> gsis id, name, position. nflverse's fantasy_player_ids first (it maps ~97 % of
     traded players); dim_players_master as the fallback (it maps a third, and pads some gsis ids
@@ -230,8 +291,7 @@ def replacement_by_season(spec: lg.LeagueSpec, seasons: list[int], season_df: pl
 def realized_wins(legs: pl.DataFrame, weeks: pl.DataFrame, rep: dict[str, dict[int, dict[str, float]]], curves: dict[str, lg.WinCurve],
                   through: date | None = None) -> pl.DataFrame:
     """Per leg: ``wins_since`` (wins above replacement delivered from the week after the trade to
-    ``through``), ``pts_since``, ``games_since``, ``seasons_since`` (elapsed seasons, fractional).
-    ``rep[lineage][season][pos]``; ``curves[lineage]``."""
+    ``through``), ``pts_since``, ``games_since``. ``rep[lineage][season][pos]``; ``curves[lineage]``."""
     xw = _crosswalk()
     legs = legs.with_row_index("_i")
     pid = pl.col("player_id") if "drafted_player_id" not in legs.columns else pl.coalesce([pl.col("player_id"), pl.col("drafted_player_id")])
@@ -260,72 +320,95 @@ def realized_wins(legs: pl.DataFrame, weeks: pl.DataFrame, rep: dict[str, dict[i
 
 
 # ------------------------------------------------------------------------------ scoring
+def _vcols(legs: pl.DataFrame) -> list[str]:
+    return [c for c in legs.columns if c == "v_now" or (c.startswith("v") and c[1:].isdigit())]
+
+
 def trade_table(trades: pl.DataFrame, legs: pl.DataFrame, fr: pl.DataFrame) -> pl.DataFrame:
-    """One row per (trade, roster): what the roster received and gave on each basis."""
-    def side(df: pl.DataFrame, col: str) -> pl.DataFrame:
-        return df.group_by(["transaction_id", col]).agg(
-            pl.len().alias("n"), (pl.col("asset") == "pick").sum().alias("picks"),
-            pl.col("ktc_then").sum().alias("ktc_then"), pl.col("ktc_now").sum().alias("ktc_now"),
-            pl.col("wins_since").sum().alias("wins"), pl.col("pts_since").sum().alias("pts"),
-            pl.col("label").str.join(" + ").alias("assets")).rename({col: "roster_id"})
+    """One row per (trade, roster): the package received and given at every horizon, raw (``_sum``)
+    and under KTC's combine (the trade's best asset at that horizon as the reference), the net
+    (received minus given, combined), the wins delivered since, and the assets as text."""
+    vcols = _vcols(legs)
     name = pl.when(pl.col("asset") == "pick").then(
         pl.format("{} R{} pick", pl.col("pick_season"), pl.col("pick_round")) + pl.when(pl.col("drafted_name").is_not_null()).then(pl.format(" ({})", pl.col("drafted_name"))).otherwise(pl.lit(""))
     ).otherwise(pl.col("name"))
     L = legs.with_columns(name.alias("label"))
-    recv = side(L, "roster_id").rename({c: f"recv_{c}" for c in ["n", "picks", "ktc_then", "ktc_now", "wins", "pts", "assets"]})
-    give = side(L, "from_roster").rename({c: f"give_{c}" for c in ["n", "picks", "ktc_then", "ktc_now", "wins", "pts", "assets"]})
+    # the trade's best asset at each horizon (both sides) is the combine's reference; a horizon is defined for a side only when every leg has arrived
+    for c in vcols:
+        L = L.with_columns(pl.col(c).max().over("transaction_id").alias(f"_max_{c}"))
+        L = L.with_columns(pl.Series(f"_pv_{c}", pv(L[c].fill_null(0.0).to_numpy(), L[f"_max_{c}"].fill_null(1.0).to_numpy())))
+        L = L.with_columns(pl.when(pl.col(c).is_null()).then(None).otherwise(pl.col(f"_pv_{c}")).alias(f"_pv_{c}"))
+
+    def side(col: str) -> pl.DataFrame:
+        aggs = [pl.len().alias("n"), (pl.col("asset") == "pick").sum().alias("picks"),
+                pl.col("wins_since").sum().alias("wins") if "wins_since" in L.columns else pl.lit(0.0).alias("wins"),
+                pl.col("label").str.join(" + ").alias("assets")]
+        for c in vcols:
+            aggs += [pl.when(pl.col(c).is_null().any()).then(None).otherwise(pl.col(c).sum()).alias(f"{c}_sum"),
+                     pl.when(pl.col(f"_pv_{c}").is_null().any()).then(None).otherwise(pl.col(f"_pv_{c}").sum()).alias(c),
+                     ((pl.col(c) == 0) & pl.col(c).is_not_null()).sum().alias(f"{c}_unpriced")]
+        return L.group_by(["transaction_id", col]).agg(aggs).rename({col: "roster_id"})
+
+    keep = ["n", "picks", "wins", "assets"] + [f"{c}{s}" for c in vcols for s in ("", "_sum", "_unpriced")]
+    recv = side("roster_id").rename({c: f"recv_{c}" for c in keep})
+    give = side("from_roster").rename({c: f"give_{c}" for c in keep})
     t = recv.join(give, on=["transaction_id", "roster_id"], how="full", coalesce=True)
     t = t.join(trades.select("transaction_id", "lineage_id", "league_name", "season", "date", "leg", "in_season", "n_teams"), on="transaction_id", how="left")
     t = t.join(fr.select("lineage_id", "roster_id", "manager"), on=["lineage_id", "roster_id"], how="left")
-    num = ["recv_ktc_then", "give_ktc_then", "recv_ktc_now", "give_ktc_now", "recv_wins", "give_wins", "recv_pts", "give_pts"]
-    t = t.with_columns([pl.col(c).fill_null(0.0) for c in num])
-    return t.with_columns((pl.col("recv_ktc_then") - pl.col("give_ktc_then")).alias("net_ktc_then"),
-                          (pl.col("recv_ktc_now") - pl.col("give_ktc_now")).alias("net_ktc_now"),
-                          (pl.col("recv_wins") - pl.col("give_wins")).alias("net_wins")).sort("date", "transaction_id")
+    t = t.with_columns([pl.col(c).fill_null(0.0) for c in ("recv_wins", "give_wins")] + [pl.col(c).fill_null(0) for c in ("recv_n", "give_n", "recv_picks", "give_picks")])
+    nets = [(pl.col(f"recv_{c}") - pl.col(f"give_{c}")).alias(f"net_{c}") for c in vcols]
+    nets += [(pl.col(f"recv_{c}_sum") - pl.col(f"give_{c}_sum")).alias(f"net_{c}_sum") for c in vcols]
+    nets.append((pl.col("recv_wins") - pl.col("give_wins")).alias("net_wins"))
+    # fairness at the time: the calculator's verdict as a share of the trade (+ = this side got the better of it)
+    t = t.with_columns(nets)
+    if "net_v0" in t.columns:
+        t = t.with_columns((pl.col("net_v0") / (pl.col("recv_v0") + pl.col("give_v0")).clip(lower_bound=1.0)).alias("fair_v0"))
+    return t.sort("date", "transaction_id")
 
 
 def manager_table(tt: pl.DataFrame, min_seasons: float = 0.0) -> pl.DataFrame:
-    """Per lineage and manager: trades, value given / received, net wins, win rate, tendencies."""
+    """Per lineage and manager: trades, the calculator's verdict at the time, the package values at
+    N+1 .. and today, win rates by value at each horizon, net wins delivered."""
     scored = tt.filter(pl.col("seasons_since") >= min_seasons) if "seasons_since" in tt.columns else tt
-    return (scored.group_by(["lineage_id", "league_name", "manager"]).agg(
-        pl.len().alias("trades"), pl.col("in_season").mean().alias("in_season_share"),
-        pl.col("recv_ktc_then").sum().alias("ktc_in"), pl.col("give_ktc_then").sum().alias("ktc_out"),
-        pl.col("net_ktc_then").mean().alias("net_ktc_per_trade"),
-        pl.col("recv_wins").sum().alias("wins_in"), pl.col("give_wins").sum().alias("wins_out"), pl.col("net_wins").sum().alias("net_wins"),
-        (pl.col("net_wins") > 0.05).mean().alias("win_rate"), (pl.col("net_wins") < -0.05).mean().alias("loss_rate"),
-        pl.col("net_wins").max().alias("best"), pl.col("net_wins").min().alias("worst"),
-        pl.col("recv_picks").sum().cast(pl.Int64).alias("picks_in"), pl.col("give_picks").sum().cast(pl.Int64).alias("picks_out"),
-        pl.col("net_ktc_now").sum().alias("net_ktc_now"))
-        .with_columns((pl.col("picks_in") - pl.col("picks_out")).alias("net_picks"))
-        .sort(["lineage_id", "net_wins"], descending=[False, True]))
+    vcols = [c[4:] for c in tt.columns if c.startswith("net_v") and not c.endswith("_sum")]
+    aggs = [pl.len().alias("trades"), pl.col("in_season").mean().alias("in_season_share"),
+            pl.col("recv_wins").sum().alias("wins_in"), pl.col("give_wins").sum().alias("wins_out"), pl.col("net_wins").sum().alias("net_wins"),
+            (pl.col("net_wins") > 0.05).mean().alias("wins_won"),
+            pl.col("recv_picks").sum().cast(pl.Int64).alias("picks_in"), pl.col("give_picks").sum().cast(pl.Int64).alias("picks_out")]
+    for c in vcols:
+        aggs += [pl.col(f"recv_{c}").sum().alias(f"in_{c}"), pl.col(f"give_{c}").sum().alias(f"out_{c}"),
+                 pl.col(f"net_{c}").sum().alias(f"net_{c}"), pl.col(f"net_{c}").mean().alias(f"net_{c}_per_trade"),
+                 (pl.col(f"net_{c}") > 0).sum().alias(f"won_{c}"), pl.col(f"net_{c}").is_not_null().sum().alias(f"n_{c}")]
+    out = scored.group_by(["lineage_id", "league_name", "manager"]).agg(aggs)
+    out = out.with_columns([(pl.col(f"won_{c}") / pl.col(f"n_{c}").clip(lower_bound=1)).alias(f"won_{c}") for c in vcols] + [(pl.col("picks_in") - pl.col("picks_out")).alias("net_picks")])
+    return out.sort(["lineage_id", "net_v0" if "net_v0" in out.columns else "net_wins"], descending=[False, True])
 
 
 def build(through: date | None = None) -> dict[str, pl.DataFrame]:
-    """Everything: trades, legs (priced and scored), per-side trade table, manager table."""
-    import feature_groups as fg
+    """Everything: trades, legs (priced at every horizon and scored), per-side trade table, manager table."""
+    today = through or date.today()
     trades, legs = load_trades()
     legs = resolve_picks(legs)
     fr = franchises()
     xw = _crosswalk()
     legs = legs.join(xw.select("pid", "name", "pos"), left_on="player_id", right_on="pid", how="left")
     legs = legs.join(xw.select(pl.col("pid").alias("drafted_player_id"), pl.col("name").alias("drafted_name"), pl.col("pos").alias("drafted_pos")), on="drafted_player_id", how="left")
-    legs = price_ktc(legs)
-    ctx = fg.Context()
+    legs = price_horizons(legs, today=today)
     settings = gcs_io.read_lake(SETTINGS_PATH)
-    season_df = ctx.matrix if hasattr(ctx, "matrix") else gcs_io.read_lake("silver/fantasy/fact_player_season/data.parquet")
+    weeks = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
+    season_df = gcs_io.read_lake("silver/fantasy/fact_player_season/data.parquet")
     seasons = sorted(set(int(s) for s in legs["season"].to_list()) | {int(legs["season"].max()) + 1})
-    seasons = [s for s in seasons if s <= (through or date.today()).year]
+    seasons = [s for s in seasons if s <= today.year]
     rep, curves = {}, {}
     for lin in trades["lineage_id"].unique().to_list():
         try:
             spec = lg.LeagueSpec.from_settings(settings, lin, name=lin)
         except Exception:  # noqa: BLE001
             spec = lg.LeagueSpec.from_settings(settings, None, name=lin)
-        rep[lin] = replacement_by_season(spec, seasons, season_df, ctx.weeks)
+        rep[lin] = replacement_by_season(spec, seasons, season_df, weeks)
         curves[lin] = lg.curve_for_lineage(lin)
-    legs = realized_wins(legs, ctx.weeks, rep, curves, through=through)
-    end = through or date.today()
-    legs = legs.with_columns(((pl.lit(end) - pl.col("date")).dt.total_days() / 365.25).alias("seasons_since"))
+    legs = realized_wins(legs, weeks, rep, curves, through=through)
+    legs = legs.with_columns(((pl.lit(today) - pl.col("date")).dt.total_days() / 365.25).alias("seasons_since"))
     tt = trade_table(trades, legs, fr).join(legs.group_by("transaction_id").agg(pl.col("seasons_since").max()), on="transaction_id", how="left")
     mt = manager_table(tt)
     return {"trades": trades, "legs": legs, "trade_table": tt, "managers": mt, "replacement": pl.DataFrame(

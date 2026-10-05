@@ -210,31 +210,12 @@ Writes `players.parquet` (every priced player with ranks, calls and segments), `
 (the swaps) and `summary.json` (every table) to `--out`; it does not write to the lake or the
 ledger. Results are kept in `BACKLOG.md` item 23.
 
-## The leagues' trading, scored
+## The leagues' trading, scored — in `analysis/`
 
-`src/trades.py` + `scripts/trade_report.py` (BACKLOG 25). Every completed trade in the three
-lineages (Sleeper transactions, 2021 on; full-load dump ∪ daily feed, deduplicated) with both
-sides' assets. Players are priced by KTC dynasty (SF) at the trade date (the silver fact, with
-the bronze KTC archive as the fallback for players no longer listed) and today; a pick is priced
-as a pick at the trade date (Mid tier of its round) and, once its draft has happened, becomes the
-player taken with it (the lineage's linear draft, the original roster's slot in the draft order,
-the pick at that slot). What each side delivered since the trade is counted in wins above
-replacement in the lineage's own units: weekly points vs the lineage's weekly replacement line
-that season, through its win curve, from the week after the trade to today. The report prints
-per-manager scorecards, the best and worst trades, and the patterns (KTC's verdict at the time
-vs the realized winner, picks vs players, consolidation, in-season vs offseason, partners);
-`--manager NAME` lists one manager's trades in full; `--publish` writes the summary to
-`backtests/trades/`.
-
-```
-scripts/trade_report.py --rebuild --out <dir> --min-seasons 1 --manager "Jacob Simerly"
-```
-
-Caveats: roster ids map to today's franchise owners; a side's "wins since" counts everything the
-player did afterwards whether or not he was kept; older trades have had more seasons to deliver,
-so magnitudes are comparable within a trade, not across years; one scoring setting. The Sleeper
-id → gsis crosswalk is nflverse's `fantasy_player_ids` (the player master maps a third and pads
-ids with spaces).
+Not a model, so it lives with the notebooks: `analysis/trades.py` + `analysis/trade_report.py`
+(see `analysis/README.md`). It imports this package's KTC history loader and, for the secondary
+wins column, the league spec, weekly replacement line and win curve; it publishes its summary to
+`backtests/trades/`, which `export_projections.py` carries to the page's Trades tab.
 
 ## Phase 2 — intrinsic value
 

@@ -430,8 +430,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     pattern of mistakes (in-season panic sells, paying for last month's form, pick fever, position
     bias, trading with one partner); and the counterparties each manager loses to. Output: a
     Trades tab (per-league leaderboard, trade log with the three prices, manager profiles).
-    **First cut, 2026-10-05 (`src/trades.py`, `scripts/trade_report.py`; KTC then / now and
-    realized WAR since; the model's walk-forward price still to come).** 298 completed trades,
+    **First cut, 2026-10-05 (`analysis/trades.py`, `analysis/trade_report.py` — analysis, not a
+    model, so it lives with the notebooks). Value first, per the owner: every side is priced with
+    KTC's trade calculator (the combine, so lopsided packages are judged as KTC judges them) at
+    the trade date N and re-priced with the same assets at N+1, N+2, N+3 and today (a pick turns
+    into the rookie it became); wins delivered since are the secondary column. The page has a
+    Trades tab (scorecards, log, head-to-head, patterns; sortable, filtered by league, manager,
+    horizon and trade age). Numbers below are from the wins-based first pass; the value-based
+    scorecards are on the page.** 298 completed trades,
     932 asset legs (519 players, 492 priced at the trade date; 413 picks, 297 priced, 277 resolved
     to the rookie taken), 454 trade sides at least a season old. Stuck in High School is the
     trading league (245 of the 298). Scorecards (net wins delivered since, trades ≥ 1 season old):

@@ -210,6 +210,7 @@ def main() -> None:
         paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
         return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
+    trades_summary = latest_summary("trades")          # analysis/trade_report.py --publish (the leagues' trading, scored)
     try:
         import experiments
         led = experiments.load_ledger()
@@ -261,7 +262,7 @@ def main() -> None:
         except Exception as e:  # noqa: BLE001
             print("owned picks: skipped:", str(e)[:200])
     out = {
-        "picks": picks_out,
+        "picks": picks_out, "trades": trades_summary,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
