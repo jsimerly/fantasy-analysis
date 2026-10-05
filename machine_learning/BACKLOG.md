@@ -436,8 +436,19 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     the trade date N and re-priced with the same assets at N+1, N+2, N+3 and today (a pick turns
     into the rookie it became); wins delivered since are the secondary column. The page has a
     Trades tab (scorecards, log, head-to-head, patterns; sortable, filtered by league, manager,
-    horizon and trade age). Numbers below are from the wins-based first pass; the value-based
-    scorecards are on the page.** 298 completed trades,
+    horizon and trade age).** Value findings (two-team trades at least a season old, all leagues):
+    (a) the calculator's verdict persists: the side it favoured at N (mean +2.1k combined, 32 %
+    lean) is still ahead by +0.6k at N+1 and +1.1k at N+2 and wins 63 % of trades by value at both
+    horizons, but only +0.17 wins on the field (51 % won on wins); (b) **picks appreciate**: the
+    side that took picks for players was called slightly short at N (−0.3k) yet is ahead +1.2k at
+    N+1, +1.8k at N+2 and +1.9k today, winning 66–73 % by value, while delivering −0.22 wins and
+    losing 65 % on wins — the owner's hunch (hold picks, their price rises toward the draft) holds
+    in market terms, and the wins-based "pick fever" is the same trades seen from the other side;
+    (c) timing is a wash by value (49–50 % won at N+1 / N+2 either way). Scorecards by value at
+    N+2, Stuck: Noah Smyth +39.8k (70 % won), Spencer Carella +13.9k (61 %), the owner +8.0k
+    (55 %; −15.9k at N+1 then recovering), Alex Walker −8.8k, Brayton Green −9.9k (but +28.4k at
+    N+1 and the most wins delivered), Anthony Golden −13.2k, Jake Kliest −14.6k, Alex Vaught
+    −12.6k. Numbers in the paragraph above are from the wins-based first pass.** 298 completed trades,
     932 asset legs (519 players, 492 priced at the trade date; 413 picks, 297 priced, 277 resolved
     to the rookie taken), 454 trade sides at least a season old. Stuck in High School is the
     trading league (245 of the 298). Scorecards (net wins delivered since, trades ≥ 1 season old):
