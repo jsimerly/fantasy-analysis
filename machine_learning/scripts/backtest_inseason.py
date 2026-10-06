@@ -113,7 +113,9 @@ def main() -> None:
         m = inseason.InSeasonModels(device=args.device).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
-        snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate)
+        rookie_tbl = inseason.rookie_tail_table(season, H, through=last_complete)
+        snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl)
+        print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
         # preseason view for the same players: the career model's IV off their 2025 row
         pre = value.intrinsic_value(tail, rep, H, args.discount_rate).select("player_id", pl.col("iv").alias("iv_preseason"))
@@ -151,13 +153,14 @@ def main() -> None:
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(season, starters, seasons=list(range(T - 5, T)))
         tail, sigma, survival = career_tail(season, T - 1, rep, args.device, cap=args.cap)
+        rookie_tbl = inseason.rookie_tail_table(season, H, through=T - 1)
         m = inseason.InSeasonModels(device=args.device).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
         for W in weeks:
             snap = m.predict(snaps.filter((pl.col("season") == T) & (pl.col("week") == W)))
             snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
             snap = snap.with_columns((pl.col("next_games_hat") * pl.col("next_ppg_hat")).alias("next_fpts_hat"))
-            snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate)
+            snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl)
             snap = market.attach_market(snap, week_end_date(wk, T, W), hist, xw).join(k_end, on="player_key", how="left")
             priced = snap.filter(pl.col("ktc_value").is_not_null() & pl.col("next_observable"))
             nx = priced["next_fpts"].to_numpy().astype(float)

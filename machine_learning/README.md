@@ -47,6 +47,17 @@ Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced th
   the rich third ~−7 %, and a naive "hot start" rule has no such power. The *multi-year* IV gap does
   not predict the move — the in-season market chases near-term production, so that is where the
   tradable lag is.
+A rookie has no complete prior season, so the career model cannot give him a tail; in-season he
+gets one anchored on his next-season projection and shaped by the **realized trajectories of past
+rookies** of his position and projected tier (`inseason.rookie_tail_table`: for every horizon, the
+mean games in that year over the mean games in year +1 among rookies since 2008, absent seasons
+counted as 0, and the same for ppg among seasons played; a starter+mid pool and the position are
+the fallbacks for thin groups, and a backtest only sees rookies whose outcomes were complete by its
+season). Until 2026-10-06 that tail took the median ratio among players WITH a career tail in the
+same position and age bucket, which the young buckets' fringe players dragged to 0.27 of the
+next-season games by year four for a first-round running back who keeps 0.7-0.8 in the record;
+it is what made every rookie look worthless (BACKLOG 24). Anyone else without a prior season (a
+returning veteran) still uses that projection-median rule.
 Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
 oldest ages (see the age-survival prior); one lineup.
 

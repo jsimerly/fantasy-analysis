@@ -395,9 +395,13 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     secondary and market-backtest evidence. Operational consequence: TabPFN needs a GPU, so the
     Cloud Run weekly job (CPU, no torch in the image) keeps `xgb`; the TabPFN-backed refresh is a
     local run that writes the same ML-bucket paths, and the page header names the career model
-    that produced each export (`career_backend`). Next: TabPFN-3.5 on the owner's new computer (expected 2026-10-06; the
-    licence login is a one-time step there, `TABPFN_TOKEN` for headless runs);
-    whichever passes the paired test on `spearman_war_top` becomes production. Both runs went
+    that produced each export (`career_backend`). **The new computer arrived 2026-10-06** (RTX 5070 Ti
+    16 GB, Ryzen 9 9950X3D2): torch had to be reinstalled from the CUDA 13.0 index for Blackwell, the
+    licence token is cached (browser callback) and the 3.5 regressor weights downloaded; the v2
+    refresh whose projection step took 1 h 55 min on the RTX 2060 ran the whole pipeline in 32 min.
+    The 3.5 harness is queued (`tabpfn35_w`, `tabpfn35_w5`, then `tabpfn_v2_cap30t_w` for a
+    like-for-like v2 under the production cap); whichever passes the paired test on
+    `spearman_war_top` becomes production. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
@@ -521,7 +525,26 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     far tail (n = 43, mostly QBs; years 4–5, discounted to 0.4) stays a known over-projection rather
     than a tuned fix on 43 players. `career.fit_survival` / `career.apply_cap` parse the spec for the
     harness, the in-season refresh (the snapshot's tier is last season's `prev_ppg` / `prev_games`,
-    not three weeks of this one) and the career build. (2) The college data build is in:
+    not three weeks of this one) and the career build.
+    **Rookie tails, 2026-10-06.** With the cap fixed the in-season rookies were still rich (3 of 39
+    priced rookies a value): the cause moved to `inseason.fill_missing_tail`, which gave a rookie
+    the median ratio h{k} / next among players WITH a career tail in his position and age bucket;
+    those buckets are mostly fringe players whose projected tails collapse, so Jeremiyah Love (RB,
+    next season 13.5 games / 13.9 ppg) ran 9.1 / 3.6 / 4.7 / 1.0 games in years 3-6 while Ashton
+    Jeanty, one year older with a real tail, ran 13.3 / 12.1 / 9.8 / 10.1. The record for rookies
+    2008-2020 by rookie-year tier (mean games in year +k over year +1, absent = 0): RB starters
+    0.95 / 0.81 / 0.71 / 0.65, mid 0.83 / 0.75 / 0.73 / 0.53, fringe 0.95 / 0.85 / 0.64 / 0.47;
+    WR mid 0.99 / 0.87 / 0.84 / 0.78; first-round picks keep playing whatever their rookie year
+    (RB R1 fringe: 12.8 / 11.6 / 11.2 / 10.0 / 11.1 games). Hold-out (table from 2008-14 rookies,
+    scored on 2015-19 anchored on actual year +1, MAE on games +2..+5): position x tier 4.75, position
+    only 4.80, position x age band 4.83, x draft round 4.83 — the grouping barely matters; what
+    matters is realized ratios instead of the projection medians. **Adopted:** `rookie_tail_table`
+    (position x tier on the next-season projection, starter+mid pool and position as fallbacks, ppg
+    ratios need their own survivor count and are clipped to 0.6-1.15, leak-safe `through` a season)
+    feeds `fill_missing_tail` for rookies; returning veterans keep the old rule. Love's games become
+    13.0 / 11.1 / 9.2 / 8.7 / 8.1; 57 of 454 players take the table. Draft-round conditioning is the
+    untested refinement (the hold-out says it adds nothing on games; it may on ppg).
+    (2) The college data build is in:
     `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best

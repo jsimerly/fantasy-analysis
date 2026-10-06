@@ -196,11 +196,67 @@ def _age_bucket(age: pl.Expr) -> pl.Expr:
     return expr
 
 
-def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8) -> pl.DataFrame:
+ROOKIE_TIERS = ("starter", "mid", "fringe", "regular", "__all__")   # regular = starter + mid pooled; __all__ = the position
+
+
+def _tier_expr(ppg: pl.Expr, games: pl.Expr) -> pl.Expr:
+    return (pl.when((ppg >= 12) & (games >= 10)).then(pl.lit("starter"))
+              .when((ppg >= 8) & (games >= 8)).then(pl.lit("mid")).otherwise(pl.lit("fringe")))
+
+
+def rookie_tail_table(season_df: pl.DataFrame, horizons: Iterable[int], through: int | None = None,
+                      first_season: int = 2008, min_n: int = 10) -> pl.DataFrame:
+    """Realized trajectories of past rookies, as ratios to their year +1: for in-season horizon k
+    (season T-1+k off a rookie's season T, so h3 is year +2 after next season), the mean games in
+    year +(k-1) over the mean games in year +1 (``_rg{k}``; absent seasons count 0) and the same for
+    ppg among seasons played (``_rp{k}``), by position and rookie-year tier (starter / mid /
+    fringe on the rookie season's ppg and games), plus a starter+mid pool (``regular``) and the
+    position (``__all__``) as fallbacks. Only rookies whose year +(k-1) is complete by ``through``
+    (default: every complete season) enter horizon k, so a backtest cannot see its own future.
+    Groups with fewer than ``min_n`` rookies are dropped (the caller coalesces down the fallbacks).
+
+    Why realized, not projected: the previous rule took the median ratio among players WITH a
+    career tail in the same position and age bucket, and the young buckets are mostly fringe
+    players whose projected tails collapse (0.27 of next-season games by year four for a
+    first-round running back who, in the record, keeps 0.7-0.8); see BACKLOG 24."""
+    ks = [k for k in horizons if k >= 3]
+    if not ks or "is_rookie" not in season_df.columns:
+        return pl.DataFrame({"position": [], "_tier": []})
+    last = int(season_df.filter(pl.col("season_complete") if "season_complete" in season_df.columns else pl.lit(True))["season"].max()) if through is None else int(through)
+    base = season_df.filter(pl.col("position").is_in(POSITIONS) & pl.col("is_rookie").fill_null(False) & (pl.col("season") >= first_season) & (pl.col("season") + 1 <= last))
+    base = base.select("player_id", "position", "season", _tier_expr(pl.col("ppg").fill_null(0.0), pl.col("games").fill_null(0)).alias("_tier"))
+    out = season_df.select("player_id", "season", pl.col("games").fill_null(0).cast(pl.Float64).alias("_g"), pl.col("ppg").cast(pl.Float64).alias("_p"))
+    anchor = base.join(out.with_columns((pl.col("season") - 1).alias("season")).rename({"_g": "_g1", "_p": "_p1"}), on=["player_id", "season"], how="left").with_columns(pl.col("_g1").fill_null(0.0))
+    frames = []
+    for k in ks:
+        j = k - 1                                          # years after the rookie season
+        rows = anchor.filter(pl.col("season") + j <= last).join(
+            out.with_columns((pl.col("season") - j).alias("season")).rename({"_g": "_gk", "_p": "_pk"}), on=["player_id", "season"], how="left").with_columns(pl.col("_gk").fill_null(0.0))
+        rows = pl.concat([rows, rows.filter(pl.col("_tier").is_in(["starter", "mid"])).with_columns(pl.lit("regular").alias("_tier")), rows.with_columns(pl.lit("__all__").alias("_tier"))])
+        agg = rows.group_by("position", "_tier").agg(
+            pl.len().alias("_n"),
+            pl.col("_pk").is_not_null().sum().alias("_np"),
+            (pl.col("_gk").mean() / pl.col("_g1").mean()).alias(f"_rg{k}"),
+            # ppg among the seasons played: only the survivors carry a rate, so it needs its own count and is
+            # clipped (a handful of 10-year survivors at a thin position are not a rate to project from)
+            (pl.col("_pk").mean() / pl.col("_p1").mean()).clip(0.6, 1.15).alias(f"_rp{k}"),
+        ).filter((pl.col("_n") >= min_n) & pl.col(f"_rg{k}").is_finite()).with_columns(
+            pl.when((pl.col("_np") >= min_n) & pl.col(f"_rp{k}").is_finite()).then(pl.col(f"_rp{k}")).otherwise(None).alias(f"_rp{k}")).drop("_n", "_np")
+        frames.append(agg)
+    table = frames[0]
+    for fr in frames[1:]:
+        table = table.join(fr, on=["position", "_tier"], how="full", coalesce=True)
+    return table
+
+
+def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8, rookie_table: pl.DataFrame | None = None) -> pl.DataFrame:
     """Give players with no career tail (rookies and anyone without a complete prior season) a tail
-    extrapolated from their own next-season projection: season k = next-season ppg / games times
-    the median ratio h{k} / next among players of the same position and age bucket who do have a
-    career tail (falls back to the position when a bucket is thin). Without this a rookie's value
+    extrapolated from their own next-season projection: season k = next-season ppg / games times a
+    ratio. Rookies take the realized ratios of past rookies of their position and projected tier
+    (``rookie_table`` from ``rookie_tail_table``; tier on the next-season projection; starter+mid
+    pool, then the position, as fallbacks). Everyone else, and rookies without a table, take the
+    median ratio h{k} / next among players of the same position and age bucket who do have a career
+    tail (falls back to the position when a bucket is thin). Without any of this a rookie's value
     stopped after next season while a veteran's ran ten years, which made every rookie look rich.
     Adds ``tail_source`` ('career' | 'extrapolated' | 'none')."""
     ks = [k for k in horizons if k >= 3 and f"h{k}_ppg_hat" in df.columns]
@@ -208,6 +264,19 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8)
         return df.with_columns(pl.lit("career").alias("tail_source"))
     has = pl.all_horizontal([pl.col(f"h{k}_ppg_hat").is_not_null() for k in ks])
     d = df.with_columns(has.alias("_has_tail"), _age_bucket(pl.col("age_at_season")).alias("_ab"))
+    rk_cols: dict[int, tuple[pl.Expr, pl.Expr]] = {}
+    if rookie_table is not None and rookie_table.height and "is_rookie" in d.columns:
+        d = d.with_columns(_tier_expr(pl.col("next_ppg_hat").fill_null(0.0), pl.col("next_games_hat").fill_null(0.0)).alias("_rt"))
+        d = d.with_columns(pl.when(pl.col("_rt").is_in(["starter", "mid"])).then(pl.lit("regular")).otherwise(pl.lit("fringe")).alias("_rt2"))
+        for lvl, key in (("_rt", "_t1"), ("_rt2", "_t2")):
+            t = rookie_table.rename({c: f"{c}{key}" for c in rookie_table.columns if c.startswith("_r")}).rename({"_tier": lvl})
+            d = d.join(t, on=["position", lvl], how="left")
+        t = rookie_table.filter(pl.col("_tier") == "__all__").drop("_tier").rename({c: f"{c}_t3" for c in rookie_table.columns if c.startswith("_r")})
+        d = d.join(t, on="position", how="left")
+        for k in ks:
+            if f"_rg{k}_t1" in d.columns:
+                rk_cols[k] = (pl.coalesce([pl.col(f"_rp{k}_t1"), pl.col(f"_rp{k}_t2"), pl.col(f"_rp{k}_t3")]),
+                              pl.coalesce([pl.col(f"_rg{k}_t1"), pl.col(f"_rg{k}_t2"), pl.col(f"_rg{k}_t3")]))
     base = d.filter(pl.col("_has_tail") & (pl.col("next_ppg_hat") > 0) & (pl.col("next_games_hat") > 0))
     ratio_exprs = []
     for k in ks:
@@ -218,20 +287,26 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8)
     d = d.join(by_bucket, on=["position", "_ab"], how="left")
     d = d.join(by_pos, on="position", how="left", suffix="_pos")
     fills = []
+    is_rookie = pl.col("is_rookie").fill_null(False) if "is_rookie" in d.columns else pl.lit(False)
     for k in ks:
         rp = pl.coalesce([pl.col(f"_rp{k}"), pl.col(f"_rp{k}_pos")])
         rg = pl.coalesce([pl.col(f"_rg{k}"), pl.col(f"_rg{k}_pos")])
+        if k in rk_cols:                                  # a rookie takes the realized rookie ratios where the table has them
+            rp = pl.when(is_rookie).then(pl.coalesce([rk_cols[k][0], rp])).otherwise(rp)
+            rg = pl.when(is_rookie).then(pl.coalesce([rk_cols[k][1], rg])).otherwise(rg)
         fills += [pl.when(pl.col("_has_tail")).then(pl.col(f"h{k}_ppg_hat")).otherwise(pl.col("next_ppg_hat") * rp).alias(f"h{k}_ppg_hat"),
                   pl.when(pl.col("_has_tail")).then(pl.col(f"h{k}_games_hat")).otherwise(pl.col("next_games_hat") * rg).alias(f"h{k}_games_hat")]
     d = d.with_columns(fills).with_columns(
         pl.when(pl.col("_has_tail")).then(pl.lit("career"))
+          .when(pl.col(f"h{ks[0]}_ppg_hat").is_not_null() & is_rookie & pl.lit(bool(rk_cols))).then(pl.lit("rookie_table"))
           .when(pl.col(f"h{ks[0]}_ppg_hat").is_not_null()).then(pl.lit("extrapolated")).otherwise(pl.lit("none")).alias("tail_source"))
-    return d.drop([c for c in d.columns if c.startswith("_rp") or c.startswith("_rg") or c in ("_has_tail", "_ab")])
+    return d.drop([c for c in d.columns if c.startswith("_rp") or c.startswith("_rg") or c in ("_has_tail", "_ab", "_rt", "_rt2")])
 
 
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
+    rookie_table: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
     from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
@@ -248,7 +323,7 @@ def inseason_value(
 
     horizons = [k for k in horizons if k >= 3]
     tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")])
-    df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons)
+    df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons, rookie_table=rookie_table)
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
 
     def excess(mu_col: str, k: int) -> np.ndarray:
