@@ -468,6 +468,12 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     same-data ones in the final chain. Open question that chain answers: how much of the 0.513 ->
     0.474 is the scoring fix (the baseline will move too) and how much is the pooled model or the
     residual target.
+    **Weekly group + residual target on 3.5 (2026-10-07 14:35-15:32, post-rebuild data):**
+    `tabpfn35_setw_res_w` 0.622 / 0.506; vs set + residual (pre-rebuild, 0.613 / 0.507) NO on the
+    rule and cross-data anyway. On today's data the weekly columns do not move error (0.506 vs the
+    3.5 base residual's 0.507) and lean on ordering only (+0.009, t = 1.6), the same lean as the
+    level-target weekly run. The weekly sequence group stays unadopted; its value, if any, is in
+    the in-season model (rest of season, next season), which has not been tested with it.
     **Position-share calibration re-test (2026-10-07 11:00-11:58, v2, `--position-scale` vs
     production):** wins error 0.484 vs 0.513 (t = 7.9, 8 of 8), prior-top-12 bias 0.037 vs 0.057
     (t = 3.1), ordering 0.606 vs 0.618 (t = -1.5) -> TRADE-OFF by the rule, and the one thing it was
