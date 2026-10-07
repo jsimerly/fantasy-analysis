@@ -30,6 +30,7 @@ import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 
 import career  # noqa: E402
+import feature_groups as fg  # noqa: E402
 import features  # noqa: E402
 import gcs_io  # noqa: E402
 import power  # noqa: E402
@@ -59,12 +60,14 @@ SNAP_TIER_COLS = ("prev_ppg", "prev_games")   # a snapshot's prior tier is last 
 
 
 def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, backend: str = "xgb", tabpfn_params: dict | None = None,
-                cap: str = career.DEFAULT_CAP, range_quantiles: tuple | None = None):
+                cap: str = career.DEFAULT_CAP, range_quantiles: tuple | None = None, features: list[str] | None = None, stacked: bool = False,
+                target: str = "level"):
     """Career-model projections off every player's row in season ``as_of`` (their latest
     complete season), plus the out-of-sample spread, trained only on outcomes known by then.
     Projected games are capped by the age-survival prior per ``cap`` (career.apply_cap: from age
     30, tier-aware, by default). Returns (predictions, sigma, survival)."""
-    m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params, range_quantiles=range_quantiles).fit(season_df, as_of_season=as_of)
+    m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params, range_quantiles=range_quantiles,
+                             features=features, stacked=stacked, target=target).fit(season_df, as_of_season=as_of)
     sigma = m.estimate_sigma(season_df, as_of_season=as_of)
     survival = career.fit_survival(season_df.filter((pl.col("season") + 1) <= as_of), cap)
     pred = career.apply_cap(survival, m.predict(season_df.filter(pl.col("season") == as_of)), H, cap)
@@ -83,6 +86,9 @@ def main() -> None:
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator for the multi-year tail (the in-season model itself stays xgboost)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the career tail's predictive distribution (TabPFN): the range of outcomes on the page")
+    ap.add_argument("--groups", default="base,career", help="feature groups for the career tail (feature_groups.GROUPS), e.g. base,career,injury,trend,situation,rookie,college")
+    ap.add_argument("--stacked", action="store_true", help="pooled horizons for the career tail: one games and one ppg model over every horizon")
+    ap.add_argument("--target", choices=["level", "residual"], default="level", help="career ppg target: the level, or the change from this season's rate")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
@@ -97,6 +103,11 @@ def main() -> None:
     weeks = [int(w) for w in args.weeks.split(",")]
 
     wk, season = load_inputs()
+    groups = fg.resolve(args.groups.split(","))
+    feature_cols = fg.feature_columns(groups)
+    if args.groups != "base,career":
+        season = fg.assemble(season, groups, fg.Context())
+        print(f"feature groups {[g.name for g in groups]}: {len(feature_cols)} columns", flush=True)
     depth = gcs_io.read_lake("silver/fantasy/fact_depth_chart_week/data.parquet") if args.depth else None
     snaps = inseason.baselines(inseason.build_snapshots(wk, season, depth=depth))
     if depth is not None:
@@ -112,8 +123,10 @@ def main() -> None:
         w_now = int(wk.filter(pl.col("season") == cur)["week"].max())
         rep = replacement.replacement_levels(season, starters)
         tail, sigma, survival = career_tail(season, last_complete, rep, args.device, args.backend, tabpfn_params, args.cap,
-                                            range_quantiles=(0.2, 0.5, 0.8) if args.range else None)
-        backend_tag = args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
+                                            range_quantiles=(0.2, 0.5, 0.8) if args.range else None,
+                                            features=feature_cols, stacked=args.stacked, target=args.target)
+        backend_tag = (args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
+                       + (" stacked" if args.stacked else "") + (f" {args.target}" if args.target != "level" else "") + (f" [{args.groups}]" if args.groups != "base,career" else ""))
         m = inseason.InSeasonModels(device=args.device).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
@@ -147,7 +160,7 @@ def main() -> None:
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")
         p2 = gcs_io.write_ml_json({
             "run_date": run, "season": cur, "week": w_now, "as_of_season": last_complete, "career_backend": backend_tag, "cap": args.cap,
-            "range_quantiles": [0.2, 0.5, 0.8] if args.range else None,
+            "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target,
             "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
             "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
         }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")
@@ -157,7 +170,7 @@ def main() -> None:
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(season, starters, seasons=list(range(T - 5, T)))
-        tail, sigma, survival = career_tail(season, T - 1, rep, args.device, cap=args.cap)
+        tail, sigma, survival = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target)
         rookie_tbl = inseason.rookie_tail_table(season, H, through=T - 1)
         m = inseason.InSeasonModels(device=args.device).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))

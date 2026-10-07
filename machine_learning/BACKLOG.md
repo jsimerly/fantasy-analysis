@@ -410,8 +410,101 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     5-year 3.5 run was stopped after one cohort (60 min each) to bring the feature-set runs
     forward; re-run only if the feature set wins on 3.5. Open: the feature set
     (`tabpfn35_set_w`: base, career, injury, trend, situation, rookie, college) and the weekly
-    sequence group (`tabpfn35_setw_w`) on 3.5, queued. Both runs went
+    sequence group (`tabpfn35_setw_w`) on 3.5, queued; then (owner, 2026-10-07) pooled horizons
+    (`--stacked`: one games and one ppg model over every horizon, years-ahead and age-at-horizon
+    as inputs, ~37k rows, two fits per cohort instead of six) on v2 (`tabpfn_v2_stacked_w`), on 3.5
+    base+career (`tabpfn35_stacked_w`) and on 3.5 with the feature set (`tabpfn35_set_stacked_w`),
+    each paired against its per-horizon twin; on the trees the pooled model tied (item 24).
+    **Feature-set verdicts (2026-10-07 00:32-02:24, co-primary rule, 3-year):** the owner's set
+    (base, career, injury, trend, situation, rookie, college; 73 columns) adds nothing on either
+    model: 3.5 set 0.603 / 0.515 vs 3.5 base 0.604 / 0.516 (NO), v2 set 0.619 / 0.511 vs v2 base
+    0.618 / 0.513 (NO). The **residual target** (the ppg model learns the change from this
+    season's rate) is the live ingredient: 3.5 set + residual 0.613 / 0.507 vs 3.5 set 0.603 /
+    0.515 -> ADOPT (wins error t = 4.6, share error 0.096 vs 0.117), and vs 3.5 base -> ADOPT
+    (t = 3.9). Against production v2 (0.618 / 0.513) it is short of the line: wins error t = 2.05,
+    ordering 0.613 (t = -0.6), and the prior-top-12 bias is worse (0.098 vs 0.057, t = 3.7) -> NO.
+    So production stays v2; the residual target on v2 (base and with the set) and on 3.5 base are
+    queued (`tabpfn_v2_res_w`, `tabpfn_v2_set_res_w`, `tabpfn35_res_w`) to isolate the gain where it
+    is cheap. Timing on the 5070 Ti: 3.5 with 195 columns ~3.5 min per cohort (30 min a run);
+    v2 with 195 columns ~7 min per cohort (it scales its ensemble up past its 85-column
+    pretraining width), so 3.5 is the faster model on wide inputs.
+    **Weekly sequence group (2026-10-07 02:24-03:21, 3.5, set + weekly = 244 columns, level
+    target):** vs the set 0.611 / 0.513 against 0.603 / 0.515 (ordering t = 1.8, error t = 0.8) ->
+    NO, short of the line; vs 3.5 base 0.611 / 0.513 against 0.604 / 0.516 -> NO (prior-top-12
+    bias better, 0.102 vs 0.115, t = 2.3). Consistent lean on ordering, nothing past 2.4. ~7 min
+    per cohort. Queued: the weekly group WITH the residual target (`tabpfn35_setw_res_w`), paired
+    against the best 3.5 run so far (`tabpfn35_set_res_w`) and production.
+    **Pooled horizons (2026-10-07 04:00-11:00): the first variant to beat production.**
+    `tabpfn35_set_stacked_w` (3.5, the owner's feature set, one games and one ppg model over all
+    horizons with years-ahead and age-at-horizon as inputs, level target) vs production v2
+    (`tabpfn_v2_cap30t_w`): ordering 0.622 vs 0.618 (t = 0.4), wins error 0.474 vs 0.513 (t = 7.0,
+    8 of 8 cohorts), prior-top-12 bias -0.043 vs +0.057 -> **ADOPT**; vs 3.5 with the set
+    per-horizon (0.603 / 0.515): ADOPT (t = 7.5). Pooled on 3.5 without the set
+    (`tabpfn35_stacked_w`): the same error gain (0.474, t = 7.4 vs production) but ordering 0.607
+    (t = -1.6) -> TRADE-OFF; the feature set is what keeps the ordering. Pooled on v2
+    (`tabpfn_v2_stacked_w`): NO (ordering 0.606, error 0.515; v2 at 37k pooled rows is far past its
+    10k pretraining, 3 h per run). Caveats: the position-share error is worse (0.126 vs 0.100,
+    t = -2.2) and the prior top 12 flips from under- to slightly over-projected; both are
+    calibration-sized. Timing: 55 min for the 8-cohort run with the set (two fits per cohort;
+    strangely 3 h without it, the memory-saving fallback). **Before it becomes production:** (1) the
+    5-year harness (`tabpfn35_set_stacked_w5` vs the trees' `cap30t_w5` and a v2 5-year baseline),
+    (2) the residual target on top (`tabpfn35_set_stacked_res_w`), (3) the market backtest, (4) the
+    production path needs `--groups` and `--stacked` (the career tail today assembles base+career
+    only) and the band for pooled models (`_range_columns` skips them today). Runs queued after the
+    final refresh.
+    **Data caveat for every 2026-10-07 comparison.** The 10:00 UTC pipeline rebuilt the facts with the
+    league's real fumble setting (0, not the -1 of an older season's row the legacy trigger kept
+    stamping as current; see the DE commit of the same day): QB seasons rose ~4 points, RB ~1.
+    Runs that started before 06:00 local (the trees `cap30t_w`, production `tabpfn_v2_cap30t_w`,
+    `tabpfn35_w`, the feature-set and weekly runs) and runs after it (the pooled, position-scale and
+    residual runs) are therefore NOT on the same data; the realized QB share moved from 27 % to
+    30 %. Every post-rebuild candidate is re-paired against same-data baselines
+    (`tabpfn_v2_cap30t_w_b`, `cap30t_w_b`) in the final chain before anything is called adopted.
+    **Residual target (2026-10-07 12:00-14:34, post-rebuild data):** v2 base + residual
+    (`tabpfn_v2_res_w`) 0.613 / 0.474 - the same 0.474 wins error as the pooled 3.5 candidate, in
+    26 minutes on the cheap model; v2 feature set + residual 0.621 / 0.505 (the set costs v2 error);
+    3.5 base + residual 0.619 / 0.507. Against the OLD-data production row these print ADOPT
+    (t = 14 on error), which is exactly the contamination above: the verdicts that count are the
+    same-data ones in the final chain. Open question that chain answers: how much of the 0.513 ->
+    0.474 is the scoring fix (the baseline will move too) and how much is the pooled model or the
+    residual target.
+    **Weekly group + residual target on 3.5 (2026-10-07 14:35-15:32, post-rebuild data):**
+    `tabpfn35_setw_res_w` 0.622 / 0.506; vs set + residual (pre-rebuild, 0.613 / 0.507) NO on the
+    rule and cross-data anyway. On today's data the weekly columns do not move error (0.506 vs the
+    3.5 base residual's 0.507) and lean on ordering only (+0.009, t = 1.6), the same lean as the
+    level-target weekly run. The weekly sequence group stays unadopted; its value, if any, is in
+    the in-season model (rest of season, next season), which has not been tested with it.
+    **Position-share calibration re-test (2026-10-07 11:00-11:58, v2, `--position-scale` vs
+    production):** wins error 0.484 vs 0.513 (t = 7.9, 8 of 8), prior-top-12 bias 0.037 vs 0.057
+    (t = 3.1), ordering 0.606 vs 0.618 (t = -1.5) -> TRADE-OFF by the rule, and the one thing it was
+    meant to fix got worse: share error 0.152 vs 0.100 (t = -3.5), i.e. the holdout PAR-share scale
+    over-corrects on this backend. Not adopted; the pooled candidate reaches a lower error (0.474)
+    without the rescaling, so the QB tilt is better addressed by the per-player band in the upside
+    term (item 26) than by a post-hoc scale. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
+    **Same-data verdicts (2026-10-07 16:09-17:32, both baselines re-run on the rebuilt facts):** the
+    rebuild barely moved v2 (`tabpfn_v2_cap30t_w_b` 0.617 / 0.515 vs the old row's 0.618 / 0.513,
+    t = 0.6 / 2.9 on tiny differences) and cost the trees a little (`cap30t_w_b` 0.593 / 0.530 vs
+    0.605 / 0.524), so the 0.513 -> 0.474 wins-error gain of the post-rebuild candidates is the model,
+    not the scoring fix; v2 vs the trees on the same data -> ADOPT (t = +2.5 / +3.1), the production
+    choice stands. Against same-data production v2 (0.617 / 0.515): **3.5 set + pooled** 0.622 /
+    0.474 -> **ADOPT** (ordering t = +0.5, error t = +7.3, 8 of 8 cohorts); **v2 + residual** 0.613 /
+    0.474 -> ADOPT (t = -0.4 / +13.8); v2 set + residual 0.621 / 0.505 -> ADOPT (t = +0.6 / +4.3);
+    3.5 set + pooled + residual (`tabpfn35_set_stacked_res_w`, new today) 0.628 / 0.499 -> ADOPT vs
+    production (t = +1.8 / +2.9) but NO vs the pooled candidate without it (error worse, t = -4.7:
+    the residual target and pooling do not stack, each alone takes the error to 0.474-0.499);
+    3.5 base + residual 0.619 / 0.507 -> NO; 3.5 base + pooled 0.607 / 0.474 and v2 position-scale
+    0.606 / 0.484 -> TRADE-OFF (error gain, ordering dip). The two front-runners paired directly
+    (3.5 set + pooled vs v2 + residual): wins error identical (0.474, t = 0.1), top-150 ordering
+    +0.009 for 3.5 (t = 0.7), all-player ordering +0.005 for v2 (t = 3.1), prior-top-12 bias -0.043
+    (3.5) vs +0.095 (v2), position-share error 0.126 vs 0.114 -> a tie on the rule; 3.5 set + pooled
+    costs 55 min a run, v2 + residual 26. Tie-break in flight: the market backtest of both (the 3.5
+    candidate first, cohorts 2020-22 vs KTC), then the 5-year harness for the 3.5 candidate against a
+    v2 5-year baseline. The first final chain died two cohorts into the 5-year run when the session
+    restarted (background tasks go with it); relaunched detached (~20 min per 5-year cohort).
+    Harness fix (same day): `--paired` matched a run name as a prefix, so `cap30t_w` resolved to
+    `cap30t_w_b`'s newest file and the first two same-data pairings compared a run with itself
+    (t = inf on every row); `experiments.run_paths` now matches `<name>_<timestamp>` exactly.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
@@ -647,7 +740,7 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     first cut built: the career model keeps TabPFN's 20/50/80 ppg and games quantiles per horizon
     (`--range`), the harness scores coverage and pinball loss, the WAR build adds floor / ceiling
     wins per span, rookies get a band from the position spread, and the page shows WAR
-    floor–ceiling and the ppg band per season; refresh with `--range` queued behind the 3.5 runs.
+    floor–ceiling and the ppg band per season; on the page since v43 (2026-10-07, week 4, the corrected scoring): e.g. Nabers WAR 0.78 with a 0.4–2.0 band, season-3 ppg 11.5 (8.0–14.9). The first `--range` refresh lost the band to a select in `inseason_value` (fixed); the second wrote to week 4 because the lake had advanced.
     Owner's framing: range, error and ordering together per player; the distribution loss (CRPS /
     pinball) becomes the primary once the harness reads distributions everywhere, item 29 the
     path-dependent version.)* Suspicion: the
@@ -722,3 +815,85 @@ t = 1.45) stays a tie.
     sampling from a calibrated distribution is the mitigation; the game-level version (roll a
     per-game model within a season) comes after the season-level one works. Not started: queued
     behind the 3.5 feature-set and weekly runs (same GPU).
+
+30. **Draft rows: the rookie's own input row, from college and draft capital (owner, 2026-10-07).**
+    The career model's input is a complete NFL season, so a rookie gets a hand-made tail
+    (`inseason.fill_missing_tail`, item 24). Replace it: for every drafted QB / RB / WR / TE since
+    1999 add one row to the career matrix dated the draft (NFL inputs null, `is_draft_row`,
+    draft capital, and the `college` group where `dim_college_crosswalk` reaches: final-season
+    dominator, usage and touch shares, breakout age, seasons, team SP+, early declaration), with
+    the player's NFL seasons 1..k as its targets. TabPFN handles the missingness natively and 3.5's
+    column limit lets college, weekly and injury inputs sit together; a tree needs tricks. Then
+    (a) the career model projects a rookie's tail directly and the extrapolation goes, (b) rookies
+    become scorable in the harness for the first time (every past class has realized WAR: a
+    `rookie` cohort slice next to the top-150 metrics), (c) the in-season model gets the same
+    inputs for ROS / next season, and (d) the range of outcomes (item 26) applies to rookies, which
+    is where it matters most. The question it answers (owner): are rookies overvalued by the
+    market, or valuable but slow to arrive (the London / Adams shape)? Test: realized WAR of past
+    classes vs their price at the draft (the market backtest's experience segment already shows
+    rookies finishing ~14 ranks below the market's rank, 2022-24), and the realized trajectory
+    shape by draft capital (years to peak, share who arrive late), with the band's coverage on
+    rookies as the calibration check. Prerequisites: the crosswalk reaches 58 % of 2011+ rookies
+    (pick join first); raise it with a better name match (suffixes, nicknames, position labels)
+    before the rows are built; college data starts 2010 (draft rows before that carry draft
+    capital only). Honest limits: ~100 skill rookies a year, the college-to-NFL jump is the
+    hardest prediction in the sport; a draft row is adopted only under the co-primary rule on
+    held-out classes. Crosswalk, measured 2026-10-07 on the matrix's own 2011+ rookies (1,511):
+    66 % matched; the drafted are done (6 unmatched of ~1,000); every other miss is UNDRAFTED
+    (502), who are absent from CFBD's draft table by definition, so the name fallback (which runs
+    against draft picks) can never reach them. One bounded pass, per the owner ("don't go crazy
+    matching"): match the undrafted by normalised name + position + college (our weekly fact
+    carries `college_name`) against CFBD rosters / player stats, then stop; whoever is still
+    unmatched carries draft capital (undrafted) and null college columns, which is itself
+    informative. Build order: crosswalk match rate -> draft rows in `career.build_career_matrix`
+    (opt-in) -> harness rookie slice -> 3.5 run with the feature set -> replace the tail in the
+    refresh if it wins. CPU work except the run; after the pooled-horizon queue.
+
+31. **Team strength and contracts as feature groups (owner, 2026-10-07).** Two inputs the model has
+    never seen: how good the player's team is (offense environment, game script, QB) and what the
+    NFL itself pays the player (its own valuation, and the tie to the team that projects forward).
+    **Team strength needs no new ingestion.** The lake's `bronze/nflverse/schedules` (1999-2026)
+    carries the closing lines for every game (`spread_line`, `total_line`, moneylines from 2006,
+    the starting QBs and coaches), and `team_stats` (1999-2026, 102 columns) the per-game offensive
+    and defensive EPA. A silver `fact_team_season_strength` (team x season, with a week-level
+    variant for the in-season model): the market-implied rating = mean favoritism margin over the
+    season's games (2025: BUF +6.2, LA +6.0 ... TEN -7.6, i.e. the market's power rating, which
+    already prices the QB and injuries), the mean total line (scoring environment), realized point
+    differential, offensive EPA per play, pass rate, the starting QB's prior-season ppg (the
+    "QB quality" a pass catcher inherits), and their lags. The `team` ML group joins them to the
+    player's team for season t (and lag1), plus the change on a team move. Next season's team
+    strength is unknown at projection time; the proxies in order of availability are last season's
+    rating (regresses to the mean, the model learns the rate), the week-1 line of the new season
+    (published in spring, in the schedules file once posted), and preseason win-total futures,
+    which the lake does not have (sportsoddshistory.com has season win totals and Super Bowl odds
+    by season, a scrape for later; not needed for the first cut).
+    **Contracts: one new nflverse entity.** nflverse's `contracts` release (OverTheCap; 53k
+    contracts, `gsis_id` on 90-98 % of rows since 2005, 68 % 2000-04, thin before; 17k skill-position
+    contracts since 2000 for 3.3k players) has per contract: year signed, years, value, APY,
+    guarantees, **APY as a share of that year's cap** (inflation-free), the drafted / extension /
+    free-agent type, and a per-year `season_history` (cap number, cap percent, guaranteed salary,
+    cash paid) plus the `contract_history` of renegotiations. Ingest as a daily snapshot
+    (`bronze/nflverse/contracts/load_date=...`, 11 MB), model `fact_player_contract_season`
+    (player x season: the contract in force that season, years remaining after it, cap percent
+    that year, guaranteed money remaining, contract-year flag, rookie-deal flag, APY-cap-share at
+    signing relative to the position's top at that time), and a `contract` ML group. Leakage rule:
+    in the harness a contract counts only if `year_signed <= t` for a row as of season t (an
+    extension signed the following March is real information before season t+1 but the table has no
+    signing date, so the strict rule for backtests; the production refresh may use the current year).
+    Expected mechanism: cap share and guarantees are the NFL's forward valuation (teams pay for the
+    next 2-3 years, which is exactly our horizon), the contract year is a known production bump, the
+    years-remaining ties the player to the team's strength. Both groups go on the 3.5 pooled
+    candidate under the co-primary rule, after the feature-push chain of item 22.
+    **Built (2026-10-07 evening):** `fact_team_season_strength` (893 team-seasons 1999-2026, every
+    one lined, EPA on every row, moneylines from 2006; 2026 market top KC +6.1, BAL / LA +4.5, bottom
+    MIA -8.5) and `fact_player_contract_season` (16,110 player-seasons 1994-2032 for 3,325 skill
+    players; contract type known for 97 %, the team's cap number for 70 %) are on the lake, both T1
+    jobs in the daily DAG (`silver-fact-team-season-strength`, `silver-fact-player-contract-season`)
+    with the `contracts` table added to `nflverse-daily` as a Tuesday snapshot (first snapshot
+    written by hand the same day). The `team` (15 columns) and `contract` (13 columns) groups join
+    the career matrix: teams on every row; contracts on 91-98 % of rows from 2015, 57 % in 2010-14,
+    20 % in 2005-09, under 5 % before (OTC's history is dense from the 2011 CBA; the model reads the
+    null as a state, as with college and injury). Queued on the GPU behind the feature-push chain:
+    `tabpfn35_set_team_stacked_w`, `tabpfn35_set_contract_stacked_w`, `tabpfn35_set_tc_stacked_w`,
+    each paired against the pooled candidate. Not built yet: the week-level team table for the
+    in-season model, and preseason win-total futures (no source in the lake).

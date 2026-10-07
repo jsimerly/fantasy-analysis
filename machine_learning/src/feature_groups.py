@@ -31,6 +31,9 @@ WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 COLLEGE_PATH = "silver/fantasy/fact_college_player_season/data.parquet"
 COLLEGE_XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
 WEEK_STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
+TEAM_PATH = "silver/fantasy/fact_team_season_strength/data.parquet"
+CONTRACT_PATH = "silver/fantasy/fact_player_contract_season/data.parquet"
+TEAM_CODE = {"OAK": "LV", "SD": "LAC", "STL": "LA", "JAC": "JAX", "LAR": "LA"}   # every era's code -> the current franchise
 KEY = ["player_id", "season"]
 
 
@@ -38,8 +41,9 @@ class Context:
     """Lake tables for feature building, loaded on first use (or injected)."""
 
     def __init__(self, depth: pl.DataFrame | None = None, injury: pl.DataFrame | None = None,
-                 weeks: pl.DataFrame | None = None):
+                 weeks: pl.DataFrame | None = None, team: pl.DataFrame | None = None, contracts: pl.DataFrame | None = None):
         self._depth, self._injury, self._weeks = depth, injury, weeks
+        self._team, self._contracts = team, contracts
 
     @staticmethod
     def _load(path: str) -> pl.DataFrame:
@@ -89,6 +93,30 @@ class Context:
             except Exception:  # noqa: BLE001 - not built yet
                 self._week_status = pl.DataFrame()
         return self._week_status if self._week_status.height else None
+
+    _team: pl.DataFrame | None = None
+
+    @property
+    def team(self) -> pl.DataFrame | None:
+        """Team strength per (season, team) (None until the silver table exists)."""
+        if self._team is None:
+            try:
+                self._team = self._load(TEAM_PATH)
+            except Exception:  # noqa: BLE001 - not built yet
+                self._team = pl.DataFrame()
+        return self._team if self._team.height else None
+
+    _contracts: pl.DataFrame | None = None
+
+    @property
+    def contracts(self) -> pl.DataFrame | None:
+        """The contract in force per (gsis_id, season) (None until the silver table exists)."""
+        if self._contracts is None:
+            try:
+                self._contracts = self._load(CONTRACT_PATH)
+            except Exception:  # noqa: BLE001 - not built yet
+                self._contracts = pl.DataFrame()
+        return self._contracts if self._contracts.height else None
 
 
 @dataclass(frozen=True)
@@ -325,6 +353,64 @@ def build_weekly(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
 
 
 # ---------------------------------------------------------------------------- registry
+
+# ------------------------------------------------------------------------------ team
+# how good the player's team was that season (fact_team_season_strength): the market's rating (mean
+# favoritism margin over the closing spreads, which prices the QB and the injuries), the scoring
+# environment (total line, implied points), the realized point differential and record, offensive
+# EPA per play and pass rate, the QB situation (starters used, the main starter's share), the
+# team's own lags, and the change a mover sees (this team's rating vs his previous team's last year).
+TEAM_FACT_COLS = ["mkt_margin", "mkt_margin_last4", "mkt_total", "mkt_implied_pts", "mkt_win_prob", "point_diff_pg", "win_pct",
+                  "off_epa_per_play", "pass_rate", "plays_pg", "n_starting_qbs", "qb_main_share", "lag1_mkt_margin", "lag1_off_epa_per_play"]
+TEAM_COLS = [f"tm_{c}" for c in TEAM_FACT_COLS] + ["tm_mkt_margin_vs_prev_team"]
+
+
+def normalize_team(col: str = "team") -> pl.Expr:
+    return pl.col(col).cast(pl.Utf8).str.strip_chars().replace(TEAM_CODE)
+
+
+def build_team(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    tf = ctx.team
+    if tf is None or "team" not in matrix.columns:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in TEAM_COLS if c not in matrix.columns])
+    fact = tf.with_columns(pl.col("season").cast(pl.Int64), normalize_team("team").alias("team"))
+    fact = fact.select(["season", "team"] + [pl.col(c).cast(pl.Float64, strict=False).alias(f"tm_{c}") for c in TEAM_FACT_COLS if c in fact.columns])
+    out = matrix.with_columns(normalize_team("team").alias("_tm")).join(fact.rename({"team": "_tm"}), on=["season", "_tm"], how="left")
+    # the previous team's rating last season, for the change a mover sees
+    prev_team = matrix.select("player_id", (pl.col("season") + 1).alias("season"), normalize_team("team").alias("_prev_tm")).unique(KEY)
+    prev_rating = fact.select((pl.col("season") + 1).alias("season"), pl.col("team").alias("_prev_tm"), pl.col("tm_mkt_margin").alias("_prev_margin"))
+    out = (out.join(prev_team, on=KEY, how="left").join(prev_rating, on=["season", "_prev_tm"], how="left")
+              .with_columns((pl.col("tm_mkt_margin") - pl.col("_prev_margin")).alias("tm_mkt_margin_vs_prev_team"))
+              .drop(["_tm", "_prev_tm", "_prev_margin"]))
+    return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in TEAM_COLS if c not in out.columns])
+
+
+# ------------------------------------------------------------------------------ contract
+# the contract in force that season (fact_player_contract_season, Over The Cap via nflverse): APY as
+# a share of the cap, guarantees as a share of the cap at signing, years left after the season, the
+# contract-year and rookie-deal flags, the age of the deal, the cap number the team carried that year
+# and the one scheduled next year, the rank among the position's deals, how many deals so far; plus
+# a has-contract flag so "no deal on file" is a state, not a null (seasons before 1994 stay null).
+CONTRACT_FACT_COLS = {"apy_cap_pct": "ct_apy_cap_pct", "guaranteed_cap_pct": "ct_guaranteed_cap_pct", "years_left": "ct_years_left",
+                      "contract_year": "ct_contract_year", "contract_age": "ct_contract_age", "contract_years": "ct_contract_years",
+                      "is_rookie_deal": "ct_is_rookie_deal", "cap_pct_season": "ct_cap_pct_season", "cap_pct_next": "ct_cap_pct_next",
+                      "guaranteed_salary_season": "ct_guaranteed_salary_season", "apy_cap_pct_pos_pctl": "ct_pos_pctl", "n_contracts_signed": "ct_n_contracts"}
+CONTRACT_COLS = list(CONTRACT_FACT_COLS.values()) + ["ct_has_contract"]
+CONTRACT_FIRST_SEASON = 1994
+
+
+def build_contract(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    cf = ctx.contracts
+    if cf is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in CONTRACT_COLS if c not in matrix.columns])
+    fact = cf.with_columns(pl.col("season").cast(pl.Int64), pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"))
+    fact = fact.select(KEY + [pl.col(c).cast(pl.Float64, strict=False).alias(n) for c, n in CONTRACT_FACT_COLS.items() if c in fact.columns]
+                       + [pl.lit(1.0).alias("ct_has_contract")]).unique(KEY, keep="first", maintain_order=True)
+    out = matrix.join(fact, on=KEY, how="left")
+    out = out.with_columns(pl.when(pl.col("season") >= CONTRACT_FIRST_SEASON).then(pl.col("ct_has_contract").fill_null(0.0)).otherwise(None).alias("ct_has_contract"))
+    return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in CONTRACT_COLS if c not in out.columns])
+
+
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
     "career": FeatureGroup("career", list(career.CAREER_FEATURES), None, "fact_player_season cumulative"),
@@ -335,6 +421,8 @@ GROUPS: dict[str, FeatureGroup] = {
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
     "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
     "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
+    "team": FeatureGroup("team", TEAM_COLS, build_team, "fact_team_season_strength (schedules closing lines + team_stats EPA)"),
+    "contract": FeatureGroup("contract", CONTRACT_COLS, build_contract, "fact_player_contract_season (Over The Cap via nflverse)"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 

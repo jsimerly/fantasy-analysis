@@ -36,6 +36,10 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
 - **dim-franchise-meta** (T2) reads `dim_leagues_meta` + `dim_users` (T1).
 - **fact-asset-values** (T2) reads `_staging/asset_values_long` (staging-asset-alignment, T1)
   + `dim_players_master` (T1).
+- **fact-team-season-strength** (T1) reads bronze nflverse `schedules` (closing spread, total,
+  moneylines, scores, starting QBs) + `team_stats` (offensive EPA); **fact-player-contract-season**
+  (T1) reads the newest bronze nflverse `contracts` snapshot (Over The Cap; the daily job refreshes
+  it on Tuesdays). Both feed the dynasty model's `team` / `contract` feature groups.
 - **fact-player-injury-week** / **fact-depth-chart-week** (T1) read bronze nflverse only
   (injuries + rosters_weekly; depth_charts + schedules). They do not feed other silver jobs yet.
 - **fact-player-week** (T2) reads `dim_league_settings` (T1, for scoring) + bronze nflverse

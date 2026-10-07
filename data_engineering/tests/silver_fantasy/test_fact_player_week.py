@@ -191,3 +191,19 @@ class TestDuplicateWeeks:
 
         monkeypatch.setattr(fpw.storage, "Client", lambda: _Client())
         assert fpw._read_prefix("x/", dedupe_on=["game_id"]).height == 2
+
+
+class TestResolveScoringNewestLeagueWins:
+    def test_lineage_root_row_with_a_later_stamp_does_not_win(self):
+        # the legacy trigger re-stamps a current row keyed by the lineage's root league id (an older
+        # season: -1 fumble) AFTER the real league's row; the newest league id must win, not the newest stamp
+        s = pl.DataFrame({
+            "league_id": ["730630605066371072", "1180221337891495936"],
+            "league_lineage_id": ["730630605066371072"] * 2,
+            "is_current": [True, True],
+            "valid_from": [datetime(2026, 10, 7, 11, 2), datetime(2026, 10, 7, 10, 8)],
+            "pass_yd": [0.04, 0.04], "pass_int": [-1.0, -1.0], "rec": [0.5, 0.5], "bonus_rec_te": [0.5, 0.5],
+            "fum": [-1.0, 0.0], "fum_lost": [-2.0, -2.0],
+        })
+        cfg = fpw.resolve_league_scoring(s)
+        assert cfg["league_id"] == "1180221337891495936" and cfg["scoring"].get("fum", 0.0) == 0.0

@@ -350,7 +350,8 @@ def inseason_value(
     import value as _value
 
     horizons = [k for k in horizons if k >= 3]
-    tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")])
+    band_cols = [c for c in career_pred.columns if any(c.startswith(f"h{k}_ppg_q") or c.startswith(f"h{k}_games_q") for k in horizons)]
+    tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")] + band_cols)
     df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons, rookie_table=rookie_table)
     df = fill_missing_band(df, horizons, sigma)
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
