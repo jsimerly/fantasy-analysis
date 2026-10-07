@@ -427,7 +427,13 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     queued (`tabpfn_v2_res_w`, `tabpfn_v2_set_res_w`, `tabpfn35_res_w`) to isolate the gain where it
     is cheap. Timing on the 5070 Ti: 3.5 with 195 columns ~3.5 min per cohort (30 min a run);
     v2 with 195 columns ~7 min per cohort (it scales its ensemble up past its 85-column
-    pretraining width), so 3.5 is the faster model on wide inputs. Both runs went
+    pretraining width), so 3.5 is the faster model on wide inputs.
+    **Weekly sequence group (2026-10-07 02:24-03:21, 3.5, set + weekly = 244 columns, level
+    target):** vs the set 0.611 / 0.513 against 0.603 / 0.515 (ordering t = 1.8, error t = 0.8) ->
+    NO, short of the line; vs 3.5 base 0.611 / 0.513 against 0.604 / 0.516 -> NO (prior-top-12
+    bias better, 0.102 vs 0.115, t = 2.3). Consistent lean on ordering, nothing past 2.4. ~7 min
+    per cohort. Queued: the weekly group WITH the residual target (`tabpfn35_setw_res_w`), paired
+    against the best 3.5 run so far (`tabpfn35_set_res_w`) and production. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
