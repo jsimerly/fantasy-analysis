@@ -38,6 +38,7 @@ main:
               - "ktc-incremental-redraft"
               - "ktc-incremental-devy"
               - "nflverse-daily"
+              - "nflverse-backfill-seasonal"  # fills any missing past season of every seasonal nflverse dataset (no-op when complete)
           # --- SILVER T1: read bronze only ---
           - silver_t1_jobs:
               - "silver-dim-league-meta"
@@ -47,14 +48,19 @@ main:
               - "silver-dim-dates"               # bronze nflverse schedules only (no dims)
               - "silver-staging-asset-alignment"
               - "silver-fact-pick-values"        # bronze KTC only (no dims)
+              - "silver-fact-player-injury-week" # bronze nflverse injuries + rosters_weekly
+              - "silver-fact-depth-chart-week"   # bronze nflverse depth_charts + schedules (both eras)
           # --- SILVER T2: read T1 outputs ---
           - silver_t2_jobs:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users
               - "silver-dim-league-events"      # needs dim-league-meta + dim-league-settings + bronze drafts/schedules
               - "silver-fact-asset-values"      # needs staging-asset-alignment + dim-player-master
+              - "silver-fact-player-week"       # needs dim-league-settings (scoring) + bronze nflverse player_stats/schedules
           # --- SILVER T3: read T2 outputs ---
           - silver_t3_jobs:
               - "silver-fact-roster-membership" # SCD2 ledger; needs dim-league-meta (T1) + bronze snapshots/events
+              - "silver-fact-player-season"     # season rollup of fact-player-week (T2)
+              - "silver-fact-player-week-status" # what each skill player did every week and why he missed: fact-player-week (T2) + fact-player-injury-week (T1) + bronze rosters_weekly / schedules / snap_counts
 
     - bronze:
         parallel:

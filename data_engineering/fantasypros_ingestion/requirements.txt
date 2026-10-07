@@ -1,6 +1,0 @@
-requests
-polars
-beautifulsoup4
-lxml
-google-cloud-storage
-python-dotenv

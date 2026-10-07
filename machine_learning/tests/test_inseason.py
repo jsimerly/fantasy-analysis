@@ -1,0 +1,144 @@
+"""inseason.py: to-date features, snapshot targets (ROS / next season, censoring), leak guards."""
+import numpy as np
+import polars as pl
+import pytest
+
+import inseason
+
+
+def _weeks():
+    rows = []
+    # player A: 2023 weeks 1-6 (season complete), 2024 weeks 1-3 (season in progress)
+    for w in range(1, 7):
+        rows.append(dict(player_id="A", season=2023, week=w, fpts=10.0 + w, targets=5, rush_att=2, rec=4, pass_att=0,
+                         target_share=0.2, wopr=0.3, game_date=None, player_name="A", position="WR", team="KC",
+                         age_at_season=25.0, exp_at_season=3, draft_round=2, draft_pick=40, is_undrafted=False, is_rookie=False))
+    for w in (1, 2, 3):
+        rows.append(dict(player_id="A", season=2024, week=w, fpts=20.0, targets=8, rush_att=0, rec=6, pass_att=0,
+                         target_share=0.3, wopr=0.5, game_date=None, player_name="A", position="WR", team="KC",
+                         age_at_season=26.0, exp_at_season=4, draft_round=2, draft_pick=40, is_undrafted=False, is_rookie=False))
+    # player B: 2023 weeks 1-2 only (then gone for good)
+    for w in (1, 2):
+        rows.append(dict(player_id="B", season=2023, week=w, fpts=5.0, targets=1, rush_att=5, rec=1, pass_att=0,
+                         target_share=0.05, wopr=0.1, game_date=None, player_name="B", position="RB", team="DET",
+                         age_at_season=30.0, exp_at_season=8, draft_round=None, draft_pick=None, is_undrafted=True, is_rookie=False))
+    return pl.DataFrame(rows)
+
+
+def _seasons():
+    return pl.DataFrame({
+        "player_id": ["A", "A", "A", "B"], "season": [2022, 2023, 2024, 2023],
+        "fpts": [100.0, 81.0, 60.0, 10.0], "games": [10, 6, 3, 2], "ppg": [10.0, 13.5, 20.0, 5.0],
+        "lag1_fpts": [None, 100.0, 81.0, None], "lag1_ppg": [None, 10.0, 13.5, None], "lag1_games": [None, 10, 6, None],
+        "best_ppg": [10.0, 13.5, 20.0, 5.0], "career_seasons": [1, 2, 3, 1], "career_fpts": [100.0, 181.0, 241.0, 10.0],
+        "career_games": [10, 16, 19, 2], "total_touches": [60, 36, 18, 12], "targets": [50, 30, 24, 2], "pass_yds": [0, 0, 0, 0],
+        "season_complete": [True, True, False, True],
+    })
+
+
+class TestToDate:
+    def test_aggregates_weeks_up_to_w_only(self):
+        td = inseason.to_date_features(_weeks(), 3)
+        a = td.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023)).to_dicts()[0]
+        assert a["td_games"] == 3 and a["td_fpts"] == 11 + 12 + 13 and abs(a["td_ppg"] - 12.0) < 1e-9
+        assert a["td_targets_pg"] == 5.0 and a["td_missed"] == 0 and a["week"] == 3
+
+    def test_last3_and_form(self):
+        td = inseason.to_date_features(_weeks(), 6)
+        a = td.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023)).to_dicts()[0]
+        assert abs(a["last3_ppg"] - (14 + 15 + 16) / 3) < 1e-9
+        assert a["td_form"] > 0                      # trending up
+
+    def test_missed_weeks_counts_absences(self):
+        td = inseason.to_date_features(_weeks(), 4)
+        b = td.filter(pl.col("player_id") == "B").to_dicts()[0]
+        assert b["td_games"] == 2 and b["td_missed"] == 2
+
+
+class TestSnapshots:
+    def test_prior_season_joined_and_rookie_null(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2])
+        a24 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2024)).to_dicts()[0]
+        assert a24["prev_ppg"] == 13.5 and a24["prev_career_seasons"] == 2
+        b23 = snaps.filter(pl.col("player_id") == "B").to_dicts()[0]
+        assert b23["prev_ppg"] is None
+
+    def test_ros_targets_and_zero_when_gone(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2])
+        a23 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023)).to_dicts()[0]
+        assert a23["ros_observable"] is True and a23["ros_games"] == 4 and abs(a23["ros_ppg"] - (13 + 14 + 15 + 16) / 4) < 1e-9
+        b23 = snaps.filter(pl.col("player_id") == "B").to_dicts()[0]
+        assert b23["ros_games"] == 0 and b23["ros_fpts"] == 0.0 and b23["ros_ppg"] is None
+
+    def test_in_progress_season_is_censored(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2])
+        a24 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2024)).to_dicts()[0]
+        assert a24["ros_observable"] is False and a24["ros_games"] is None
+        assert a24["next_observable"] is False and a24["next_fpts"] is None
+
+    def test_next_season_target_and_attrition(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2])
+        a23 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023)).to_dicts()[0]
+        # 2024 is NOT complete -> next target censored even though A has 2024 rows
+        assert a23["next_observable"] is False
+        b23 = snaps.filter(pl.col("player_id") == "B").to_dicts()[0]
+        assert b23["next_observable"] is False
+
+    def test_feature_frame_fixed_width(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2, 3])
+        assert inseason.feature_frame(snaps).columns == inseason.FEATURES
+
+
+def _big():
+    rng = np.random.default_rng(1)
+    wk, ss = [], []
+    for p in range(30):
+        pos = ["QB", "RB", "WR", "TE"][p % 4]
+        for s in range(2015, 2024):
+            if rng.random() < 0.15:
+                continue
+            ppg = float(rng.uniform(5, 20)); g = int(rng.integers(10, 18))
+            for w in range(1, g + 1):
+                wk.append(dict(player_id=f"p{p}", season=s, week=w, fpts=max(0.0, ppg + rng.normal(0, 4)), targets=5, rush_att=3,
+                               rec=3, pass_att=0, target_share=0.2, wopr=0.3, game_date=None, player_name=f"p{p}", position=pos,
+                               team="X", age_at_season=22.0 + s - 2015, exp_at_season=s - 2015, draft_round=3, draft_pick=80,
+                               is_undrafted=False, is_rookie=(s == 2015)))
+            ss.append(dict(player_id=f"p{p}", season=s, fpts=ppg * g, games=g, ppg=ppg, lag1_fpts=None, lag1_ppg=None, lag1_games=None,
+                           best_ppg=ppg, career_seasons=s - 2014, career_fpts=ppg * g, career_games=g, total_touches=6 * g,
+                           targets=5 * g, pass_yds=0, season_complete=True))
+    return pl.DataFrame(wk), pl.DataFrame(ss)
+
+
+class TestInSeasonValue:
+    def test_ros_full_weight_next_discounted_tail_from_career(self):
+        snaps = pl.DataFrame({"player_id": ["a", "b"], "position": ["QB", "WR"],
+                              "ros_ppg_hat": [25.0, 8.0], "ros_games_hat": [10.0, 10.0],
+                              "next_ppg_hat": [24.0, 12.0], "next_games_hat": [16.0, 16.0]})
+        # career_pred is projected off season T-1: h1 = this season, h2 = next season (both replaced by
+        # the in-season model), h3 = the first tail season, weighted (1 - rate)^2
+        career_pred = pl.DataFrame({"player_id": ["a"], "h2_ppg_hat": [22.0], "h2_games_hat": [8.0],
+                                    "h3_ppg_hat": [24.0], "h3_games_hat": [4.0], "h4_ppg_hat": [20.0], "h4_games_hat": [4.0]})
+        out = inseason.inseason_value(snaps, career_pred, {"QB": 20.0, "WR": 10.0}, None, [1, 2, 3, 4], discount_rate=0.5)
+        a = out.filter(pl.col("player_id") == "a").to_dicts()[0]
+        assert a["vorp_ros"] == 50.0 and a["vorp_next"] == 64.0 and a["h3_vorp_hat"] == 16.0 and a["h4_vorp_hat"] == 0.0
+        assert "h2_vorp_hat" not in out.columns                     # next season is never counted twice
+        assert abs(a["iv_inseason"] - (50 + 0.5 * 64 + 0.25 * 16)) < 1e-9
+        b = out.filter(pl.col("player_id") == "b").to_dicts()[0]        # no career tail -> only ros/next
+        assert b["vorp_ros"] == 0.0 and b["vorp_next"] == 32.0 and abs(b["iv_inseason"] - 16.0) < 1e-9
+
+
+class TestModels:
+    def test_fit_predict_and_as_of_guard(self):
+        wk, ss = _big()
+        snaps = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+        m = inseason.InSeasonModels(n_estimators=5, max_depth=2).fit(snaps, as_of_season=2022)
+        out = m.predict(snaps.filter(pl.col("season") == 2022))
+        assert {"ros_ppg_hat", "ros_games_hat", "next_fpts_hat"} <= set(out.columns)
+        assert (out["ros_games_hat"] >= 0).all() and (out["ros_games_hat"] <= inseason.MAX_GAMES).all()
+        with pytest.raises(ValueError):
+            inseason.InSeasonModels(n_estimators=5).fit(snaps, as_of_season=2015)
+
+    def test_baselines_present(self):
+        wk, ss = _big()
+        snaps = inseason.baselines(inseason.build_snapshots(wk, ss, weeks=[3]))
+        assert snaps["bl_blend_ppg"].null_count() == 0

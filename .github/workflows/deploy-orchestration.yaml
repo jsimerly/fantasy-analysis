@@ -16,6 +16,11 @@ env:
   SCHEDULER_NAME: fantasy-pipeline-daily
   # One daily kickoff (UTC). Bronze runs first, silver tiers follow on completion.
   SCHEDULE: "0 10 * * *"
+  # Yearly college refresh (orchestration/college.yaml): the CFP title game is in mid-January;
+  # two weeks of leeway puts the run on 5 February, 12:00 UTC.
+  WORKFLOW_COLLEGE: fantasy-college-yearly
+  SCHEDULER_COLLEGE: fantasy-college-yearly
+  SCHEDULE_COLLEGE: "0 12 5 2 *"
   RUNTIME_SA: 624985976737-compute@developer.gserviceaccount.com
 
 jobs:
@@ -49,6 +54,10 @@ jobs:
             --service-account="${RUNTIME_SA}" \
             --project="${PROJECT_ID}"
 
+      - name: "Deploy yearly college workflow"
+        run: |
+          gcloud workflows deploy "${WORKFLOW_COLLEGE}"             --source=orchestration/college.yaml             --location="${REGION}"             --service-account="${RUNTIME_SA}"             --project="${PROJECT_ID}"
+
       # Ensure a single Cloud Scheduler job triggers the workflow daily. Idempotent:
       # update if it already exists, otherwise create it.
       - name: "Ensure daily scheduler trigger"
@@ -78,3 +87,11 @@ jobs:
               --message-body='{}' \
               --project="${PROJECT_ID}"
           fi
+
+      # Yearly college trigger, same create-or-update pattern.
+      - name: "Ensure yearly college scheduler trigger"
+        run: |
+          URI="https://workflowexecutions.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/workflows/${WORKFLOW_COLLEGE}/executions"
+          ACTION=create
+          gcloud scheduler jobs describe "${SCHEDULER_COLLEGE}" --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1 && ACTION=update
+          gcloud scheduler jobs ${ACTION} http "${SCHEDULER_COLLEGE}"             --location="${REGION}"             --schedule="${SCHEDULE_COLLEGE}"             --time-zone="Etc/UTC"             --uri="${URI}"             --http-method=POST             --oauth-service-account-email="${RUNTIME_SA}"             --message-body='{}'             --project="${PROJECT_ID}"

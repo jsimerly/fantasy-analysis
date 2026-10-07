@@ -1,0 +1,39 @@
+[project]
+name = "fantasy-data-engineering"
+version = "0.1.0"
+description = "Fantasy data lake ingestion + silver modeling (bronze -> silver on GCS)"
+requires-python = ">=3.11"
+# One consolidated dependency set for all ingestion/modeling packages under src/.
+# (The old per-package requirements pinned conflicting/cruft deps — e.g. nflverse carried
+#  Flask/FastAPI/nfl_data_py/pandas==1.5.3 left over from a serverless origin; dropped.)
+dependencies = [
+    "polars>=1.34",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "pyarrow>=17",
+    "google-cloud-storage>=3.4",
+    "gcsfs>=2024.9",          # nflverse writes via pl.write_parquet("gs://...")
+    "python-dotenv>=1.1",
+    "requests>=2.32",
+    "beautifulsoup4>=4.14",   # ktc + fantasypros scrapers
+    "lxml>=5.0",              # fantasypros
+    "gql>=4.0",               # sleeper GraphQL
+    "requests-toolbelt>=1.0", # sleeper
+    "nflreadpy>=0.1.3",       # nflverse
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+local = [
+    "adbc-driver-manager>=1.11.0",
+    "adbc-driver-postgresql>=1.11.0",
+]
+
+# src/ holds every package (sleeper_ingestion, ktc_ingestion, ...); tests import them
+# directly. Not built/installed — Docker sets PYTHONPATH=/app/src at runtime.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# importlib mode: no __init__.py needed in tests/, no sys.path insertion of test dirs
+# (so a test dir named like a src package can't shadow it), duplicate test basenames OK.
+addopts = "--import-mode=importlib"

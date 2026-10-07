@@ -1,4 +1,4 @@
-name: ETL Unit Tests
+name: Unit Tests
 
 on:
   push:
@@ -14,14 +14,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Install test dependencies
-        run: pip install -r tests/requirements-dev.txt
+      - name: data_engineering tests
+        working-directory: data_engineering
+        run: uv run pytest -ra
 
-      - name: Run pytest
-        run: pytest -ra
+      - name: machine_learning tests
+        working-directory: machine_learning
+        run: uv run pytest -ra

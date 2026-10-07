@@ -15,6 +15,7 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
   Cloud Scheduler         sleeper-incremental-league / -players / -rosters / -transactions / -users
   (1 trigger, 10:00 UTC)  sleeper-drafts-overview · fantasycalc-daily
         │                 ktc-incremental-{dynasty,redraft,devy} · nflverse-daily
+                 nflverse-backfill-seasonal (reconcile: loads any missing past season)
         ▼                            │ (all complete)
    fantasy-pipeline ─────────────────┤
    (Cloud Workflow)                  ▼
@@ -24,19 +25,24 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
                                      │ (all complete)
                                      ▼
                           ┌──────────── SILVER T2 (read T1) ────────────┐
-                          dim-franchise-meta · fact-asset-values
+                          dim-franchise-meta · fact-asset-values · fact-player-week
                                      │ (all complete)
                                      ▼
                           ┌──────────── SILVER T3 (read T2) ────────────┐
-                          fact-roster-membership
+                          fact-roster-membership · fact-player-season
 ```
 
 ### Dependency rationale
 - **dim-franchise-meta** (T2) reads `dim_leagues_meta` + `dim_users` (T1).
 - **fact-asset-values** (T2) reads `_staging/asset_values_long` (staging-asset-alignment, T1)
   + `dim_players_master` (T1).
+- **fact-player-injury-week** / **fact-depth-chart-week** (T1) read bronze nflverse only
+  (injuries + rosters_weekly; depth_charts + schedules). They do not feed other silver jobs yet.
+- **fact-player-week** (T2) reads `dim_league_settings` (T1, for scoring) + bronze nflverse
+  `player_stats`/`schedules`/`nfl_players`; it's the atomic player-week production fact.
 - **fact-roster-membership** (T3) reads `dim_franchises_meta` (T2) + `dim_players_master`
   (T1) + `dim_leagues_meta` (T1) + bronze rosters/picks/drafts.
+- **fact-player-season** (T3) is a season rollup of `fact-player-week` (T2).
 - **sleeper-drafts-overview** is in the daily bronze tier (not just manual) because
   fact-roster-membership keys the pick lifecycle off draft `status`/`rounds` — it must
   stay current so a completed draft rolls the pick window.
@@ -94,3 +100,20 @@ nflverse-daily-scheduler-trigger
 
 (These are Cloud Scheduler jobs, not the Cloud Run jobs — deleting a trigger does not
 touch the job it ran.)
+
+## Yearly college refresh
+
+`orchestration/college.yaml` is a second, tiny workflow (`fantasy-college-yearly`): run the
+`cfbd-backfill` Cloud Run job (College Football Data, `CFBD_SEASONS=last` = the season that just
+finished, re-fetched), then `silver-fact-college-player-season` (the per-player college fact and
+the CFBD-to-gsis crosswalk the ML `college` feature group reads). One Cloud Scheduler
+(`fantasy-college-yearly`, `0 12 5 2 *`: 5 February 12:00 UTC, about two weeks after the CFP
+title game) triggers it; both are deployed by `deploy-orchestration.yaml`. The backfill job reads
+its API key from Secret Manager (`cfbd-api-key`), which has to exist once:
+
+```
+echo -n "<key>" | gcloud secrets create cfbd-api-key --data-file=- --project fantasy-football-473418
+gcloud secrets add-iam-policy-binding cfbd-api-key   --member=serviceAccount:624985976737-compute@developer.gserviceaccount.com   --role=roles/secretmanager.secretAccessor --project fantasy-football-473418
+```
+
+A manual run any time: `gcloud workflows run fantasy-college-yearly --location us-central1`.

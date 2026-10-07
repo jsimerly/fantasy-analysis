@@ -1,0 +1,89 @@
+name: Deploy Machine Learning Jobs
+# One image for machine_learning/ (built from machine_learning/Dockerfile) and one Cloud Run job,
+# ml-weekly-refresh, triggered once a week by Cloud Scheduler: re-project the season in progress,
+# rebuild WAR for every league the owner is in, export the page data (BACKLOG item 14).
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "machine_learning/src/**"
+      - "machine_learning/scripts/**"
+      - "machine_learning/leagues/**"
+      - "machine_learning/pyproject.toml"
+      - "machine_learning/uv.lock"
+      - "machine_learning/Dockerfile"
+      - ".github/workflows/deploy-machine-learning.yaml"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: fantasy-football-473418
+  REGION: us-central1
+  IMAGE: us-central1-docker.pkg.dev/fantasy-football-473418/cloud-run-jobs/machine-learning
+  JOB_NAME: ml-weekly-refresh
+  SCHEDULER_NAME: ml-weekly-refresh
+  # Tuesdays 15:00 UTC: after Monday night's stats land in nflverse and the daily DAG (10:00 UTC)
+  # has rebuilt the silver facts the models read.
+  SCHEDULE: "0 15 * * 2"
+  RUNTIME_SA: 624985976737-compute@developer.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v2"
+        with:
+          workload_identity_provider: "projects/624985976737/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@fantasy-football-473418.iam.gserviceaccount.com"
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v2"
+
+      - name: "Configure Docker"
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      - name: "Build and Push Docker Image"
+        run: |
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest \
+            -f machine_learning/Dockerfile machine_learning
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: "Deploy Cloud Run Job"
+        run: |
+          # 4Gi / 2 cpu: the in-season snapshots (~200k rows x 48 features) and the career matrix
+          # train in a few minutes on CPU; 1h timeout leaves room for the three league builds.
+          gcloud run jobs deploy "${JOB_NAME}" \
+            --image="${IMAGE}:${{ github.sha }}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --service-account="${RUNTIME_SA}" \
+            --memory=4Gi --cpu=2 --task-timeout=1h --max-retries=1 \
+            --command=python --args=scripts/weekly_refresh.py
+
+      # One weekly trigger, idempotent (update if present, else create). The runtime SA needs
+      # roles/run.invoker on the job and read/write on the lake and ML buckets.
+      - name: "Ensure weekly scheduler trigger"
+        run: |
+          URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
+          if gcloud scheduler jobs describe "${SCHEDULER_NAME}" --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "${SCHEDULER_NAME}" \
+              --location="${REGION}" --schedule="${SCHEDULE}" --time-zone="Etc/UTC" \
+              --uri="${URI}" --http-method=POST \
+              --oauth-service-account-email="${RUNTIME_SA}" \
+              --project="${PROJECT_ID}"
+          else
+            gcloud scheduler jobs create http "${SCHEDULER_NAME}" \
+              --location="${REGION}" --schedule="${SCHEDULE}" --time-zone="Etc/UTC" \
+              --uri="${URI}" --http-method=POST \
+              --oauth-service-account-email="${RUNTIME_SA}" \
+              --project="${PROJECT_ID}"
+          fi

@@ -1,0 +1,299 @@
+"""career.py: horizon targets (zero-fill vs censor), career features, as-of training, baselines."""
+import numpy as np
+import polars as pl
+import pytest
+
+import career
+
+
+def _season_table():
+    # A: 2018-2021 then gone. B: 2019-2022. 2022 is the last complete season; 2023 in progress.
+    rows = []
+    for pid, seasons, base in [("A", [2018, 2019, 2020, 2021], 100.0), ("B", [2019, 2020, 2021, 2022], 60.0)]:
+        for i, s in enumerate(seasons):
+            rows.append(dict(player_id=pid, season=s, fpts=base + 10 * i, games=16, ppg=(base + 10 * i) / 16,
+                             position="RB", age_at_season=22.0 + i, season_complete=True))
+    rows.append(dict(player_id="B", season=2023, fpts=20.0, games=3, ppg=20 / 3, position="RB",
+                     age_at_season=26.0, season_complete=False))
+    return pl.DataFrame(rows)
+
+
+class TestHorizonTargets:
+    def test_target_is_the_future_season(self):
+        out = career.attach_horizon_targets(_season_table(), [1, 2])
+        a19 = out.filter((pl.col("player_id") == "A") & (pl.col("season") == 2019)).to_dicts()[0]
+        assert a19["h1_fpts"] == 120.0 and a19["h2_fpts"] == 130.0
+        assert a19["h1_played"] is True and a19["h1_games"] == 16
+
+    def test_missing_future_row_in_a_complete_season_means_zero_production(self):
+        # A played through 2021; 2022 is complete and A has no row -> 0 games, 0 fpts, not played
+        out = career.attach_horizon_targets(_season_table(), [1])
+        a21 = out.filter((pl.col("player_id") == "A") & (pl.col("season") == 2021)).to_dicts()[0]
+        assert a21["h1_observable"] is True
+        assert a21["h1_fpts"] == 0.0 and a21["h1_games"] == 0 and a21["h1_played"] is False
+        assert a21["h1_ppg"] is None
+
+    def test_future_beyond_last_complete_season_is_censored_not_zero(self):
+        out = career.attach_horizon_targets(_season_table(), [1, 2])
+        b22 = out.filter((pl.col("player_id") == "B") & (pl.col("season") == 2022)).to_dicts()[0]
+        assert b22["h1_observable"] is False and b22["h1_fpts"] is None and b22["h1_played"] is None
+        b21 = out.filter((pl.col("player_id") == "B") & (pl.col("season") == 2021)).to_dicts()[0]
+        assert b21["h1_observable"] is True and b21["h1_fpts"] == 90.0     # 2022 is complete
+        assert b21["h2_observable"] is False                               # 2023 is not
+
+    def test_incomplete_season_never_used_as_an_outcome(self):
+        # B's partial 2023 (20 fpts in 3 games) must not appear as anyone's h1
+        out = career.attach_horizon_targets(_season_table(), [1])
+        assert 20.0 not in out["h1_fpts"].drop_nulls().to_list()
+
+
+class TestCareerFeatures:
+    def test_cumulative_through_current_season_only(self):
+        out = career.career_features(_season_table())
+        a20 = out.filter((pl.col("player_id") == "A") & (pl.col("season") == 2020)).to_dicts()[0]
+        assert a20["career_seasons"] == 3
+        assert a20["career_fpts"] == 100 + 110 + 120
+        assert a20["career_games"] == 48
+        assert abs(a20["best_ppg"] - 120 / 16) < 1e-9
+
+    def test_feature_frame_has_fixed_width(self):
+        ff = career.horizon_feature_frame(career.career_features(_season_table()))
+        assert ff.columns == career.FEATURES
+
+
+def _big_table(n_players=40, seasons=range(2010, 2023)):
+    rng = np.random.default_rng(0)
+    rows = []
+    for p in range(n_players):
+        start = int(rng.choice([2010, 2012, 2014]))
+        for i, s in enumerate(seasons):
+            if s < start or i - (start - 2010) > int(rng.integers(3, 9)):
+                continue
+            g = int(rng.integers(8, 18)); ppg = float(rng.uniform(5, 25))
+            rows.append(dict(player_id=f"p{p}", season=s, fpts=g * ppg, games=g, ppg=ppg,
+                             position=["QB", "RB", "WR", "TE"][p % 4], age_at_season=22.0 + i,
+                             season_complete=True))
+    return pl.DataFrame(rows)
+
+
+class TestHorizonModels:
+    def test_fit_predict_shapes_and_bounds(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1, 2])
+        m = career.HorizonModels([1, 2], n_estimators=5, max_depth=2).fit(df)
+        out = m.predict(df)
+        for k in (1, 2):
+            assert f"h{k}_fpts_hat" in out.columns
+            assert (out[f"h{k}_games_hat"] >= 0).all() and (out[f"h{k}_games_hat"] <= career.MAX_GAMES).all()
+            assert (out[f"h{k}_ppg_hat"] >= 0).all()
+
+    def test_as_of_season_hides_later_outcomes(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        m = career.HorizonModels([1], n_estimators=5, max_depth=2)
+        # as_of 2011: only rows with season+1 <= 2011 (i.e. season 2010) may train
+        rows = df.filter(pl.col("h1_observable") & ((pl.col("season") + 1) <= 2011))
+        assert rows["season"].max() == 2010
+        m.fit(df, as_of_season=2011)
+        assert 1 in m.ppg_models
+
+    def test_estimate_sigma_per_horizon_and_position_then_attached_by_predict(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1, 2])
+        m = career.HorizonModels([1, 2], n_estimators=5, max_depth=2).fit(df)
+        sigma = m.estimate_sigma(df, holdout=3)
+        assert set(sigma) == {1, 2} and all(sigma[k]["__all__"] > 0 for k in (1, 2))
+        out = m.predict(df.head(5))
+        assert "h1_ppg_sigma" in out.columns and (out["h1_ppg_sigma"] > 0).all()
+
+    def test_as_of_with_no_outcomes_raises(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], n_estimators=5).fit(df, as_of_season=2009)
+
+
+class TestAgeSurvival:
+    def _table(self):
+        # 300 QB seasons: continuation falls from ~95% at 25 to ~40% at 40
+        rng = np.random.default_rng(3)
+        ages = rng.uniform(22, 42, 300)
+        p = 1 / (1 + np.exp(-(14 - 0.4 * ages)))
+        played = rng.random(300) < p
+        return pl.DataFrame({"position": ["QB"] * 300, "age_at_season": ages, "games": [10] * 300,
+                             "h1_observable": [True] * 300, "h1_played": played})
+
+    def test_fit_gives_decreasing_survival_and_caps_the_old(self):
+        s = career.AgeSurvival().fit(self._table())
+        assert s.p_next("QB", np.array([25.0]))[0] > s.p_next("QB", np.array([40.0]))[0]
+        assert s.survival("QB", np.array([43.0]), 3)[0] < 0.3
+        pred = pl.DataFrame({"position": ["QB", "QB"], "age_at_season": [25.0, 43.0],
+                             "h1_games_hat": [16.0, 16.0], "h3_games_hat": [15.0, 15.0]})
+        out = s.cap_games(pred, [1, 3])
+        young, old = out.to_dicts()
+        assert young["h1_games_hat"] > 14 and young["h3_games_hat"] > 10      # prior barely binds
+        assert old["h1_games_hat"] < 10 and old["h3_games_hat"] < 5          # survivorship removed
+
+    def test_unknown_position_is_uncapped(self):
+        s = career.AgeSurvival().fit(self._table())
+        pred = pl.DataFrame({"position": ["K"], "age_at_season": [45.0], "h1_games_hat": [16.0]})
+        assert s.cap_games(pred, [1])["h1_games_hat"][0] == 16.0
+
+    def _tiered_table(self):
+        # starters (ppg 15, 14 games) keep playing to 36; fringe players (ppg 5, 6 games) stop by 31
+        rng = np.random.default_rng(5)
+        ages = rng.uniform(22, 40, 600)
+        starter = np.arange(600) % 2 == 0
+        p = np.where(starter, 1 / (1 + np.exp(-(18 - 0.5 * ages))), 1 / (1 + np.exp(-(12 - 0.4 * ages))))
+        return pl.DataFrame({"position": ["WR"] * 600, "age_at_season": ages, "games": np.where(starter, 14, 6),
+                             "ppg": np.where(starter, 15.0, 5.0), "h1_observable": [True] * 600, "h1_played": rng.random(600) < p})
+
+    def test_apply_cap_specs(self):
+        t = self._tiered_table()
+        pred = pl.DataFrame({"position": ["WR"] * 3, "age_at_season": [28.0, 32.0, 32.0], "ppg": [15.0, 15.0, 5.0], "games": [14, 14, 6],
+                             "h1_games_hat": [16.0] * 3, "h3_games_hat": [14.0] * 3})
+        assert career.apply_cap(career.fit_survival(t, "none"), pred, [1, 3], "none").equals(pred)
+        plain = career.apply_cap(career.fit_survival(t, "30+"), pred, [1, 3], "30+")
+        assert plain["h3_games_hat"][0] == 14.0                                  # 28, under 30: untouched
+        assert plain["h3_games_hat"][1] == plain["h3_games_hat"][2] < 14.0      # population curve is tier-blind
+        tiered = career.apply_cap(career.fit_survival(t, "30+t"), pred, [1, 3], "30+t")
+        assert tiered["h3_games_hat"][0] == 14.0
+        assert tiered["h3_games_hat"][1] > tiered["h3_games_hat"][2]           # the starter is held to the starters' odds
+        everyone = career.apply_cap(career.fit_survival(t, "all"), pred, [1, 3], "all")
+        assert everyone["h3_games_hat"][0] < 14.0                              # the pre-2026-10-05 behaviour binds on the young too
+        combo = career.apply_cap(career.fit_survival(t, "30+t34"), pred, [1, 3], "30+t34")
+        assert combo["h3_games_hat"][1] == tiered["h3_games_hat"][1]            # 32 < 34: the population curve has not taken over
+
+    def test_snapshot_tier_columns(self):
+        s = career.fit_survival(self._tiered_table(), "30+t")
+        snap = pl.DataFrame({"position": ["WR", "WR"], "age_at_season": [32.0, 32.0], "prev_ppg": [15.0, 5.0], "prev_games": [14, 6],
+                             "next_games_hat": [16.0, 16.0]})
+        out = career.apply_cap(s, snap, [1], "30+t", col="next_games_hat", tier_cols=("prev_ppg", "prev_games"))
+        assert out["next_games_hat"][0] > out["next_games_hat"][1]
+        blind = career.apply_cap(s, snap, [1], "30+t", col="next_games_hat")      # no ppg / games columns: population curve
+        assert blind["next_games_hat"][0] == blind["next_games_hat"][1]
+
+
+class TestLatestRunDate:
+    def test_picks_the_newest_on_or_before(self, monkeypatch):
+        import gcs_io
+        blobs = ["intrinsic_value/as_of_season=2025/run_date=2026-09-20/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-09-20/projections.parquet",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-01/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-09/metrics.json",
+                 "intrinsic_value/as_of_season=2025/run_date=2026-10-12/projections.parquet"]
+        monkeypatch.setattr(gcs_io, "list_ml", lambda *parts: [b for b in blobs if b.startswith("/".join(parts))])
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025") == "2026-10-09"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025", on_or_before="2026-10-05") == "2026-10-01"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2025", on_or_before="2026-10-12", name="projections.parquet") == "2026-10-12"
+        assert gcs_io.latest_run_date("intrinsic_value", "as_of_season=2024") is None
+
+
+class TestBaselines:
+    def test_carry_forward_repeats_this_season(self):
+        df = career.attach_horizon_targets(_season_table(), [1, 2])
+        out = career.carry_forward_horizons(df, [1, 2])
+        assert out["h1_fpts_carry"].to_list() == out["fpts"].to_list()
+
+    def test_decay_uses_pooled_retention_from_train(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        train, test = df.filter(pl.col("season") < 2020), df.filter(pl.col("season") == 2020)
+        out = career.decay_baseline(train, test, [1], as_of_season=2020)
+        assert "h1_fpts_decay" in out.columns and out["h1_fpts_decay"].null_count() == 0
+
+
+class TestWalkForward:
+    def test_runs_and_reports_all_methods(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1, 2])
+        per_fold, agg = career.walk_forward_horizon_eval(df, [1, 2], start_season=2019,
+                                                         n_estimators=5, max_depth=2)
+        assert set(agg["method"].to_list()) == {"model", "carry_forward", "decay"}
+        assert set(agg["horizon"].to_list()) == {1, 2}
+        # test season 2021's h2 (2023) is censored -> fewer h2 folds than h1 folds
+        assert per_fold.filter(pl.col("horizon") == 2)["test_season"].max() <= 2020
+
+
+class TestTargetAndWeights:
+    def test_residual_target_adds_this_seasons_rate_back(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        m = career.HorizonModels([1], target="residual", n_estimators=20, max_depth=2).fit(df, as_of_season=2020)
+        rows = df.filter(pl.col("season") == 2019)
+        out = m.predict(rows)
+        assert (out["h1_ppg_hat"] >= 0).all() and out["h1_ppg_hat"].is_finite().all()
+        # the ensemble learns a change from this season's rate, so the projection moves with it
+        assert float(np.corrcoef(out["h1_ppg_hat"].to_numpy(), out["ppg"].to_numpy())[0, 1]) > 0.3
+
+    def test_weights_are_relevance_shaped_and_change_the_fit(self):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        rows = df.filter(pl.col("season") == 2015)
+        w = career.HorizonModels([1], weight="ppg")._weights(rows)
+        assert w is not None and w.min() >= 1.0 and float(w[int(rows["ppg"].arg_max())]) == w.max()
+        assert career.HorizonModels([1])._weights(rows) is None
+        a = career.HorizonModels([1], n_estimators=20, max_depth=2).fit(df, as_of_season=2020).predict(rows)["h1_ppg_hat"]
+        b = career.HorizonModels([1], weight="ppg2", n_estimators=20, max_depth=2).fit(df, as_of_season=2020).predict(rows)["h1_ppg_hat"]
+        assert float((a - b).abs().max()) > 1e-6
+
+    def test_opportunity_target_multiplies_volume_and_efficiency(self):
+        base = _big_table()
+        rng = np.random.default_rng(1)
+        base = base.with_columns(pl.Series("targets", rng.integers(20, 160, base.height)), pl.Series("rush_att", rng.integers(0, 250, base.height)),
+                                 pl.Series("pass_att", rng.integers(0, 600, base.height)))
+        df = career.attach_horizon_targets(career.career_features(base), [1])
+        assert "h1_opp" in df.columns and (df.filter(pl.col("h1_played"))["h1_opp"] > 0).all()
+        m = career.HorizonModels([1], target="opportunity", n_estimators=20, max_depth=2).fit(df, as_of_season=2020)
+        rows = df.filter(pl.col("season") == 2019)
+        out = m.predict(rows)
+        X = m.feature_frame(rows).to_numpy()
+        prod = np.clip(m.opp_models[1].predict(X), 0, None) * np.clip(m.eff_models[1].predict(X), 0, None)
+        assert np.allclose(out["h1_ppg_hat"].to_numpy(), prod) and (out["h1_ppg_hat"] >= 0).all()
+
+    def test_opportunity_target_without_volume_columns_raises(self):
+        import pytest
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1])
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], target="opportunity", n_estimators=5, max_depth=2).fit(df, as_of_season=2020)
+
+    def test_bad_options_raise(self):
+        import pytest
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], target="delta")
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], weight="fpts")
+
+
+
+class TestBackend:
+    def test_backend_validation_and_blend(self):
+        import pytest
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], backend="torch")
+        m = career.HorizonModels([1], backend="tabpfn", tabpfn_params={"n_estimators": 4})
+        assert m.backend == "tabpfn" and m._kw()["tabpfn_params"] == {"n_estimators": 4}
+        from xgboost import XGBRegressor
+        assert isinstance(career.HorizonModels([1])._new(), XGBRegressor)
+        assert isinstance(career.HorizonModels([1], backend="blend")._new(), career._Blend)
+
+    def test_blend_averages_members(self):
+        class Const:
+            def __init__(self, c):
+                self.c = c
+            def fit(self, X, y, sample_weight=None):
+                return self
+            def predict(self, X):
+                return np.full(len(X), self.c)
+        b = career._Blend([Const(1.0), Const(3.0)]).fit(np.zeros((4, 2)), np.zeros(4))
+        assert b.predict(np.zeros((4, 2))).tolist() == [2.0] * 4
+
+    def test_tabpfn_wrapper_ignores_weights_and_sets_defaults(self, monkeypatch):
+        import sys, types
+        seen = {}
+        class Fake:
+            def __init__(self, **kw):
+                seen.update(kw)
+            def fit(self, X, y):
+                self.n = len(X); return self
+            def predict(self, X):
+                return np.ones(len(X)) * self.n
+        monkeypatch.setitem(sys.modules, "tabpfn", types.SimpleNamespace(TabPFNRegressor=Fake))
+        monkeypatch.delenv("TABPFN_MODEL_VERSION", raising=False)
+        t = career._TabPFN("cpu", 7, {"n_estimators": 4, "model_version": "v2"}).fit(np.zeros((5, 3)), np.zeros(5), sample_weight=np.ones(5))
+        assert t.predict(np.zeros((2, 3))).tolist() == [5.0, 5.0]
+        assert seen == {"device": "cpu", "random_state": 7, "n_estimators": 4, "ignore_pretraining_limits": True, "fit_mode": "fit_preprocessors"}
+        import os
+        assert os.environ["TABPFN_MODEL_VERSION"] == "v2"

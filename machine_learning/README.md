@@ -1,0 +1,337 @@
+# Dynasty Intrinsic Value Model
+
+Estimates the **intrinsic dynasty value** of fantasy football players (project future
+production → points above replacement → discount → present value) to find mispricings vs.
+the market (KTC / FantasyCalc). Format: **superflex / 2QB**.
+
+## Where things live
+
+Datasets that are reusable beyond this model are **data engineering**; modeling-specific
+feature work is **machine learning**:
+
+- **`data_engineering/silver_fantasy/fact_player_season.py`** — builds the reusable
+  player-season production fact (nflverse box scores re-scored under the league's rules +
+  volume + bio) → `gs://nfl-data-bronze/silver/fantasy/fact_player_season/data.parquet`.
+- **`machine_learning/`** (this dir) — reads that fact and adds the model-exclusive feature
+  engineering (lags, T+1 target, splits, models).
+
+Buckets, by ownership:
+- `nfl-data-bronze` (lake) — shared DE datasets; the model only **reads** from here.
+- ML bucket (`$ML_BUCKET`, default `fantasy-football-ml`) — model-exclusive artifacts,
+  namespaced per project under `<ML_BUCKET>/dynasty-value/`. Not used in Phase 0 (nothing
+  persisted yet); writes begin in Phase 1+.
+
+## Phase 3 — in-season update (current)
+
+The primary in-season view (`src/inseason.py`). A **snapshot** is (player, season T, through
+week W): the prior-season feature set (as of T−1) plus this season to date (games, per-game
+rate, usage, last-3 form, missed weeks). Targets: rest-of-season ppg/games (0 games if he never
+played again) and next-season ppg/games (attrition learnt). Trained on every (season, week)
+snapshot back to 1999 (~199k rows), so the model learns how far a 3-week sample should move a
+projection versus a 10-week one. `inseason_value` = ROS (undiscounted) + next season from this
+model + seasons T+2.. from the career model off the latest complete season, discounted — the
+dynasty-relevant number to compare with the market in-season.
+
+```
+scripts/backtest_inseason.py            # by checkpoint week x cohort vs KTC + naive baselines; market-lag test
+scripts/backtest_inseason.py --current  # project the in-progress season; writes gs://.../inseason/season=YYYY/week=W/
+```
+
+Backtest (cohorts 2021–2024, checkpoints weeks 3/6/9/13, players KTC priced that week):
+- **Rest of season**: rank correlation with realized ROS ppg, model **0.78 vs KTC 0.70** at week 3,
+  widening to 0.69 vs 0.57 by week 13 (to-date ppg alone: 0.70; last season alone: 0.60).
+- **Next season**: in-season IV **0.565 vs KTC 0.555** (W3) … 0.598 vs 0.581 (W13); a 50/50
+  last-season/to-date blend is nearly as good (0.55–0.59), so the gain over a sensible heuristic is thin.
+- **Market lag**: the gap between the *next-season* projection and KTC at week W predicts KTC's move
+  to February (Spearman −0.19 at W3): the third the market priced cheap vs fundamentals gained ~+6 %,
+  the rich third ~−7 %, and a naive "hot start" rule has no such power. The *multi-year* IV gap does
+  not predict the move — the in-season market chases near-term production, so that is where the
+  tradable lag is.
+A rookie has no complete prior season, so the career model cannot give him a tail; in-season he
+gets one anchored on his next-season projection and shaped by the **realized trajectories of past
+rookies** of his position and projected tier (`inseason.rookie_tail_table`: for every horizon, the
+mean games in that year over the mean games in year +1 among rookies since 2008, absent seasons
+counted as 0, and the same for ppg among seasons played; a starter+mid pool and the position are
+the fallbacks for thin groups, and a backtest only sees rookies whose outcomes were complete by its
+season). Until 2026-10-06 that tail took the median ratio among players WITH a career tail in the
+same position and age bucket, which the young buckets' fringe players dragged to 0.27 of the
+next-season games by year four for a first-round running back who keeps 0.7-0.8 in the record;
+it is what made every rookie look worthless (BACKLOG 24). Anyone else without a prior season (a
+returning veteran) still uses that projection-median rule.
+Known limits: rookies carry only draft slot + a few weeks (no college inputs); survivorship at the
+oldest ages (see the age-survival prior); one lineup.
+
+## Model performance panel
+
+The three backtests persist a summary to the ML bucket (`backtests/{career_eval,value,inseason}/run_date=D/summary.json`,
+skip with `--no-write`), and `export_projections.py` folds the latest of each, plus the experiment
+leaderboard, into the table's data file. The page's "How the model performs" section renders them:
+in-season rest-of-season and next-season rank agreement vs KTC / this-season / last-season / blend
+baselines by checkpoint week, multi-year intrinsic value vs KTC with a paired bootstrap and the
+mispricing terciles, career projection MAE vs carry-forward and age decay by horizon, the
+feature-group leaderboard, and dated one-off checks.
+
+## Intrinsic value v2 — wins above replacement (WAR), league-dependent
+
+`src/league.py`, `src/lineup.py`, `src/war.py`, `scripts/build_war.py`. Value in **wins**, built
+from the league's own configuration rather than a fixed line:
+
+1. **Lineup** (`LeagueSpec`): teams + starting slots + slot eligibility, from `dim_league_settings`
+   or any JSON (`leagues/12team_1qb.json`), so the same projections price differently per league.
+2. **Replacement** (`lineup.league_fill`): an explicit fill of every team's slots from the pool
+   (dedicated slots first, then the more restrictive flex), averaged over the last five real
+   seasons. The owner's superflex league actually starts ~28 RB / ~31 WR / ~12 TE, not the
+   24.5 / 34.5 / 11 the fixed flex shares assumed, which moves RB replacement from 10.9 to 9.9 ppg.
+   Backtested like for like, fill-based replacement is at least as good as the production line
+   (rank agreement with realized value 0.673 vs 0.671).
+   **Injury-aware fill** (`lineup.replacement_weekly`): the same fill, but drawn each week only
+   from the players who actually played (fact_player_week rows), then averaged over regular-season
+   weeks. Starters who are out or on bye are filled from the bench, so the marginal available
+   player sits deeper than the full-season fill, and the depth is read off the data per position
+   rather than assumed: in effective starters the owner's league goes QB 20 → 25, RB 28 → 32.5,
+   WR 31 → 39, TE 12 → 16 (2021–25), i.e. replacement ppg QB −1.6, RB −0.8, WR −0.9, TE −0.8.
+   This is the production line (`build_war.py --replacement weekly`, the default; `fill` keeps the
+   full-season fill). It is a definition, not a model change: within a position every player gains
+   the same games-weighted constant, so no within-position reordering; across positions QBs gain
+   most (their line moves 1.8 ppg). In the harness (`--replacement`, `--realized-replacement`)
+   the cross-position shift is a wash on held-out ordering (BACKLOG item 19), so the choice rests
+   on realism: lineups are filled every week from the players who are actually available.
+3. **Win curve** (`WinCurve`): P(win a week | points) on the league's own standings
+   (`team_weeks_from_standings`); a logistic fit with 300+ team-weeks, otherwise a normal-margin
+   curve from the league's weekly mean / spread. Wins are linear-to-concave in points, so there
+   is no top-end convexity in production value; the title premium is a team-context layer.
+4. **WAR** = Σ_k (1 − r)^(k−1) · games_k · [W(μ + excess_k) − W(μ)] with excess_k the sigma-aware
+   points above replacement per game; the rest of this season is the first, undiscounted span.
+   PAR is the linear special case and is reported alongside.
+5. **Per roster** (`war.team_marginal_war`, `--teams`): marginal wins each player adds to HIS
+   roster (optimal lineup with him minus without, exact assignment incl. FLEX / SUPER_FLEX),
+   mapped through the curve at that roster's own weekly total, plus the best outside targets.
+
+```
+scripts/build_war.py --season 2026 --week 3 --run-date 2026-10-01 --teams      # owner's league, in-season
+scripts/build_war.py --season 2026 --week 3 --run-date 2026-10-01 --league leagues/12team_1qb.json
+```
+Outputs: `war/league=<name>/season=S/week=W/run_date=D/{projections, teams}.parquet + meta.json`.
+
+**One model, many leagues (`src/scoring.py`).** The projection model is trained once, on the
+primary league's scoring (Stuck in High School). For another league, every player's real weeks
+from the last three seasons are re-scored under both rule sets and the ratio scales his projected
+ppg and his historical ppg (so replacement is in the same units); differences the weekly fact
+cannot rebuild (fumbles, 2-pt, yardage bonuses) are shared across the owner's leagues and cancel.
+`build_war.py --all-leagues` notes each league's adjustment in its meta.
+
+Known calibration gap (first-3-span shares vs realized 3-year shares, 2017–2022 cohorts): the
+model gives QBs ~33 % of league value where QBs delivered ~26 %, and WRs ~29 % where they
+delivered ~38 %; QB projection spread (sigma 5.2 vs 2.5 for WR) inflates QB upside credit. A
+position-level calibration is a value-definition experiment, not a feature one (BACKLOG 13).
+
+## Draft picks in wins
+
+`src/picks.py` prices a rookie pick as the expected wins of the player taken there: realized WAR
+by NFL draft pick over ten seasons for every drafted QB / RB / WR / TE (classes with a full
+window, never-played counted as zero), a monotone log-log curve through it, and the leagues' own
+rookie drafts for which NFL picks actually go at each slot tier (Early / Mid / Late thirds of a
+round, KTC's tiers). The export carries the table (`picks`), the Rosters tab shows it discounted
+at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG item 15.
+
+## Weekly refresh (Cloud Run)
+
+`scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
+(`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
+(`build_war.py --all-leagues --teams`) and exports the page data to
+`pages/season=S/week=W/run_date=D/projections.json` in the ML bucket. `Dockerfile` builds the
+image; `.github/workflows/deploy-machine-learning.yaml` pushes it, deploys the `ml-weekly-refresh`
+Cloud Run job (4Gi / 2 cpu / 1 h) and keeps a Cloud Scheduler trigger on Tuesdays 15:00 UTC, after
+the daily data pipeline. The runtime service account needs read / write on the lake and ML buckets.
+The published page is republished from the exported JSON by hand (a job cannot update an
+artifact). `--dry-run` prints the three commands; `--skip inseason` etc. leaves a step out.
+
+## Experiments — mix and match feature groups
+
+Every modelling angle is kept as a named **feature group** (`src/feature_groups.py`) and any
+combination can be trained and scored through the same walk-forward backtest
+(`src/experiments.py`, `scripts/run_experiment.py`). A group adds columns to the career matrix
+using only information known by the end of season T, so every variant is comparable and
+leak-free against KTC the following February:
+
+| group | source | what it adds |
+|---|---|---|
+| `base` | fact_player_season (+ lags) | production, volume, bio — the production model's inputs |
+| `career` | fact_player_season | cumulative seasons / points / games, best ppg |
+| `injury` | fact_player_injury_week | weeks out / listed / on reserve, by class (soft tissue, structural, concussion), plus last year's |
+| `role` | fact_depth_chart_week | depth entering / leaving the season, best depth, starter share, moves, overall position rank |
+| `trend` | fact_player_week | second-half vs first-half ppg / targets / touches, last-4 form |
+| `situation` | fact_player_season | changed team this season / last season |
+| `college` | fact_college_player_season + dim_college_crosswalk (CFBD) | final-season dominator / yards per team play / usage / touch share, best dominator, breakout age, college seasons, final team's SP+, early declaration — static per player, null until the CFBD tables exist |
+
+```
+scripts/run_experiment.py --list-groups
+scripts/run_experiment.py --variants "current=base,career;injury=base,career,injury;all=base,career,injury,role,trend,situation" --horizon 3 --first-cohort 2015
+scripts/run_experiment.py --leaderboard --horizon 3
+scripts/run_experiment.py --groups base,career --name weekly_rep --horizon 3 --first-cohort 2015 --replacement weekly
+```
+
+`--replacement share|fill|weekly` picks how replacement level is built (production flex-share
+line, explicit league fill, or the injury-aware weekly fill); it is recorded in the ledger so runs
+compare like for like. `--target level|residual|opportunity` picks what the ppg model learns (the
+level; the change from this season's rate; opportunities per game × points per opportunity) and
+`--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
+cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
+writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
+cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
+
+`weekly` (2026-10-06) is the sequence-shaped group: the season as 18 weekly slots, each with what the
+player did (played / bye / injured reserve / injured out / suspended / practice squad / inactive /
+did not play / not rostered), the body part when he was hurt, his points, opportunities and snap
+share, plus how many weeks of the season and the season before went to each reason. It reads
+`silver/fantasy/fact_player_week_status` (data engineering), so a lost season carries its cause, and
+it is meant for TabPFN 3.5 (2,000-column limit) where attention across features can learn the
+week-by-week shape instead of the hand-made `trend` columns; 195 columns with every group on.
+
+`--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts (the same
+flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks
+the production career model; since 2026-10-05 the in-season refresh runs locally on
+`--backend tabpfn --tabpfn-params model_version=v2 --device cuda`, the Cloud Run job stays on
+`xgb`, and the written projections carry `career_backend`; the in-season run also writes its own
+`metrics.json` — backend, cap, ppg spread, replacement line — which `build_war.py` and
+`export_projections.py` read, falling back to the latest career build on or before the run date,
+so the refresh does not need a preseason career build of the same day):
+`tabpfn` is TabPFN (a pretrained tabular foundation model doing in-context regression; use
+`--device cuda` and `--tabpfn-params model_version=v2 n_estimators=4`), `blend` averages the two.
+Setup, into `.venv`: `pip install --index-url https://download.pytorch.org/whl/cu126 torch` then
+`pip install tabpfn`. The v2 weights download freely; v2.5 / v3 / v3.5 need a one-time licence
+acceptance at https://ux.priorlabs.ai (`TABPFN_TOKEN=<api key>` for headless runs). At the career
+matrix's size (~12k rows per horizon) one fit-and-predict takes about a minute on an RTX 2060, so
+a full eight-cohort run is about two hours; the pretraining-limit override is set by default
+(`career._TabPFN`). The KV-cache fit mode (`fit_mode=fit_with_cache`) is faster per prediction but
+keeps every fitted model's cache on the GPU, which overflows 6 GB with the twelve models a harness
+cohort holds.
+
+Each run reports, per cohort and on average: rank agreement of IV with realized H-season PAR on
+the players KTC priced (and KTC's own, the bar to clear), the same on every projected player,
+top-decile precision, and points MAE per horizon. Summaries append to
+`gs://fantasy-football-ml/dynasty-value/experiments/ledger.parquet` with the group list and git
+commit, so the leaderboard compares like for like (same horizon, same cohorts). A change to the
+production feature set is accepted only when it wins there.
+
+## Model vs market backtest — are we beating KTC, and where
+
+`scripts/market_backtest.py` scores each cohort the way a manager would have used the model: the
+career model is trained on seasons ≤ T, its projection of the next 1 / 2 / 3 seasons (in WAR) is
+set beside KTC's dynasty value the following February, and both are compared with the WAR the
+players then delivered. KTC is daily from 2020-04, so cohorts run 2020 to the last observable one
+(2022 at three years, 2024 at one). It reports rank agreement with realized WAR for the model and
+for KTC on the same priced players, the disagreement test (does our gap to the market predict the
+market's error), realized wins per 1,000 KTC of the players we called cheap vs rich, all of it by
+cohort, position, age band, experience and market tier, and a swap test: each February every
+player the model calls rich is paired with the closest-priced player it calls cheap (KTC within
+`--tol`, both at least `--min-gap` ranks of disagreement) and the realized WAR the swap gained is
+counted. `--backends xgb tabpfn` runs the bake-off on the same footing.
+
+```
+scripts/market_backtest.py --horizons 3 1 2 --backends xgb --replacement weekly --out <dir>
+scripts/market_backtest.py --horizons 3 --backends xgb tabpfn --device cuda --tabpfn-params model_version=v2 n_estimators=4 --out <dir>
+```
+
+Writes `players.parquet` (every priced player with ranks, calls and segments), `pairs.parquet`
+(the swaps) and `summary.json` (every table) to `--out`; it does not write to the lake or the
+ledger. Results are kept in `BACKLOG.md` item 23.
+
+## The leagues' trading, scored — in `analysis/`
+
+Not a model, so it lives with the notebooks: `analysis/trades.py` + `analysis/trade_report.py`
+(see `analysis/README.md`). It imports this package's KTC history loader and, for the secondary
+wins column, the league spec, weekly replacement line and win curve; it publishes its summary to
+`backtests/trades/`, which `export_projections.py` carries to the page's Trades tab.
+
+## Phase 2 — intrinsic value
+
+What no site publishes: a value built from **fundamentals** (projected career production) rather
+than from what the market thinks. Like a DCF for a company:
+
+1. **Project the career** (`src/career.py`): for every player-season T, one model pair per
+   horizon k = 1..H predicts season T+k — `ppg` (a rate, trained on players who played) and
+   `games` (availability, with 0 for players who had left the league, so attrition is learnt,
+   not assumed). Direct multi-horizon models: real outcomes per horizon, no compounding of a
+   one-year model, and outcomes not yet observable are censored. `estimate_sigma` measures the
+   out-of-sample spread of each horizon's `ppg` projection on held-out recent seasons.
+   `career.AgeSurvival` is a prior on availability for the ages beyond the data's reach: the games
+   models see only the survivors at the oldest ages (every 43-year-old QB season in the data is Tom
+   Brady's), so from age 30 projected games at horizon k are capped at
+   `17 × P(still playing k years out | position, prior tier, age)`, continuation odds fitted per
+   position and prior tier (starter / mid / fringe off the season the projection is from: an elite
+   31-year-old is held to the elite 31-year-olds' odds, and they last longer). Below 30 the games
+   model is right on its own and the cap does not apply (capping everyone cost young starters a
+   third of their year-3 games and made every rookie look worthless, BACKLOG 24). The spec lives in
+   `career.DEFAULT_CAP` (`30+t`); `--cap` on the harness, `backtest_inseason.py`,
+   `build_intrinsic_value.py` and `weekly_refresh.py` takes `30+t | 30+ | 30+t34 | all | none`.
+2. **Replacement level** (`src/replacement.py`): from the league's lineup in
+   `dim_league_settings` (10-team superflex: ~20 QB / 24.5 RB / 34.5 WR / 11 TE starters),
+   replacement ppg = the player just outside the starters, averaged over the last 5 seasons.
+3. **Value** (`src/value.py`): per horizon, *expected* points above replacement
+   `E[max(ppg − rep, 0)] × games` under the projection's spread (so a player projected near
+   replacement keeps his upside instead of being worth exactly 0), then
+   `IV = Σ_k (1 − r)^(k−1) · VORP_k` with a per-year discount rate `r = 20 %` (season 1, the
+   coming season, at full weight; `r = 100 %` means this season only; a manager time-preference
+   parameter exposed as a slider in the projections table).
+4. **Market comparison** (`src/market.py`, `value.compare_to_market`): KTC superflex values
+   joined by id (`dim_players_master.gsis_id`, trimmed) with a name+position fallback; a
+   power-law fit `log(market) = a + b·log(IV + 1)` (isotonic optional) maps IV onto the market's
+   scale so `mispricing = market − fair_value` is in market units, plus rank gaps; the same fit
+   within each position factors out a position-wide premium.
+
+```
+scripts/
+  evaluate_career.py        # walk-forward MAE per horizon: model vs carry-forward vs age/attrition decay
+  backtest_value.py         # IV as of T vs KTC as of Feb T+1 vs REALIZED discounted value over T+1..T+H
+  build_intrinsic_value.py  # today's IV for every player with a row in the latest complete season,
+                            # market comparison, writes to gs://fantasy-football-ml/dynasty-value/intrinsic_value/
+```
+
+First results (2026-10-01, walk-forward 2010+): the career model beats carry-forward by 11 %
+(h1) → 50 % (h5) MAE and the age/attrition decay baseline by 5–8 % at every horizon. Backtest
+(cohorts 2020–2022, H=3): rank correlation with realized value **IV 0.67 vs KTC 0.66**, a
+50/50 blend 0.68 — fundamentals alone are on par with the market and carry complementary
+information. Known limits: production-only (no college / draft-year inputs → 2026 rookies and
+players without a row in the latest complete season are not projected; young breakouts are
+shrunk toward similar histories), one lineup (the primary lineage), point projections + a
+normal spread rather than full distributions.
+
+## Phase 0 — player-season feature table
+
+One leakage-safe row per player-season: features as of year **T**, target = next-season
+(**T+1**) fantasy points (re-scored upstream under the owner's superflex scoring). Only a
+**complete** season can be a target (`fact_player_season.season_complete`): the lake also
+carries the in-progress season, which must not become anyone's "next season" outcome.
+
+```
+src/
+  gcs_io.py     # lake reader (read fact_player_season) + ML-bucket path helper
+  features.py   # load fact + attach lags (T-1, T-2) + T+1 target (leakage-safe)
+scripts/
+  build_training_matrix.py   # read fact → in-memory training matrix + summary (no write)
+tests/          # pytest: lag/target leakage guards (no network)
+```
+
+The re-scoring engine + player-season aggregation are tested in the DE suite
+(`tests/silver_fantasy/test_fact_player_season.py`); this package tests only the
+modeling-specific lag/target assembly.
+
+## Setup
+
+Fresh **uv** venv on **Python 3.11+** (isolated from the repo-root ETL venv). Requires
+Application Default Credentials for GCS (already configured on this machine).
+
+```bash
+cd machine_learning
+uv sync                                          # creates .venv (3.11) + installs deps
+uv run pytest                                    # unit tests
+uv run python scripts/build_training_matrix.py   # build the training matrix from the lake
+```
+
+Rebuild the upstream dataset (DE, run from repo root on the ETL venv) when nflverse data
+or league scoring changes:
+
+```bash
+python data_engineering/silver_fantasy/fact_player_season.py
+```
