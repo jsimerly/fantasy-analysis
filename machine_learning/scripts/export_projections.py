@@ -103,11 +103,15 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
             v.append(_r(r.get(f"h{k}_vorp_hat") or 0.0, 2))
         pg = [_r(r["ros_ppg_hat"], 2), _r(r["next_ppg_hat"], 2)] + [_r(r.get(f"h{k}_ppg_hat") or 0.0, 2) for k in tail]
         g = [_r(r["ros_games_hat"], 2), _r(r["next_games_hat"], 2)] + [_r(r.get(f"h{k}_games_hat") or 0.0, 2) for k in tail]
+        band = None
+        if any(r.get(f"h{k}_ppg_q20") is not None for k in tail):      # the range of outcomes: 20th / 80th percentile ppg per tail span
+            band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail]}
         out.append({**_common(r),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
                     "iv": _r(r["iv_inseason"]), "iv_pre": _r(r.get("iv_preseason")), "iv_rank_all": int(r["iv_rank_all"]),
                     "h": h, "v": v, "pg": pg, "g": g,                        # per-span projected rate / games (primary scoring)
+                    **({"band": band} if band else {}),
                     "h1_ppg": _r(r["ros_ppg_hat"]), "h1_games": _r(r["ros_games_hat"])})
     return out
 
@@ -189,7 +193,11 @@ def main() -> None:
                 continue
             base = row["pg"][0] if row.get("pg") else None
             scale = (r["ros_ppg_hat"] / base) if base and r.get("ros_ppg_hat") is not None and base > 0 else 1.0
-            row.setdefault("L", {})[lid] = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks], "s": _r(scale, 4)}
+            entry = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks], "s": _r(scale, 4)}
+            if f"war_lo_{ks[0]}" in wp.columns:                   # floor / ceiling wins per span (the range of outcomes)
+                entry["wl"] = [_r(r[f"war_lo_{k}"], 4) for k in ks]
+                entry["wh"] = [_r(r[f"war_hi_{k}"], 4) for k in ks]
+            row.setdefault("L", {})[lid] = entry
         curve = meta_l["win_curve"]
         p0 = 1 / (1 + 2.718281828 ** (-(curve["a"] + curve["b"] * curve["mean_points"])))
         try:

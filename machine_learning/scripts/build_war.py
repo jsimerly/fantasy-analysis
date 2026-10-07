@@ -129,7 +129,7 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
     (injuries and byes push the marginal starter deeper; lineup.replacement_weekly, needs ``weeks``),
     "fill" is the full-season fill (every starter assumed to play every week)."""
     if scale is not None:                     # this league's scoring, applied after the one model (per-player ratio)
-        proj = scoring.apply_scale(proj, scale, [c for c in proj.columns if c.endswith("_ppg_hat") or c.endswith("_ppg_sigma")])
+        proj = scoring.apply_scale(proj, scale, [c for c in proj.columns if c.endswith("_ppg_hat") or c.endswith("_ppg_sigma") or "_ppg_q" in c])
         season_fact = scoring.apply_scale(season_fact, scale, ["ppg"])
     last = int(season_fact.filter(pl.col("season_complete"))["season"].max())
     hist = list(range(last - 4, last + 1))
@@ -147,6 +147,7 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
           + ("" if replacement != "weekly" else "; full-season fill would be " + ", ".join(f"{p} {v:.1f}" for p, v in rep_full.items())))
     print(f"  win curve: mean {curve.mean_points:.1f} sd {curve.sd_points:.1f} n={curve.n}; +10 ppg for an average team = +{10 * curve.slope_at_mean:.3f} win/week")
     out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma)
+    out = war.wins_range(out, rep, curve, comps, rate)          # floor / ceiling wins where the projection carries a band
     out = out.with_columns(pl.col("war").rank(method="ordinal", descending=True).cast(pl.Int64).alias("war_rank_all"))
     cmp_cols = ["player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"]
     summary = {"n": 0, "spearman": None}

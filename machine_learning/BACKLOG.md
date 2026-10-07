@@ -634,7 +634,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     would have been right with the model), a Trades tab on the page, and realized wins per season
     elapsed so 2021 and 2025 trades compare.
 
-26. **Valuing the owner's own roster: bench players and the range of outcomes.** Suspicion: the
+26. **Valuing the owner's own roster: bench players and the range of outcomes.** *(2026-10-06,
+    first cut built: the career model keeps TabPFN's 20/50/80 ppg and games quantiles per horizon
+    (`--range`), the harness scores coverage and pinball loss, the WAR build adds floor / ceiling
+    wins per span, rookies get a band from the position spread, and the page shows WAR
+    floor–ceiling and the ppg band per season; refresh with `--range` queued behind the 3.5 runs.
+    Owner's framing: range, error and ordering together per player; the distribution loss (CRPS /
+    pinball) becomes the primary once the harness reads distributions everywhere, item 29 the
+    path-dependent version.)* Suspicion: the
     roster layer slightly undervalues bench players, and the cause may be that the projection is
     collapsed to one number per player per year too early. Today a player's spread (`h{k}_ppg_sigma`,
     one per position and horizon) enters only through the expected-excess-over-replacement

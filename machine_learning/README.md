@@ -198,6 +198,18 @@ share, plus how many weeks of the season and the season before went to each reas
 it is meant for TabPFN 3.5 (2,000-column limit) where attention across features can learn the
 week-by-week shape instead of the hand-made `trend` columns; 195 columns with every group on.
 
+**Range of outcomes (2026-10-06).** One model, several quantiles: with `--range` the career model
+keeps the 20th / 50th / 80th percentiles of TabPFN's predictive distribution for ppg and games per
+horizon (`h{k}_ppg_q20` / `_q50` / `_q80`, `h{k}_games_q..`; the point stays the mean; the games band is
+capped like the point), the harness scores the band (`ppg_cover_2080`, the share of realized ppg
+inside it, 0.6 when calibrated, and `ppg_pinball`, the proper scoring rule for quantiles, which a
+hedging model cannot game), the WAR build turns it into floor / ceiling wins per span (`war.wins_range`,
+no upside term; a span without a band, this season and next, keeps its point on both sides), the
+in-season refresh (`--range`) fills a rookie's or returning veteran's missing band from the position's
+spread (`inseason.fill_missing_band`), and the page shows WAR floor–ceiling and the ppg band per
+season. The point value, the wins error and the ordering stay what they were; the band is the third
+view. A tree backend has no distribution and leaves the columns out.
+
 `--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts (the same
 flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks
 the production career model; since 2026-10-05 the in-season refresh runs locally on

@@ -62,6 +62,7 @@ def main() -> None:
     ap.add_argument("--backend", default="xgb", choices=["xgb", "tabpfn", "blend"], help="career model estimator for the in-season refresh (tabpfn needs a GPU: run locally)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[])
     ap.add_argument("--cap", default="30+t", help="age-survival cap on projected games (30+t = tier-aware from 30, production | 30+ | all | none)")
+    ap.add_argument("--range", action="store_true", help="keep the career tail's 20/50/80 band (TabPFN backends): floor / ceiling wins on the page")
     args = ap.parse_args()
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
@@ -69,7 +70,7 @@ def main() -> None:
     print(f"season {season} through week {week}; run date {args.run_date}", flush=True)
 
     if "inseason" not in args.skip:
-        run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap] + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+        run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap] + (["--range"] if args.range else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)
