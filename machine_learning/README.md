@@ -198,6 +198,22 @@ share, plus how many weeks of the season and the season before went to each reas
 it is meant for TabPFN 3.5 (2,000-column limit) where attention across features can learn the
 week-by-week shape instead of the hand-made `trend` columns; 195 columns with every group on.
 
+`team` and `contract` (2026-10-07, BACKLOG 31) are the two groups the model had never seen.
+`team` is how good the player's team was that season, from `silver/fantasy/fact_team_season_strength`
+(data engineering, built from the nflverse schedules and team stats the lake already held): the
+market's rating (the mean closing spread from the team's side, which prices the QB, the injuries
+and the schedule), the scoring environment (total line, implied points, moneyline win probability
+from 2006), the realized point differential and record, offensive EPA per play, pass rate, the QB
+situation (starters used, the main starter's share), the team's own lags and the change a mover
+sees against his previous team's rating; 15 columns, every row joined. `contract` is what the NFL
+pays him, from `silver/fantasy/fact_player_contract_season` (Over The Cap through the weekly
+nflverse `contracts` snapshot): the contract in force that season as a share of the cap, its
+guarantees in cap terms, years left after the season, the contract-year and rookie-deal flags, the
+age of the deal, the cap number carried that year and the one scheduled next, the rank among the
+position's deals, deals signed so far, and a has-contract flag (null before the 1994 cap era); 13
+columns, on file for 91-98 % of rows from 2015, 57 % for 2010-14, thin before (the foundation model
+reads the null as a state). Leakage rule: a deal counts from its signing year on, never earlier.
+
 **Range of outcomes (2026-10-06).** One model, several quantiles: with `--range` the career model
 keeps the 20th / 50th / 80th percentiles of TabPFN's predictive distribution for ppg and games per
 horizon (`h{k}_ppg_q20` / `_q50` / `_q80`, `h{k}_games_q..`; the point stays the mean; the games band is

@@ -46,3 +46,9 @@ class TestFetchAndSaveDataset:
         res = fetch_and_save_dataset("x", cfg, current_season=2024, bucket_name="b")
         assert res["success"] is False
         assert res["error"] == "No data returned"
+
+
+class TestRegistry:
+    def test_contracts_is_a_weekly_snapshot(self):
+        cfg = mod.DATASETS_CONFIG["contracts"]
+        assert cfg["seasonal"] is False and cfg["schedule"] == mod.SCHEDULE_TUESDAY and cfg["folder"] == "contracts"

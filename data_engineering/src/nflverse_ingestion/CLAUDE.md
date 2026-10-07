@@ -23,7 +23,8 @@ rest; it prints a summary and exits non-zero if any failed).
   `officials`.
 - **Non-seasonal / weekly** (partition `load_date=`, gated to **Tuesday** — settles after MNF
   corrections): `fantasy_rankings` (FantasyPros ECR — carries FP/cbs/yahoo ids), `fantasy_opportunity`,
-  `fantasy_player_ids` (**the ID bridge**), `nfl_players`.
+  `fantasy_player_ids` (**the ID bridge**), `nfl_players`, `contracts` (Over The Cap contract
+  history, nested career cap numbers; silver `fact_player_contract_season`).
 
 ## Why it matters downstream (crosswalks)
 - **`fantasy_player_ids`** + **`nfl_players`** feed silver `dim_players_master` — the

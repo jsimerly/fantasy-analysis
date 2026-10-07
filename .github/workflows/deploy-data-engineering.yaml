@@ -106,6 +106,10 @@ jobs:
             ["silver-fact-depth-chart-week"]="silver_fantasy.fact_depth_chart_week:2Gi:1:30m"
             # weekly status of every skill player (played / bye / injured by class / suspended / practice squad / inactive / released); T3 in the DAG
             ["silver-fact-player-week-status"]="silver_fantasy.fact_player_week_status:2Gi:1:30m"
+            # team strength per season (market rating from the closing spreads, record, EPA, QB situation) and the
+            # contract in force per player-season (Over The Cap via the weekly nflverse contracts snapshot); T1, bronze only
+            ["silver-fact-team-season-strength"]="silver_fantasy.fact_team_season_strength:1Gi:1:30m"
+            ["silver-fact-player-contract-season"]="silver_fantasy.fact_player_contract_season:2Gi:1:30m"
             # college (CFBD): once a year via the fantasy-college-yearly workflow (orchestration/college.yaml):
             # cfbd-backfill (CFBD_SEASONS=last, key from Secret Manager "cfbd-api-key", set below) then
             # silver-fact-college-player-season (reads bronze/cfbd + silver fact_player_season for the crosswalk)

@@ -129,6 +129,14 @@ DATASETS_CONFIG = {
         'folder': 'nfl_players', 
         'seasonal': False,
         'schedule': SCHEDULE_TUESDAY
+    },
+    # Over The Cap contract history (one row per contract, career cap history nested); feeds
+    # silver fact_player_contract_season. One release asset, ~11 MB, so a weekly snapshot is plenty.
+    'contracts': {
+        'loader': nfl.load_contracts,
+        'folder': 'contracts',
+        'seasonal': False,
+        'schedule': SCHEDULE_TUESDAY
     }
 }
 

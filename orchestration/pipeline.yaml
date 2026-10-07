@@ -50,6 +50,8 @@ main:
               - "silver-fact-pick-values"        # bronze KTC only (no dims)
               - "silver-fact-player-injury-week" # bronze nflverse injuries + rosters_weekly
               - "silver-fact-depth-chart-week"   # bronze nflverse depth_charts + schedules (both eras)
+              - "silver-fact-team-season-strength"   # bronze nflverse schedules (closing lines, scores, QBs) + team_stats (EPA)
+              - "silver-fact-player-contract-season" # bronze nflverse contracts (Over The Cap weekly snapshot)
           # --- SILVER T2: read T1 outputs ---
           - silver_t2_jobs:
               - "silver-dim-franchise-meta"     # needs dim-league-meta + dim-users

@@ -884,3 +884,16 @@ t = 1.45) stays a tie.
     next 2-3 years, which is exactly our horizon), the contract year is a known production bump, the
     years-remaining ties the player to the team's strength. Both groups go on the 3.5 pooled
     candidate under the co-primary rule, after the feature-push chain of item 22.
+    **Built (2026-10-07 evening):** `fact_team_season_strength` (893 team-seasons 1999-2026, every
+    one lined, EPA on every row, moneylines from 2006; 2026 market top KC +6.1, BAL / LA +4.5, bottom
+    MIA -8.5) and `fact_player_contract_season` (16,110 player-seasons 1994-2032 for 3,325 skill
+    players; contract type known for 97 %, the team's cap number for 70 %) are on the lake, both T1
+    jobs in the daily DAG (`silver-fact-team-season-strength`, `silver-fact-player-contract-season`)
+    with the `contracts` table added to `nflverse-daily` as a Tuesday snapshot (first snapshot
+    written by hand the same day). The `team` (15 columns) and `contract` (13 columns) groups join
+    the career matrix: teams on every row; contracts on 91-98 % of rows from 2015, 57 % in 2010-14,
+    20 % in 2005-09, under 5 % before (OTC's history is dense from the 2011 CBA; the model reads the
+    null as a state, as with college and injury). Queued on the GPU behind the feature-push chain:
+    `tabpfn35_set_team_stacked_w`, `tabpfn35_set_contract_stacked_w`, `tabpfn35_set_tc_stacked_w`,
+    each paired against the pooled candidate. Not built yet: the week-level team table for the
+    in-season model, and preseason win-total futures (no source in the lake).

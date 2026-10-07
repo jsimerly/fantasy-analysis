@@ -152,3 +152,50 @@ class TestWeekly:
         assert fg.build_weekly(m, ctx).columns == m.columns
         out = fg.assemble(m, fg.resolve(["weekly"]), ctx)
         assert all(c in out.columns for c in fg.WEEKLY_COLS) and out["wk1_status"][0] is None
+
+
+def _team_fact(rows):
+    base = dict(season=2023, team="KC", mkt_margin=3.0, mkt_margin_last4=2.0, mkt_total=48.0, mkt_implied_pts=25.5, mkt_win_prob=0.6, point_diff_pg=5.0,
+                win_pct=0.7, off_epa_per_play=0.1, pass_rate=0.6, plays_pg=64.0, n_starting_qbs=1, qb_main_share=1.0, lag1_mkt_margin=2.5, lag1_off_epa_per_play=0.08)
+    return pl.DataFrame([{**base, **r} for r in rows])
+
+
+class TestTeam:
+    def test_joins_the_season_team_and_the_change_from_the_previous_team(self):
+        fact = _team_fact([{}, {"season": 2022, "team": "KC", "mkt_margin": 4.0}, {"season": 2022, "team": "OAK", "mkt_margin": -6.0}, {"season": 2023, "team": "LV", "mkt_margin": -5.0}])
+        mx = _matrix([{"season": 2022, "team": "LV"}, {"season": 2023, "team": "KC"}, {"player_id": "p2", "season": 2023, "team": "LV"}])
+        out = fg.build_team(mx, fg.Context(team=fact)).sort(["player_id", "season"])
+        p1_22, p1_23, p2_23 = out.to_dicts()
+        assert p1_23["tm_mkt_margin"] == 3.0 and p1_23["tm_mkt_total"] == 48.0 and p1_23["tm_qb_main_share"] == 1.0 and p1_23["tm_lag1_mkt_margin"] == 2.5
+        assert p1_23["tm_mkt_margin_vs_prev_team"] == 3.0 - (-6.0)         # KC this year vs the Raiders last year (OAK and LV are one franchise)
+        assert p1_22["tm_mkt_margin"] == -6.0 and p1_22["tm_mkt_margin_vs_prev_team"] is None
+        assert p2_23["tm_mkt_margin"] == -5.0 and p2_23["tm_mkt_margin_vs_prev_team"] is None
+
+    def test_without_the_table_every_column_is_null(self):
+        out = fg.build_team(_matrix([{}]), fg.Context(team=pl.DataFrame()))
+        assert all(out[c][0] is None for c in fg.TEAM_COLS)
+
+
+def _contract_fact(rows):
+    base = dict(gsis_id="p1", season=2023, position="WR", apy_cap_pct=0.08, guaranteed_cap_pct=0.1, years_left=2, contract_year=False, contract_age=1,
+                contract_years=4, is_rookie_deal=False, cap_pct_season=0.07, cap_pct_next=0.09, guaranteed_salary_season=5.0, apy_cap_pct_pos_pctl=0.9, n_contracts_signed=2)
+    return pl.DataFrame([{**base, **r} for r in rows])
+
+
+class TestContract:
+    def test_joins_the_deal_in_force_and_flags_no_deal_on_file(self):
+        fact = _contract_fact([{}, {"season": 2022, "years_left": 3, "contract_year": False}])
+        mx = _matrix([{"season": 2022}, {"season": 2023}, {"player_id": "p2", "season": 2023}, {"player_id": "p3", "season": 1990}])
+        out = fg.build_contract(mx, fg.Context(contracts=fact)).sort(["player_id", "season"])
+        p1_22, p1_23, p2_23, p3_90 = out.to_dicts()
+        assert p1_23["ct_apy_cap_pct"] == 0.08 and p1_23["ct_years_left"] == 2.0 and p1_23["ct_contract_year"] == 0.0 and p1_23["ct_pos_pctl"] == 0.9
+        assert p1_23["ct_has_contract"] == 1.0 and p1_22["ct_years_left"] == 3.0
+        assert p2_23["ct_has_contract"] == 0.0 and p2_23["ct_apy_cap_pct"] is None          # covered season, no deal on file
+        assert p3_90["ct_has_contract"] is None                                              # before the cap era: unknown, not zero
+
+    def test_registry_resolves_both_groups(self):
+        groups = fg.resolve("base,career,team,contract")
+        cols = fg.feature_columns(groups)
+        assert set(fg.TEAM_COLS) <= set(cols) and set(fg.CONTRACT_COLS) <= set(cols)
+        out = fg.assemble(_matrix([{}]), groups, fg.Context(team=pl.DataFrame(), contracts=pl.DataFrame()))
+        assert all(c in out.columns for c in fg.TEAM_COLS + fg.CONTRACT_COLS)
