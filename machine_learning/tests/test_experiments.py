@@ -120,3 +120,11 @@ def test_verdict_co_primaries():
     assert "TRADE-OFF" in ex.verdict(_paired_table(1.2, 3.0))                                                              # big error gain, ordering dip: the owner's "huge win" case
     assert "NO" in ex.verdict(_paired_table(-1.0, 1.0)) and "no gain" in ex.verdict(_paired_table(-1.0, 1.0))              # nothing past the line
     assert "n/a" in ex.verdict(pl.DataFrame({"metric": ["share_abs_err"], "t": [1.0]}))
+
+
+def test_run_paths_match_the_name_exactly_not_as_a_prefix():
+    blobs = ["experiments/runs/cap30t_w_2026-10-05T22-10-29+00-00.parquet", "experiments/runs/cap30t_w_b_2026-10-07T20-37-00+00-00.parquet",
+             "experiments/runs/cap30t_w_2026-10-01T09-00-00+00-00.parquet", "experiments/runs/tabpfn_v2_cap30t_w_2026-10-07T03-58-05+00-00.parquet"]
+    assert [x.rsplit("/", 1)[-1] for x in ex.run_paths("cap30t_w", blobs)] == ["cap30t_w_2026-10-01T09-00-00+00-00.parquet", "cap30t_w_2026-10-05T22-10-29+00-00.parquet"]
+    assert len(ex.run_paths("cap30t_w_b", blobs)) == 1 and ex.run_paths("cap30t_w@2026-10-05T22:10:29", blobs) == [blobs[0]]
+    assert ex.run_paths("cap30t", blobs) == []

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import numpy as np
+import re
 import polars as pl
 
 import career
@@ -298,12 +299,21 @@ def save_run(per_cohort: pl.DataFrame, summary: dict) -> str:
     return gcs_io.write_ml_parquet(per_cohort.with_columns(pl.lit(stamp).alias("run_ts")), *RUNS_PREFIX, f"{summary['name']}_{stamp}.parquet")
 
 
-def load_run(ref: str) -> pl.DataFrame:
-    """``name`` (latest run of that name) or ``name@timestamp``."""
+def run_paths(ref: str, blobs: list[str]) -> list[str]:
+    """The per-cohort files of a run name, oldest first: ``<name>_<timestamp>.parquet`` exactly, so
+    ``cap30t_w`` does not pick up ``cap30t_w_b``'s files (a prefix match once compared a run with
+    itself). ``name@timestamp`` narrows to one run."""
     name, _, stamp = ref.partition("@")
-    paths = sorted(x for x in gcs_io.list_ml(*RUNS_PREFIX) if x.rsplit("/", 1)[-1].startswith(name + "_"))
+    pat = re.compile(re.escape(name) + r"_\d{4}-\d{2}-\d{2}T.*\.parquet$")
+    paths = sorted(x for x in blobs if pat.fullmatch(x.rsplit("/", 1)[-1]))
     if stamp:
         paths = [x for x in paths if stamp.replace(":", "-") in x]
+    return paths
+
+
+def load_run(ref: str) -> pl.DataFrame:
+    """``name`` (latest run of that name) or ``name@timestamp``."""
+    paths = run_paths(ref, gcs_io.list_ml(*RUNS_PREFIX))
     if not paths:
         raise FileNotFoundError(f"no per-cohort results for {ref!r}")
     tail = paths[-1].split("/")[-3:]

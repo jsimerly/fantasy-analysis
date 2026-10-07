@@ -482,6 +482,29 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     without the rescaling, so the QB tilt is better addressed by the per-player band in the upside
     term (item 26) than by a post-hoc scale. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
+    **Same-data verdicts (2026-10-07 16:09-17:32, both baselines re-run on the rebuilt facts):** the
+    rebuild barely moved v2 (`tabpfn_v2_cap30t_w_b` 0.617 / 0.515 vs the old row's 0.618 / 0.513,
+    t = 0.6 / 2.9 on tiny differences) and cost the trees a little (`cap30t_w_b` 0.593 / 0.530 vs
+    0.605 / 0.524), so the 0.513 -> 0.474 wins-error gain of the post-rebuild candidates is the model,
+    not the scoring fix; v2 vs the trees on the same data -> ADOPT (t = +2.5 / +3.1), the production
+    choice stands. Against same-data production v2 (0.617 / 0.515): **3.5 set + pooled** 0.622 /
+    0.474 -> **ADOPT** (ordering t = +0.5, error t = +7.3, 8 of 8 cohorts); **v2 + residual** 0.613 /
+    0.474 -> ADOPT (t = -0.4 / +13.8); v2 set + residual 0.621 / 0.505 -> ADOPT (t = +0.6 / +4.3);
+    3.5 set + pooled + residual (`tabpfn35_set_stacked_res_w`, new today) 0.628 / 0.499 -> ADOPT vs
+    production (t = +1.8 / +2.9) but NO vs the pooled candidate without it (error worse, t = -4.7:
+    the residual target and pooling do not stack, each alone takes the error to 0.474-0.499);
+    3.5 base + residual 0.619 / 0.507 -> NO; 3.5 base + pooled 0.607 / 0.474 and v2 position-scale
+    0.606 / 0.484 -> TRADE-OFF (error gain, ordering dip). The two front-runners paired directly
+    (3.5 set + pooled vs v2 + residual): wins error identical (0.474, t = 0.1), top-150 ordering
+    +0.009 for 3.5 (t = 0.7), all-player ordering +0.005 for v2 (t = 3.1), prior-top-12 bias -0.043
+    (3.5) vs +0.095 (v2), position-share error 0.126 vs 0.114 -> a tie on the rule; 3.5 set + pooled
+    costs 55 min a run, v2 + residual 26. Tie-break in flight: the market backtest of both (the 3.5
+    candidate first, cohorts 2020-22 vs KTC), then the 5-year harness for the 3.5 candidate against a
+    v2 5-year baseline. The first final chain died two cohorts into the 5-year run when the session
+    restarted (background tasks go with it); relaunched detached (~20 min per 5-year cohort).
+    Harness fix (same day): `--paired` matched a run name as a prefix, so `cap30t_w` resolved to
+    `cap30t_w_b`'s newest file and the first two same-data pairings compared a run with itself
+    (t = inf on every row); `experiments.run_paths` now matches `<name>_<timestamp>` exactly.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
