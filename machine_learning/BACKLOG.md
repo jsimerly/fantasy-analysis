@@ -749,6 +749,13 @@ t = 1.45) stays a tie.
     before the rows are built; college data starts 2010 (draft rows before that carry draft
     capital only). Honest limits: ~100 skill rookies a year, the college-to-NFL jump is the
     hardest prediction in the sport; a draft row is adopted only under the co-primary rule on
-    held-out classes. Build order: crosswalk match rate -> draft rows in `career.build_career_matrix`
+    held-out classes. Crosswalk, measured 2026-10-07 on the matrix's own 2011+ rookies (1,511):
+    66 % matched; the drafted are done (6 unmatched of ~1,000); every other miss is UNDRAFTED
+    (502), who are absent from CFBD's draft table by definition, so the name fallback (which runs
+    against draft picks) can never reach them. One bounded pass, per the owner ("don't go crazy
+    matching"): match the undrafted by normalised name + position + college (our weekly fact
+    carries `college_name`) against CFBD rosters / player stats, then stop; whoever is still
+    unmatched carries draft capital (undrafted) and null college columns, which is itself
+    informative. Build order: crosswalk match rate -> draft rows in `career.build_career_matrix`
     (opt-in) -> harness rookie slice -> 3.5 run with the feature set -> replace the tail in the
     refresh if it wins. CPU work except the run; after the pooled-horizon queue.
