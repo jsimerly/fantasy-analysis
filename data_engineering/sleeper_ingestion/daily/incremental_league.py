@@ -229,9 +229,14 @@ def main():
 
     # relaxed: widen compatible dtypes (Null -> Int64 etc.) rather than fail the daily run
     combined_leagues = pl.concat(all_leagues, how='vertical_relaxed')
-    combined_settings = pl.concat(all_settings, how='align')
-    combined_scoring = pl.concat(all_scoring, how='align')
-    combined_roster_slots = pl.concat(all_roster_slots, how='align')
+    # diagonal: stack rows, union the columns, null where a league lacks a key. NOT `align`:
+    # that JOINS the frames on their common columns and, depending on the order the leagues
+    # came in, nulled 24 scoring keys of the league with the richer key set (the 2026 league
+    # lost keys whenever a 43-key 2025 league happened to be processed first -- bronze flapped
+    # day to day and the settings dim opened a new SCD2 version every run).
+    combined_settings = pl.concat(all_settings, how='diagonal_relaxed')
+    combined_scoring = pl.concat(all_scoring, how='diagonal_relaxed')
+    combined_roster_slots = pl.concat(all_roster_slots, how='diagonal_relaxed')
     
     save_df_to_gcs(combined_leagues, bucket_name, current_date, entity="leagues")
     save_df_to_gcs(combined_settings, bucket_name, current_date, entity="settings")
