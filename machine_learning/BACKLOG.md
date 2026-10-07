@@ -451,7 +451,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     (2) the residual target on top (`tabpfn35_set_stacked_res_w`), (3) the market backtest, (4) the
     production path needs `--groups` and `--stacked` (the career tail today assembles base+career
     only) and the band for pooled models (`_range_columns` skips them today). Runs queued after the
-    final refresh. Both runs went
+    final refresh.
+    **Position-share calibration re-test (2026-10-07 11:00-11:58, v2, `--position-scale` vs
+    production):** wins error 0.484 vs 0.513 (t = 7.9, 8 of 8), prior-top-12 bias 0.037 vs 0.057
+    (t = 3.1), ordering 0.606 vs 0.618 (t = -1.5) -> TRADE-OFF by the rule, and the one thing it was
+    meant to fix got worse: share error 0.152 vs 0.100 (t = -3.5), i.e. the holdout PAR-share scale
+    over-corrects on this backend. Not adopted; the pooled candidate reaches a lower error (0.474)
+    without the rescaling, so the QB tilt is better addressed by the per-player band in the upside
+    term (item 26) than by a post-hoc scale. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
