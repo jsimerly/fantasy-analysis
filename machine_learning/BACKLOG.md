@@ -726,3 +726,29 @@ t = 1.45) stays a tie.
     sampling from a calibrated distribution is the mitigation; the game-level version (roll a
     per-game model within a season) comes after the season-level one works. Not started: queued
     behind the 3.5 feature-set and weekly runs (same GPU).
+
+30. **Draft rows: the rookie's own input row, from college and draft capital (owner, 2026-10-07).**
+    The career model's input is a complete NFL season, so a rookie gets a hand-made tail
+    (`inseason.fill_missing_tail`, item 24). Replace it: for every drafted QB / RB / WR / TE since
+    1999 add one row to the career matrix dated the draft (NFL inputs null, `is_draft_row`,
+    draft capital, and the `college` group where `dim_college_crosswalk` reaches: final-season
+    dominator, usage and touch shares, breakout age, seasons, team SP+, early declaration), with
+    the player's NFL seasons 1..k as its targets. TabPFN handles the missingness natively and 3.5's
+    column limit lets college, weekly and injury inputs sit together; a tree needs tricks. Then
+    (a) the career model projects a rookie's tail directly and the extrapolation goes, (b) rookies
+    become scorable in the harness for the first time (every past class has realized WAR: a
+    `rookie` cohort slice next to the top-150 metrics), (c) the in-season model gets the same
+    inputs for ROS / next season, and (d) the range of outcomes (item 26) applies to rookies, which
+    is where it matters most. The question it answers (owner): are rookies overvalued by the
+    market, or valuable but slow to arrive (the London / Adams shape)? Test: realized WAR of past
+    classes vs their price at the draft (the market backtest's experience segment already shows
+    rookies finishing ~14 ranks below the market's rank, 2022-24), and the realized trajectory
+    shape by draft capital (years to peak, share who arrive late), with the band's coverage on
+    rookies as the calibration check. Prerequisites: the crosswalk reaches 58 % of 2011+ rookies
+    (pick join first); raise it with a better name match (suffixes, nicknames, position labels)
+    before the rows are built; college data starts 2010 (draft rows before that carry draft
+    capital only). Honest limits: ~100 skill rookies a year, the college-to-NFL jump is the
+    hardest prediction in the sport; a draft row is adopted only under the co-primary rule on
+    held-out classes. Build order: crosswalk match rate -> draft rows in `career.build_career_matrix`
+    (opt-in) -> harness rookie slice -> 3.5 run with the feature set -> replace the tail in the
+    refresh if it wins. CPU work except the run; after the pooled-horizon queue.
