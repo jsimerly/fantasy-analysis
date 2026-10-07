@@ -416,7 +416,7 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     base+career (`tabpfn35_stacked_w`) and on 3.5 with the feature set (`tabpfn35_set_stacked_w`),
     each paired against its per-horizon twin; on the trees the pooled model tied (item 24).
     **Feature-set verdicts (2026-10-07 00:32-02:24, co-primary rule, 3-year):** the owner's set
-    (base, career, injury, trend, situation, rookie, college; 122 columns) adds nothing on either
+    (base, career, injury, trend, situation, rookie, college; 73 columns) adds nothing on either
     model: 3.5 set 0.603 / 0.515 vs 3.5 base 0.604 / 0.516 (NO), v2 set 0.619 / 0.511 vs v2 base
     0.618 / 0.513 (NO). The **residual target** (the ppg model learns the change from this
     season's rate) is the live ingredient: 3.5 set + residual 0.613 / 0.507 vs 3.5 set 0.603 /
@@ -848,3 +848,39 @@ t = 1.45) stays a tie.
     informative. Build order: crosswalk match rate -> draft rows in `career.build_career_matrix`
     (opt-in) -> harness rookie slice -> 3.5 run with the feature set -> replace the tail in the
     refresh if it wins. CPU work except the run; after the pooled-horizon queue.
+
+31. **Team strength and contracts as feature groups (owner, 2026-10-07).** Two inputs the model has
+    never seen: how good the player's team is (offense environment, game script, QB) and what the
+    NFL itself pays the player (its own valuation, and the tie to the team that projects forward).
+    **Team strength needs no new ingestion.** The lake's `bronze/nflverse/schedules` (1999-2026)
+    carries the closing lines for every game (`spread_line`, `total_line`, moneylines from 2006,
+    the starting QBs and coaches), and `team_stats` (1999-2026, 102 columns) the per-game offensive
+    and defensive EPA. A silver `fact_team_season_strength` (team x season, with a week-level
+    variant for the in-season model): the market-implied rating = mean favoritism margin over the
+    season's games (2025: BUF +6.2, LA +6.0 ... TEN -7.6, i.e. the market's power rating, which
+    already prices the QB and injuries), the mean total line (scoring environment), realized point
+    differential, offensive EPA per play, pass rate, the starting QB's prior-season ppg (the
+    "QB quality" a pass catcher inherits), and their lags. The `team` ML group joins them to the
+    player's team for season t (and lag1), plus the change on a team move. Next season's team
+    strength is unknown at projection time; the proxies in order of availability are last season's
+    rating (regresses to the mean, the model learns the rate), the week-1 line of the new season
+    (published in spring, in the schedules file once posted), and preseason win-total futures,
+    which the lake does not have (sportsoddshistory.com has season win totals and Super Bowl odds
+    by season, a scrape for later; not needed for the first cut).
+    **Contracts: one new nflverse entity.** nflverse's `contracts` release (OverTheCap; 53k
+    contracts, `gsis_id` on 90-98 % of rows since 2005, 68 % 2000-04, thin before; 17k skill-position
+    contracts since 2000 for 3.3k players) has per contract: year signed, years, value, APY,
+    guarantees, **APY as a share of that year's cap** (inflation-free), the drafted / extension /
+    free-agent type, and a per-year `season_history` (cap number, cap percent, guaranteed salary,
+    cash paid) plus the `contract_history` of renegotiations. Ingest as a daily snapshot
+    (`bronze/nflverse/contracts/load_date=...`, 11 MB), model `fact_player_contract_season`
+    (player x season: the contract in force that season, years remaining after it, cap percent
+    that year, guaranteed money remaining, contract-year flag, rookie-deal flag, APY-cap-share at
+    signing relative to the position's top at that time), and a `contract` ML group. Leakage rule:
+    in the harness a contract counts only if `year_signed <= t` for a row as of season t (an
+    extension signed the following March is real information before season t+1 but the table has no
+    signing date, so the strict rule for backtests; the production refresh may use the current year).
+    Expected mechanism: cap share and guarantees are the NFL's forward valuation (teams pay for the
+    next 2-3 years, which is exactly our horizon), the contract year is a known production bump, the
+    years-remaining ties the player to the team's strength. Both groups go on the 3.5 pooled
+    candidate under the co-primary rule, after the feature-push chain of item 22.
