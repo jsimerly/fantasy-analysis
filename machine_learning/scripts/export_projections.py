@@ -194,7 +194,7 @@ def main() -> None:
             base = row["pg"][0] if row.get("pg") else None
             scale = (r["ros_ppg_hat"] / base) if base and r.get("ros_ppg_hat") is not None and base > 0 else 1.0
             entry = {"w": [_r(r[f"war_{k}"], 4) for k in ks], "v": [_r(r[f"par_{k}"], 2) for k in ks], "s": _r(scale, 4)}
-            if f"war_lo_{ks[0]}" in wp.columns:                   # floor / ceiling wins per span (the range of outcomes)
+            if "war_lo" in wp.columns and bool((wp["war_lo"] != wp["war_hi"]).any()):   # floor / ceiling wins per span, only when a band exists
                 entry["wl"] = [_r(r[f"war_lo_{k}"], 4) for k in ks]
                 entry["wh"] = [_r(r[f"war_hi_{k}"], 4) for k in ks]
             row.setdefault("L", {})[lid] = entry

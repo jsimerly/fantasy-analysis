@@ -89,3 +89,12 @@ def test_fill_missing_band_from_the_position_spread():
     assert abs(r["h3_ppg_q20"] - (10.0 - inseason.Z_20_80 * 2.0)) < 1e-9 and abs(r["h3_ppg_q80"] - (10.0 + inseason.Z_20_80 * 2.0)) < 1e-9
     assert r["h3_ppg_q50"] == 10.0 and r["h3_games_q20"] == 12.0 and out.row(0, named=True)["h3_ppg_q20"] == 9.0
     assert inseason.fill_missing_band(df, [3], None).equals(df)
+
+
+def test_inseason_value_keeps_the_band_columns():
+    snaps = pl.DataFrame({"player_id": ["a"], "position": ["WR"], "age_at_season": [25.0], "is_rookie": [False], "prev_ppg": [12.0], "prev_games": [15],
+                          "ros_ppg_hat": [12.0], "ros_games_hat": [10.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+    tail = pl.DataFrame({"player_id": ["a"], "h3_ppg_hat": [11.0], "h3_games_hat": [14.0], "h3_ppg_q20": [8.0], "h3_ppg_q50": [11.0], "h3_ppg_q80": [14.0], "h3_games_q20": [11.0], "h3_games_q80": [16.0]})
+    out = inseason.inseason_value(snaps, tail, {"WR": 8.0}, {3: {"__all__": 3.0}}, [1, 2, 3], 0.2)
+    r = out.row(0, named=True)
+    assert r["h3_ppg_q20"] == 8.0 and r["h3_ppg_q80"] == 14.0 and r["h3_games_q80"] == 16.0
