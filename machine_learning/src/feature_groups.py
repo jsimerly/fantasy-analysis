@@ -30,6 +30,7 @@ INJURY_PATH = "silver/fantasy/fact_player_injury_week/data.parquet"
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 COLLEGE_PATH = "silver/fantasy/fact_college_player_season/data.parquet"
 COLLEGE_XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
+WEEK_STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
 KEY = ["player_id", "season"]
 
 
@@ -76,6 +77,18 @@ class Context:
             else:
                 self._college = college_per_player(fact, xw)
         return self._college if self._college.height else None
+
+    _week_status: pl.DataFrame | None = None
+
+    @property
+    def week_status(self) -> pl.DataFrame | None:
+        """What every player did each regular-season week (None until the silver table exists)."""
+        if self._week_status is None:
+            try:
+                self._week_status = self._load(WEEK_STATUS_PATH)
+            except Exception:  # noqa: BLE001 - not built yet
+                self._week_status = pl.DataFrame()
+        return self._week_status if self._week_status.height else None
 
 
 @dataclass(frozen=True)
@@ -250,6 +263,67 @@ def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
 
 
+# ------------------------------------------------------------------------------ weekly
+# the season as a sequence: one slot per regular-season week (18 since 2021, 17 before: slot 18 is null
+# then), each with what the player did (STATUS_CODES), the body part if he was hurt (INJURY_CODES), his
+# points, opportunities (targets + carries) and offensive snap share (2013+); plus how many weeks of
+# the season, and of the season before, went to each reason. Weeks before 2002 have no reasons: null.
+STATUS_CODES = {"played": 0, "bye": 1, "injured_reserve": 2, "injured_out": 3, "suspended": 4,
+                "practice_squad": 5, "inactive": 6, "dnp": 7, "not_rostered": 8}
+INJURY_CODES = {"soft_tissue": 1, "knee_achilles": 2, "ankle_foot": 3, "upper_body": 4, "concussion": 5, "not_injury": 6, "other": 7}
+WEEK_SLOTS = 18
+SLOT_KINDS = {"status": "status_code", "inj": "inj_code", "fpts": "fpts", "opp": "opportunities", "snap": "offense_pct"}
+WEEKLY_SLOT_COLS = [f"wk{w}_{k}" for w in range(1, WEEK_SLOTS + 1) for k in SLOT_KINDS]
+REASON_COLS = ["wks_played", "wks_bye", "wks_inj_reserve", "wks_inj_out", "wks_suspended", "wks_practice_squad", "wks_inactive",
+               "wks_dnp", "wks_unrostered", "inj_wks_soft", "inj_wks_knee", "inj_wks_ankle", "inj_wks_upper", "inj_wks_concussion", "inj_wks_other"]
+WEEKLY_COLS = WEEKLY_SLOT_COLS + REASON_COLS + [f"lag1_{c}" for c in REASON_COLS] + ["snap_pct_mean", "snap_pct_last4"]
+
+
+def weekly_per_season(ws: pl.DataFrame) -> pl.DataFrame:
+    """(player_id, season) -> the slot columns, the reason counts, and the snap summaries."""
+    d = (ws.filter(pl.col("week").is_between(1, WEEK_SLOTS))
+           .with_columns(pl.col("status").replace_strict(STATUS_CODES, default=None, return_dtype=pl.Int8).alias("status_code"),
+                         pl.col("injury_class").replace_strict(INJURY_CODES, default=None, return_dtype=pl.Int8).alias("inj_code"),
+                         pl.col("week").cast(pl.Int32), pl.col("season").cast(pl.Int64))
+           .with_columns(pl.when(pl.col("status").is_in(["injured_reserve", "injured_out"])).then(pl.col("inj_code").fill_null(0)).otherwise(None).alias("inj_code")))
+    slots = d.pivot(on="week", index=["gsis_id", "season"], values=list(SLOT_KINDS.values()), aggregate_function="first")
+    ren = {}
+    for k, v in SLOT_KINDS.items():
+        for w in range(1, WEEK_SLOTS + 1):
+            for cand in (f"{v}_{w}", f"{v}_week_{w}", f"{w}_{v}"):
+                if cand in slots.columns:
+                    ren[cand] = f"wk{w}_{k}"
+    slots = slots.rename(ren)
+    for c in WEEKLY_SLOT_COLS:
+        if c not in slots.columns:
+            slots = slots.with_columns(pl.lit(None, pl.Float64).alias(c))
+    slots = slots.select(["gsis_id", "season"] + WEEKLY_SLOT_COLS)
+    st = lambda s: (pl.col("status") == s).cast(pl.Int32).sum()           # noqa: E731
+    ic = lambda s: (pl.col("injury_class") == s).cast(pl.Int32).sum()     # noqa: E731
+    played_snaps = pl.col("offense_pct").filter(pl.col("status") == "played")
+    counts = d.sort("week").group_by("gsis_id", "season").agg(
+        st("played").alias("wks_played"), st("bye").alias("wks_bye"), st("injured_reserve").alias("wks_inj_reserve"), st("injured_out").alias("wks_inj_out"),
+        st("suspended").alias("wks_suspended"), st("practice_squad").alias("wks_practice_squad"), st("inactive").alias("wks_inactive"),
+        st("dnp").alias("wks_dnp"), st("not_rostered").alias("wks_unrostered"),
+        ic("soft_tissue").alias("inj_wks_soft"), ic("knee_achilles").alias("inj_wks_knee"), ic("ankle_foot").alias("inj_wks_ankle"),
+        ic("upper_body").alias("inj_wks_upper"), ic("concussion").alias("inj_wks_concussion"),
+        pl.col("injury_class").is_in(["other", "not_injury"]).cast(pl.Int32).sum().alias("inj_wks_other"),
+        played_snaps.mean().alias("snap_pct_mean"), played_snaps.tail(4).mean().alias("snap_pct_last4"))
+    return slots.join(counts, on=["gsis_id", "season"], how="left").rename({"gsis_id": "player_id"})
+
+
+def build_weekly(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    ws = ctx.week_status
+    if ws is None:
+        return matrix
+    per = weekly_per_season(ws)
+    lag = per.select("player_id", (pl.col("season") + 1).alias("season"), *[pl.col(c).alias(f"lag1_{c}") for c in REASON_COLS])
+    first = int(per["season"].min())
+    out = matrix.join(per, on=KEY, how="left").join(lag, on=KEY, how="left")
+    out = _coverage_fill(out, REASON_COLS, first)
+    return _coverage_fill(out, [f"lag1_{c}" for c in REASON_COLS], first + 1)
+
+
 # ---------------------------------------------------------------------------- registry
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
@@ -260,6 +334,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
     "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
+    "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 

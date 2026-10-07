@@ -180,6 +180,14 @@ cross-position scale; `--realized-replacement` scores against another yardstick.
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
 cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
 
+`weekly` (2026-10-06) is the sequence-shaped group: the season as 18 weekly slots, each with what the
+player did (played / bye / injured reserve / injured out / suspended / practice squad / inactive /
+did not play / not rostered), the body part when he was hurt, his points, opportunities and snap
+share, plus how many weeks of the season and the season before went to each reason. It reads
+`silver/fantasy/fact_player_week_status` (data engineering), so a lost season carries its cause, and
+it is meant for TabPFN 3.5 (2,000-column limit) where attention across features can learn the
+week-by-week shape instead of the hand-made `trend` columns; 195 columns with every group on.
+
 `--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts (the same
 flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks
 the production career model; since 2026-10-05 the in-season refresh runs locally on

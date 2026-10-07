@@ -544,8 +544,22 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     feeds `fill_missing_tail` for rookies; returning veterans keep the old rule. Love's games become
     13.0 / 11.1 / 9.2 / 8.7 / 8.1; 57 of 454 players take the table. Draft-round conditioning is the
     untested refinement (the hold-out says it adds nothing on games; it may on ppg).
+    **Miss reasons and the week-by-week shape (owner, 2026-10-06: "played or missed and the reason, not
+    just binary; the injury type").** New silver `fact_player_week_status` (data engineering): every
+    skill player-week since 2002 as played / bye / injured_reserve / injured_out / suspended /
+    practice_squad / inactive / dnp / not_rostered with the body-part class, snap share from 2013.
+    327,671 rows; among the misses 17.6k reserve weeks, 9.3k out weeks, 4.6k healthy scratches. The
+    ML `weekly` group turns a season into 18 weekly slots (status, injury class, points,
+    opportunities, snap share) plus reason counts for the season and the one before: 122 columns,
+    195 with every group on. Queued on TabPFN 3.5 behind the feature-set run (`tabpfn35_setw_w` vs
+    `tabpfn35_set_w`). Honest limit: a player hurt in a game and placed on reserve usually has no
+    report after that, so the class of many reserve stints is unknown (null), not wrong.
     (2) The college data build is in:
-    `data_engineering/src/cfbd_ingestion` (CFBD backfill, needs the owner's free `CFBD_API_KEY`),
+    `data_engineering/src/cfbd_ingestion` (CFBD backfill; the owner's key arrived 2026-10-06 and the
+    2010-2025 backfill plus the silver build ran: 61,167 college player-seasons; the crosswalk first
+    matched 685 of 4,043 drafted players because the nflverse id table is sparse on draft year / pick
+    and CFBD spells positions out, fixed to join our own fact_player_season: 1,719, and 58 % of the
+    matrix's 2011+ rookies carry college columns),
     `silver_fantasy.fact_college_player_season` + `dim_college_crosswalk`, and the ML `college`
     feature group (final-season dominator, yards per team play, usage and touch shares, best
     dominator, breakout age, college seasons, final team's SP+, early declaration). Once the owner

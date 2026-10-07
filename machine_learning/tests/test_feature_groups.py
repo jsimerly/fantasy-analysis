@@ -117,3 +117,38 @@ class TestRegistry:
         for c in fg.INJURY_COLS + fg.ROLE_COLS + fg.TREND_COLS + fg.SITUATION_COLS:
             assert c in out.columns, c
         assert out["inj_weeks_out"][0] is None and out["depth_end"][0] is None
+
+
+
+def _ws(rows):
+    base = dict(gsis_id="p1", season=2024, week=1, status="played", injury_class=None, fpts=10.0, opportunities=8.0, offense_pct=0.8)
+    return pl.DataFrame([{**base, **r} for r in rows], schema_overrides={"injury_class": pl.Utf8})
+
+
+class TestWeekly:
+    def test_slots_reason_counts_snaps_and_lag(self):
+        ws = _ws([dict(week=1), dict(week=2, fpts=20.0, opportunities=12.0, offense_pct=0.9), dict(week=3, status="bye", fpts=None, opportunities=None, offense_pct=None),
+                  dict(week=4, status="injured_out", injury_class="knee_achilles", fpts=None, opportunities=None, offense_pct=None),
+                  dict(week=5, status="injured_reserve", injury_class="knee_achilles", fpts=None, opportunities=None, offense_pct=None),
+                  dict(week=6, status="injured_reserve", injury_class=None, fpts=None, opportunities=None, offense_pct=None),
+                  dict(week=7, status="suspended", fpts=None, opportunities=None, offense_pct=None),
+                  dict(season=2023, week=1), dict(season=2023, week=2, status="dnp", fpts=None, opportunities=None, offense_pct=None)])
+        out = fg.build_weekly(_matrix([{"season": 2024}, {"season": 2023}]), fg.Context()) if False else None
+        ctx = fg.Context(); ctx._week_status = ws
+        out = fg.build_weekly(_matrix([{"season": 2024}, {"season": 2023}]), ctx).sort("season")
+        r = out.row(1, named=True)                                     # 2024
+        assert [r[f"wk{w}_status"] for w in range(1, 8)] == [0, 0, 1, 3, 2, 2, 4] and r["wk8_status"] is None
+        assert [r[f"wk{w}_inj"] for w in range(1, 8)] == [None, None, None, 2, 2, 0, None]       # 0 = injured, body part unknown
+        assert r["wk2_fpts"] == 20.0 and r["wk2_opp"] == 12.0 and r["wk2_snap"] == 0.9 and r["wk3_fpts"] is None
+        assert r["wks_played"] == 2 and r["wks_bye"] == 1 and r["wks_inj_out"] == 1 and r["wks_inj_reserve"] == 2 and r["wks_suspended"] == 1
+        assert r["inj_wks_knee"] == 2 and r["inj_wks_soft"] == 0 and abs(r["snap_pct_mean"] - 0.85) < 1e-9 and abs(r["snap_pct_last4"] - 0.85) < 1e-9
+        assert r["lag1_wks_played"] == 1 and r["lag1_wks_dnp"] == 1                       # 2023 counts on the 2024 row
+        r23 = out.row(0, named=True)
+        assert r23["wks_played"] == 1 and r23["lag1_wks_played"] is None                   # 2022 is before the table's coverage
+
+    def test_missing_table_leaves_the_matrix_alone_and_assemble_fills_nulls(self):
+        ctx = fg.Context(); ctx._week_status = pl.DataFrame()
+        m = _matrix([{}])
+        assert fg.build_weekly(m, ctx).columns == m.columns
+        out = fg.assemble(m, fg.resolve(["weekly"]), ctx)
+        assert all(c in out.columns for c in fg.WEEKLY_COLS) and out["wk1_status"][0] is None
