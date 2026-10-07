@@ -67,6 +67,7 @@ def main() -> None:
     ap.add_argument("--stacked", action="store_true", help="pooled horizons for the career tail")
     ap.add_argument("--target", choices=["level", "residual"], default="level")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
+    ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     args = ap.parse_args()
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
@@ -75,7 +76,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)

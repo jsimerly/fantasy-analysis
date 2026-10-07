@@ -198,17 +198,48 @@ def feature_frame(df: pl.DataFrame, extra: Iterable[str] = ()) -> pl.DataFrame:
 
 
 # ------------------------------------------------------------------------------ models
+def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None, max_rows: int | None = None, seed: int = 0) -> pl.DataFrame:
+    """The in-context set for a size-limited estimator: optionally only the snapshots of some
+    checkpoint weeks, then at most ``max_rows`` rows keeping the most recent seasons whole and a
+    random share of the oldest season that fits (the trees take everything: both None)."""
+    out = rows
+    if train_weeks is not None:
+        out = out.filter(pl.col("week").is_in([int(w) for w in train_weeks]))
+    if max_rows is None or out.height <= max_rows:
+        return out
+    per = out.group_by("season").len().sort("season", descending=True)
+    kept, budget = [], max_rows
+    for s, n in zip(per["season"].to_list(), per["len"].to_list()):
+        if n <= budget:
+            kept.append(out.filter(pl.col("season") == s)); budget -= n
+        else:
+            if budget > 0:
+                kept.append(out.filter(pl.col("season") == s).sample(n=budget, seed=seed))
+            break
+    return pl.concat(kept) if kept else out.head(0)
+
+
 class InSeasonModels:
     """Four regressors: ros_ppg (on rows that played again), ros_games, next_ppg (on rows that
-    played next year), next_games."""
+    played next year), next_games. ``backend`` "xgb" (the trees, every snapshot) or "tabpfn" (the
+    foundation model: in-context regression over a training set capped by ``max_train_rows`` and
+    optionally the checkpoint weeks ``train_weeks``, recent seasons first)."""
 
-    def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), **params):
+    def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
+                 tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None, **params):
         self.device, self.seed = device, seed
         self.extra_features = list(extra_features)       # in-season group columns (extra_columns) on top of FEATURES
+        self.backend, self.tabpfn_params = backend, dict(tabpfn_params or {})
+        self.train_weeks = [int(w) for w in train_weeks] if train_weeks is not None else None
+        self.max_train_rows = max_train_rows
         self.params = {**DEFAULT_PARAMS, **params}
-        self.models: dict[str, XGBRegressor] = {}
+        self.models: dict = {}
 
-    def _new(self) -> XGBRegressor:
+    def _new(self):
+        if self.backend == "tabpfn":
+            return career._TabPFN(self.device, self.seed, self.tabpfn_params)
+        if self.backend != "xgb":
+            raise ValueError(f"unknown in-season backend {self.backend!r} (xgb | tabpfn)")
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1, **self.params)
 
     def fit(self, snaps: pl.DataFrame, as_of_season: int | None = None) -> "InSeasonModels":
@@ -221,9 +252,12 @@ class InSeasonModels:
             "ros_games": (ros, "ros_games"), "ros_ppg": (ros.filter(pl.col("ros_games") > 0), "ros_ppg"),
             "next_games": (nxt, "next_games"), "next_ppg": (nxt.filter(pl.col("next_games") > 0), "next_ppg"),
         }
+        self.train_rows: dict[str, int] = {}
         for name, (rows, target) in specs.items():
+            rows = training_subset(rows, self.train_weeks, self.max_train_rows, self.seed)
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")
+            self.train_rows[name] = rows.height
             self.models[name] = self._new().fit(feature_frame(rows, self.extra_features).to_numpy(), rows[target].to_numpy().astype(float))
         return self
 

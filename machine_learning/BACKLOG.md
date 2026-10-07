@@ -910,5 +910,10 @@ t = 1.45) stays a tie.
     adds a hair to rest-of-season; the contract group is a wash. The same pattern as the career
     model, where the feature set did nothing for the trees and v2 and only moved 3.5 pooled, so
     the in-season model on TabPFN 3.5 (snapshots subsampled to its 50k-row limit, recent seasons
-    first) is the test that counts; not adopted on the trees. Still not built: preseason
-    win-total futures (no source in the lake).
+    first) is the test that counts; not adopted on the trees. Built the same evening:
+    `InSeasonModels(backend="tabpfn", train_weeks, max_train_rows)` with `inseason.training_subset`
+    (the checkpoint weeks only, then recent seasons whole and a random share of the oldest that
+    fits), `--inseason-backend tabpfn` on the backtest and the refresh; queued on the GPU behind the
+    groups chain: 3.5 in-season on base features and with team + contract, cohorts 2021-24, read
+    against the trees above (`inseason_gpu_base.log`, `inseason_gpu_team_contract.log`). Still not
+    built: preseason win-total futures (no source in the lake).

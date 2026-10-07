@@ -180,6 +180,39 @@ class TestExtras:
         assert m.models["ros_ppg"].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
 
 
+class TestTrainingSubset:
+    def test_weeks_filter_then_recent_seasons_first_with_a_random_tail(self):
+        rows = pl.DataFrame({"season": [2020] * 6 + [2021] * 6 + [2022] * 6, "week": [3, 6, 9, 13, 4, 5] * 3, "x": range(18)})
+        sub = inseason.training_subset(rows, train_weeks=[3, 6, 9, 13], max_rows=6)
+        assert sub.height == 6 and sub["season"].to_list() == [2022] * 4 + [2021] * 2       # 2022 whole, two of 2021 at random, 2020 out
+        assert inseason.training_subset(rows, None, None).height == 18 and inseason.training_subset(rows, [3], None).height == 3
+        assert inseason.training_subset(rows, None, 100).height == 18
+        assert inseason.training_subset(rows, None, 6)["season"].unique().to_list() == [2022]
+
+    def test_tabpfn_backend_builds_the_career_wrapper_on_the_capped_set(self, monkeypatch):
+        import career
+
+        class _Fake:
+            def __init__(self, device, seed, params):
+                self.n = None
+
+            def fit(self, X, y, sample_weight=None):
+                self.n = len(X); return self
+
+            def predict(self, X):
+                return np.full(len(X), 5.0)
+
+        monkeypatch.setattr(career, "_TabPFN", _Fake)
+        wk, ss = _big()
+        snaps = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+        m = inseason.InSeasonModels(backend="tabpfn", train_weeks=[3], max_train_rows=40).fit(snaps, as_of_season=2022)
+        assert all(n <= 40 for n in m.train_rows.values()) and m.train_rows["ros_games"] == 40
+        out = m.predict(snaps.filter(pl.col("season") == 2022))
+        assert (out["ros_ppg_hat"] == 5.0).all()
+        with pytest.raises(ValueError):
+            inseason.InSeasonModels(backend="forest").fit(snaps, as_of_season=2022)
+
+
 class TestModels:
     def test_fit_predict_and_as_of_guard(self):
         wk, ss = _big()
