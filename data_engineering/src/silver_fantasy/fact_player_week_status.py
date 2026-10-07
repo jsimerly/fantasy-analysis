@@ -149,8 +149,11 @@ def build_fact_player_week_status(stats: pl.DataFrame, rosters_weekly: pl.DataFr
                 .when(pl.col("roster_status") == "ACT").then(pl.lit("dnp"))
                 .otherwise(pl.lit("not_rostered")))
     d = d.with_columns(status.alias("status"))
-    # body part: the week's report, else the last reported class this season (an IR row has no report of its own)
-    d = (d.with_columns(pl.col("report_class").forward_fill().over(["season", "gsis_id"]).alias("class_ff"))
+    # body part: the week's report, else the last class reported in a week he MISSED this season (an IR row
+    # has no report of its own; a Questionable listing he played through says nothing about the injury
+    # that later put him on reserve, so it does not seed the stint: the class stays null = unknown)
+    d = (d.with_columns(pl.when(pl.col("status").is_in(INJURED_STATUSES)).then(pl.col("report_class")).otherwise(None)
+                          .forward_fill().over(["season", "gsis_id"]).alias("class_ff"))
           .with_columns(pl.when(pl.col("status").is_in(INJURED_STATUSES)).then(pl.coalesce("report_class", "class_ff")).otherwise(None).alias("injury_class")))
     # position and name: known on the weeks with a roster row or a stat line; the same player all season
     out = (d.with_columns(pl.coalesce("s_position", "r_position").alias("position"), pl.coalesce("s_name", "r_name").alias("player_name"),

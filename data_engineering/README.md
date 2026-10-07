@@ -61,6 +61,26 @@ PYTHONPATH=src uv run python -m cfbd_ingestion.backfill --start 2010 --end 2025 
 PYTHONPATH=src uv run python -m silver_fantasy.fact_college_player_season
 ```
 
+The crosswalk joins CFBD's draft picks to our ids by (draft year, overall pick) against
+`fact_player_season` (every drafted skill player), then by name + position (CFBD spells positions
+out; they are mapped): 1,719 of 4,043 drafted players across all positions, which covers the
+drafted QB / RB / WR / TE of 2010-2025.
+
+## Weekly player status
+
+`silver_fantasy.fact_player_week_status` writes `silver/fantasy/fact_player_week_status/data.parquet`:
+one row per (season, regular-season week, skill player) from 2002, with `status` = played / bye /
+injured_reserve / injured_out / suspended / practice_squad / inactive / dnp / not_rostered, the
+injury body-part class (the report's, carried through a reserve stint only from a week he missed;
+null = hurt, body part unknown), roster status, the stat line (points, targets, opportunities,
+touches) and the offensive snap share (2013+, through the roster's PFR id). Sources: nflverse weekly
+rosters, schedules (byes), snap counts, `fact_player_week`, `fact_player_injury_week`. The ML
+`weekly` feature group reads it. Run it after the weekly nflverse loads:
+
+```
+PYTHONPATH=src uv run python -m silver_fantasy.fact_player_week_status
+```
+
 Not scheduled: college seasons change once a year; rerun both after each NFL draft
 (`--datasets draft_picks --force` for the new class).
 

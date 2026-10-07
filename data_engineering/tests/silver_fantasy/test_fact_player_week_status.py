@@ -87,3 +87,15 @@ def test_non_skill_positions_and_pre_2002_are_left_out():
     roster = _roster([dict(week=1, gsis_id="k1", position="K", full_name="Kicker")] + [dict(week=1, gsis_id="old", season=2001)])
     out = m.build_fact_player_week_status(_stats([]).clear(), roster, _injury([]), pl.concat([_sched(weeks=1), _sched(season=2001, weeks=1)]), None)
     assert "k1" not in out["gsis_id"].to_list() and "old" not in out["gsis_id"].to_list()
+
+
+def test_a_listing_played_through_does_not_name_the_later_reserve_stint():
+    # Questionable (shoulder) in week 1 and played; hurt in the week-2 game; IR from week 3 with no report: class unknown
+    roster = _roster([dict(week=1), dict(week=2), dict(week=3, status="RES", status_description_abbr="R01"), dict(week=4, status="RES", status_description_abbr="R01")])
+    stats = _stats([dict(week=1), dict(week=2)])
+    injury = _injury([dict(week=1, report_status="Questionable", injury_class="upper_body", is_out=False),
+                      dict(week=3, on_injury_report=False, report_status=None, injury_class="unknown", is_out=True, on_injured_reserve=True),
+                      dict(week=4, on_injury_report=False, report_status=None, injury_class="unknown", is_out=True, on_injured_reserve=True)])
+    out = m.build_fact_player_week_status(stats, roster, injury, _sched(weeks=4, bye=("SF", 3)), None).filter(pl.col("gsis_id") == "p1").sort("week")
+    assert out["status"].to_list() == ["played", "played", "injured_reserve", "injured_reserve"]
+    assert out["injury_class"].to_list() == [None, None, None, None]
