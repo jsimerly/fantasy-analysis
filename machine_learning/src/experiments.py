@@ -18,6 +18,7 @@ config and git commit, so variants are compared on the same cohorts over time.
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
@@ -138,12 +139,14 @@ def run_experiment(
     H = list(cfg.horizons)
     rows = []
     for T in cfg.cohorts:
+        t_cohort = time.perf_counter()
         rep = rep_for(T)
         rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
                                       stacked=cfg.stacked, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
+        t_fit = time.perf_counter() - t_cohort
         survival = career.fit_survival(df.filter((pl.col("season") + 1) <= T), cfg.cap)
         pred = models.predict(df.filter(pl.col("season") == T))
         cohort = career.apply_cap(survival, pred, H, cfg.cap)
@@ -162,6 +165,8 @@ def run_experiment(
             sc = pl.col("position").replace_strict({k: float(v) for k, v in cfg.fixed_scale.items()}, default=1.0, return_dtype=pl.Float64)
             cohort = cohort.with_columns((pl.col("iv") * sc).alias("iv"), (pl.col("war") * sc).alias("war"), (pl.col("par") * sc).alias("par"))
         cohort = market_for(cohort, T)
+        print(f"  {cfg.name}: cohort {T} done in {time.perf_counter() - t_cohort:.0f}s "
+              f"(fit + spread {t_fit:.0f}s, predict + score {time.perf_counter() - t_cohort - t_fit:.0f}s; {len(H)} horizons, {cfg.backend})", flush=True)
         if collect is not None:
             collect.append(cohort.with_columns(pl.lit(T).alias("cohort"), pl.lit(cfg.name).alias("variant")))
         obs = cohort.filter(pl.col("realized_iv").is_not_null())

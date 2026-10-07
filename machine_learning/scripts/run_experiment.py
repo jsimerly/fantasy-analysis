@@ -24,6 +24,7 @@ import career  # noqa: E402
 import experiments as ex  # noqa: E402
 import feature_groups as fg  # noqa: E402
 import gcs_io  # noqa: E402
+import power  # noqa: E402
 import market  # noqa: E402
 import replacement  # noqa: E402
 import value  # noqa: E402
@@ -130,6 +131,7 @@ def main() -> None:
     ap.add_argument("--paired", nargs=2, metavar=("RUN_A", "RUN_B"),
                     help="compare two runs' per-cohort results (names or name@timestamp; latest run of each name) and exit")
     args = ap.parse_args()
+    power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
 
     if args.list_groups:
         for g in fg.GROUPS.values():

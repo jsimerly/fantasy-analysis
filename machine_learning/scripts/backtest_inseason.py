@@ -32,6 +32,7 @@ import polars as pl  # noqa: E402
 import career  # noqa: E402
 import features  # noqa: E402
 import gcs_io  # noqa: E402
+import power  # noqa: E402
 import inseason  # noqa: E402
 import market  # noqa: E402
 import replacement  # noqa: E402
@@ -83,6 +84,7 @@ def main() -> None:
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
+    power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     tabpfn_params = {}
     for kv in args.tabpfn_params:
         k, v = kv.split("=", 1)

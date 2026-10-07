@@ -25,6 +25,7 @@ import polars as pl  # noqa: E402
 
 import career  # noqa: E402
 import gcs_io  # noqa: E402
+import power  # noqa: E402
 import market  # noqa: E402
 import replacement  # noqa: E402
 import value  # noqa: E402
@@ -48,6 +49,7 @@ def main() -> None:
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
     args = ap.parse_args()
+    power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     H = list(range(1, args.horizon + 1))
     today = datetime.now(timezone.utc).date()
 

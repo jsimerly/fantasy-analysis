@@ -44,6 +44,7 @@ import polars as pl  # noqa: E402
 
 import experiments as ex  # noqa: E402
 import gcs_io  # noqa: E402
+import power  # noqa: E402
 import value  # noqa: E402
 from run_experiment import build_context  # noqa: E402
 
@@ -183,6 +184,7 @@ def main() -> None:
     ap.add_argument("--from", dest="from_dirs", nargs="*", default=[], help="re-score these runs' players.parquet instead of training")
     ap.add_argument("--publish", action="store_true", help="write the summary to the ML bucket (backtests/market/run_date=<today>/summary.json)")
     args = ap.parse_args()
+    power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     tp = {}

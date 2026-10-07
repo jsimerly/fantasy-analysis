@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import polars as pl  # noqa: E402
 
 import gcs_io  # noqa: E402
+import power  # noqa: E402
 
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 STEPS = ["inseason", "war", "export"]
@@ -53,6 +54,7 @@ def main() -> None:
     ap.add_argument("--tabpfn-params", nargs="*", default=[])
     ap.add_argument("--cap", default="30+t", help="age-survival cap on projected games (30+t = tier-aware from 30, production | 30+ | all | none)")
     args = ap.parse_args()
+    power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
     season, week = current_season_week()
     print(f"season {season} through week {week}; run date {args.run_date}", flush=True)
