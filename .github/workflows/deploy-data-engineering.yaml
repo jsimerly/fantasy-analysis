@@ -102,7 +102,7 @@ jobs:
             ["silver-fact-pick-values"]="silver_fantasy.fact_pick_values:2Gi:1:30m"
             ["silver-fact-player-week"]="silver_fantasy.fact_player_week:2Gi:1:30m"
             ["silver-fact-player-season"]="silver_fantasy.fact_player_season:1Gi:1:30m"
-            ["silver-fact-player-injury-week"]="silver_fantasy.fact_player_injury_week:1Gi:1:30m"
+            ["silver-fact-player-injury-week"]="silver_fantasy.fact_player_injury_week:2Gi:1:30m"   # 25 seasons of weekly rosters; OOM at 1Gi (2026-10-07)
             ["silver-fact-depth-chart-week"]="silver_fantasy.fact_depth_chart_week:2Gi:1:30m"
             # weekly status of every skill player (played / bye / injured by class / suspended / practice squad / inactive / released); T3 in the DAG
             ["silver-fact-player-week-status"]="silver_fantasy.fact_player_week_status:2Gi:1:30m"
