@@ -17,4 +17,4 @@ def test_newest_league_wins_over_newest_stamp():
         "flex_slots": [1, 1, 1], "superflex_slots": [1, 1, 1], "num_teams": [10, 10, 10],
     })
     slots, teams = replacement.league_lineup(s, "730630605066371072")
-    assert slots.get("WR") == 3 and teams == 10
+    assert slots["wr_slots"] == 3 and teams == 10          # the 3-WR league, not the root row's 2
