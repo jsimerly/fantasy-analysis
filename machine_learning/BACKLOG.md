@@ -676,3 +676,26 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     with an explicit era flag, (b) harness `--first-cohort 2015` is unaffected (every cohort trains
     on 2006+ rows for the grade), (c) the test is the same paired harness as every other group, on
     TabPFN 3.5 (the 85-feature pretraining limit of v2 no longer binds there).
+
+29. **Autoregressive career simulation (owner, 2026-10-06: "LLMs guess the next word; can we guess the
+    next season, or game, and keep going instead of synthesizing one number?").** Yes, and the
+    frame is close to it already. Today the career model is a set of DIRECT models: one pair
+    (games, ppg) per horizon k, each predicting season T+k from the season-T row, chosen over
+    rolling a one-year model forward because a rolled mean compounds its own errors and the model
+    never saw its own guesses as inputs. The LLM analogy adds the missing piece: SAMPLE, do not
+    roll the mean. Draw next season's (games, ppg) from the one-step predictive distribution
+    (TabPFN already returns a 5,000-bucket distribution per row, card 7 on the page), rebuild the
+    row for T+1 (age + 1, lags shifted, career totals accumulated, the sampled season as "this
+    season"), draw T+2 from that, and so on to T+10; a few hundred draws per player give a
+    distribution of careers, not a point: the chance of a lost season, the boom and bust paths,
+    the bimodal shape of a player like Nabers (item 24), and a mean that respects path dependence
+    (an injury season changes what follows, which a direct horizon-k model can only average over).
+    Scoring: the same harness (mean of the trajectory distribution -> WAR -> `spearman_war_top`
+    against the direct models) PLUS the distribution itself (coverage of the 10-90 % interval of
+    realized 3-year WAR, CRPS), which is what items 26 and 27 need. Design: a one-step TabPFN
+    model on season-level inputs only (the weekly slots of a simulated season do not exist), the
+    context cached once per cohort (`fit_with_cache`, fine at 16 GB) so each step is test rows
+    only (450 players x 300 draws = 135k test rows per step); exposure bias is the risk and
+    sampling from a calibrated distribution is the mitigation; the game-level version (roll a
+    per-game model within a season) comes after the season-level one works. Not started: queued
+    behind the 3.5 feature-set and weekly runs (same GPU).
