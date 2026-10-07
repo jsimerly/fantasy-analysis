@@ -104,6 +104,16 @@ jobs:
             ["silver-fact-player-season"]="silver_fantasy.fact_player_season:1Gi:1:30m"
             ["silver-fact-player-injury-week"]="silver_fantasy.fact_player_injury_week:1Gi:1:30m"
             ["silver-fact-depth-chart-week"]="silver_fantasy.fact_depth_chart_week:2Gi:1:30m"
+            # weekly status of every skill player (played / bye / injured by class / suspended / practice squad / inactive / released); T3 in the DAG
+            ["silver-fact-player-week-status"]="silver_fantasy.fact_player_week_status:2Gi:1:30m"
+            # college (CFBD): once a year via the fantasy-college-yearly workflow (orchestration/college.yaml):
+            # cfbd-backfill (CFBD_SEASONS=last, key from Secret Manager "cfbd-api-key", set below) then
+            # silver-fact-college-player-season (reads bronze/cfbd + silver fact_player_season for the crosswalk)
+            ["cfbd-backfill"]="cfbd_ingestion.backfill:1Gi:1:45m"
+            ["silver-fact-college-player-season"]="silver_fantasy.fact_college_player_season:2Gi:1:30m"
+            # standalone daily job (not in the DAG): in-season FantasyPros projection capture;
+            # self-gates to the NFL season, triggered by its own scheduler (below).
+            ["fantasypros-live-current"]="fantasypros_ingestion.live_current:512Mi:1:30m"
           )
 
           for job_name in "${!jobs[@]}"; do
@@ -121,3 +131,31 @@ jobs:
               --set-env-vars=GCS_BUCKET_NAME=nfl-data-bronze \
               --project=fantasy-football-473418
           done
+
+          # cfbd-backfill: yearly mode + the API key from Secret Manager. Create the secret once:
+          #   echo -n "<key>" | gcloud secrets create cfbd-api-key --data-file=- --project fantasy-football-473418
+          #   gcloud secrets add-iam-policy-binding cfbd-api-key --member=serviceAccount:624985976737-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor --project fantasy-football-473418
+          # Until it exists this step only warns, so the rest of the deploy is unaffected.
+          gcloud run jobs update cfbd-backfill             --region=us-central1             --update-env-vars=CFBD_SEASONS=last             --set-secrets=CFBD_API_KEY=cfbd-api-key:latest             --project=fantasy-football-473418             || echo "WARNING: cfbd-backfill not configured (is the Secret Manager secret cfbd-api-key created?)"
+
+      # Standalone daily scheduler for the in-season FantasyPros capture (the job self-gates
+      # to the NFL season, so a plain daily trigger is fine). Idempotent create-or-update.
+      - name: "Ensure fantasypros-live-current daily scheduler"
+        env:
+          PROJECT_ID: fantasy-football-473418
+          REGION: us-central1
+          RUNTIME_SA: 624985976737-compute@developer.gserviceaccount.com
+          NAME: fantasypros-live-current-daily
+        run: |
+          URI="https://${REGION}-run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/fantasypros-live-current:run"
+          ACTION=create
+          gcloud scheduler jobs describe "${NAME}" --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1 && ACTION=update
+          gcloud scheduler jobs ${ACTION} http "${NAME}" \
+            --location="${REGION}" \
+            --schedule="0 13 * * *" \
+            --time-zone="Etc/UTC" \
+            --uri="${URI}" \
+            --http-method=POST \
+            --oauth-service-account-email="${RUNTIME_SA}" \
+            --message-body='{}' \
+            --project="${PROJECT_ID}"
