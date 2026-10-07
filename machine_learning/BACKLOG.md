@@ -652,3 +652,13 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     intervals by position / mover / rookie). Either feeds item 26 (range of outcomes in the roster
     layer) and item 6 (player-specific uncertainty) with a spread that depends on the inputs rather
     than one sigma per position.
+
+28. **PFF grades as inputs (owner, 2026-10-06).** Pro Football Focus player grades (overall, pass /
+    run / receiving / blocking, per game and per season) are the one widely used quality signal the
+    model does not have. Constraints: paywalled (PFF+ subscription, no API; exports are manual and
+    the terms forbid scraping), NFL grades start in 2006 and college grades in 2014, so a grade column
+    is null for the 1999-2005 rows and the model can read "has a grade" as an era marker; rows beat
+    features at 12k player-seasons. Backlogged, not planned: if it is ever tried, (a) null-before-2006
+    with an explicit era flag, (b) harness `--first-cohort 2015` is unaffected (every cohort trains
+    on 2006+ rows for the grade), (c) the test is the same paired harness as every other group, on
+    TabPFN 3.5 (the 85-feature pretraining limit of v2 no longer binds there).
