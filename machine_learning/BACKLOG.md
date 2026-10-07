@@ -399,9 +399,18 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     16 GB, Ryzen 9 9950X3D2): torch had to be reinstalled from the CUDA 13.0 index for Blackwell, the
     licence token is cached (browser callback) and the 3.5 regressor weights downloaded; the v2
     refresh whose projection step took 1 h 55 min on the RTX 2060 ran the whole pipeline in 32 min.
-    The 3.5 harness is queued (`tabpfn35_w`, `tabpfn35_w5`, then `tabpfn_v2_cap30t_w` for a
-    like-for-like v2 under the production cap); whichever passes the paired test on
-    `spearman_war_top` becomes production. Both runs went
+    **Results 2026-10-06/07 (3-year harness, production cap `30+t`, co-primary rule):**
+    `tabpfn_v2_cap30t_w` (v2, base+career) vs the trees `cap30t_w`: ordering 0.618 vs 0.605
+    (t = 1.3), all-player ordering 0.628 vs 0.624 (t = 3.0), wins error 0.513 vs 0.524 (t = 2.5),
+    top decile 0.677 vs 0.684 (t = 0.6) -> **ADOPT** (error gain past the line, ordering better):
+    the production choice of v2 for the in-season tail is now validated under the rule.
+    `tabpfn35_w` (3.5, same inputs): ordering 0.604, wins error 0.516, share error 0.121 vs the
+    trees' 0.094 (t = 4.3) -> tie with the trees, and v2 beats it on both co-primaries (0.618 /
+    0.513 vs 0.604 / 0.516); at ~6x the GPU time per cohort 3.5 earns nothing on base inputs. The
+    5-year 3.5 run was stopped after one cohort (60 min each) to bring the feature-set runs
+    forward; re-run only if the feature set wins on 3.5. Open: the feature set
+    (`tabpfn35_set_w`: base, career, injury, trend, situation, rookie, college) and the weekly
+    sequence group (`tabpfn35_setw_w`) on 3.5, queued. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
