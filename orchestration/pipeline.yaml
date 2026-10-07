@@ -60,6 +60,7 @@ main:
           - silver_t3_jobs:
               - "silver-fact-roster-membership" # SCD2 ledger; needs dim-league-meta (T1) + bronze snapshots/events
               - "silver-fact-player-season"     # season rollup of fact-player-week (T2)
+              - "silver-fact-player-week-status" # what each skill player did every week and why he missed: fact-player-week (T2) + fact-player-injury-week (T1) + bronze rosters_weekly / schedules / snap_counts
 
     - bronze:
         parallel:
