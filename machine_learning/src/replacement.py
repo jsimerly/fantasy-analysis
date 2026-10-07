@@ -28,11 +28,13 @@ def league_lineup(settings_df: pl.DataFrame, lineage_id: str = PRIMARY_LINEAGE) 
     cur = settings_df.filter(pl.col("is_current") & (pl.col("league_lineage_id") == lineage_id))
     if cur.is_empty():
         raise ValueError(f"no current settings for lineage {lineage_id}")
-    # newest settings version; ties (one SCD2 run stamps every league) go to the newest league
-    # (Sleeper league ids grow over time)
+    # the newest LEAGUE of the lineage first (Sleeper ids grow season over season), then the newest
+    # settings version. Not the other way round: the legacy SCD2 trigger stamps a current row keyed by
+    # the lineage's ROOT league id (an older season's rules: 2 WR, a -1 fumble) with a later valid_from,
+    # and "newest version first" picked that row whenever it ran last (2026-10-07).
     row = (
         cur.with_columns(pl.col("league_id").cast(pl.Utf8).cast(pl.Int64, strict=False).alias("_lid"))
-        .sort(["valid_from", "_lid"], descending=[True, True]).head(1).to_dicts()[0]
+        .sort(["_lid", "valid_from"], descending=[True, True]).head(1).to_dicts()[0]
     )
     slots = {c: int(row.get(c) or 0) for c in SLOT_COLS}
     return slots, int(row["num_teams"])

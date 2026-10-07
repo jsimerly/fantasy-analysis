@@ -118,7 +118,11 @@ def resolve_league_scoring(settings_df: pl.DataFrame, league_id: str | None = No
             .get_column("league_lineage_id")[0]
         )
         row = cur.filter(pl.col("league_lineage_id") == primary)
-    r = row.sort("valid_from", descending=True).head(1).to_dicts()[0]
+    # the newest LEAGUE first (Sleeper ids grow season over season), then the newest version: a current
+    # row keyed by the lineage's root league id carries an older season's rules (the legacy trigger
+    # re-stamps it daily) and must not win on valid_from alone (it did on 2026-10-07: a -1 fumble penalty)
+    r = (row.with_columns(pl.col("league_id").cast(pl.Utf8).cast(pl.Int64, strict=False).alias("_lid"))
+            .sort(["_lid", "valid_from"], descending=[True, True]).head(1).to_dicts()[0])
     scoring = {
         k: round(float(r[k]), 4)
         for k in OFFENSE_KEYS
