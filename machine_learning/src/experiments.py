@@ -56,6 +56,7 @@ class ExperimentConfig:
     backend: str = "xgb"             # career.HorizonModels estimator: xgb | tabpfn | blend
     stacked: bool = False            # one games / ppg model over all horizons with years-ahead as a feature
     cap: str = career.DEFAULT_CAP    # age-survival cap on projected games: career.apply_cap specs ("30+t" production, "30+", "30+t34", all, none)
+    range_quantiles: tuple | None = None   # keep these quantiles of the predictive distribution (TabPFN): scored as coverage / pinball
     tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
@@ -144,7 +145,7 @@ def run_experiment(
         rep_real = realized_rep_for(T) if realized_rep_for is not None else rep
         models = career.HorizonModels(H, device=cfg.device, features=cols, calibrate=cfg.calibrate, quantile_sigma=cfg.quantile_sigma,
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
-                                      stacked=cfg.stacked, **cfg.params).fit(df, as_of_season=T)
+                                      stacked=cfg.stacked, range_quantiles=cfg.range_quantiles, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
         t_fit = time.perf_counter() - t_cohort
         survival = career.fit_survival(df.filter((pl.col("season") + 1) <= T), cfg.cap)
@@ -208,6 +209,7 @@ def run_experiment(
             o = cohort.filter(pl.col(f"h{k}_observable"))
             if o.height:
                 row[f"mae_h{k}"] = float(np.mean(np.abs(o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float))))
+        row.update(range_scores(cohort, H))
         # magnitude bias (realized - projected season points, + = model too low): everyone, and prior top-12 by position
         prior = cohort.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
         for k in sorted({1, max(H)}):
@@ -228,7 +230,7 @@ def run_experiment(
                "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "target": cfg.target, "weight": cfg.weight or "",
-               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else ""),
+               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else "") + (" range" if cfg.range_quantiles else ""),
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -243,7 +245,40 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
-               "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread"]
+               "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread",
+               # the range of outcomes (TabPFN quantiles): share of realized ppg inside the 20-80 band, pinball loss at 20/50/80
+               "ppg_cover_2080", "ppg_pinball"]
+
+
+def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
+    """Score the projected band where the run kept one: for every horizon with ``h{k}_ppg_q20`` and
+    ``h{k}_ppg_q80``, on the players who played that season, the share of realized ppg inside the
+    band (0.6 is calibrated) and the mean pinball loss over the quantiles present (the proper
+    scoring rule for quantiles: hedging and false confidence both cost). Averaged over horizons."""
+    cover, pin = [], []
+    for k in horizons:
+        lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
+        if lo not in cohort.columns or hi not in cohort.columns:
+            continue
+        o = cohort.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & pl.col(lo).is_not_null())
+        if o.height < 20:
+            continue
+        y = o[f"h{k}_ppg"].to_numpy().astype(float)
+        cover.append(float(np.mean((y >= o[lo].to_numpy()) & (y <= o[hi].to_numpy()))))
+        losses = []
+        for q in (0.2, 0.5, 0.8):
+            c = f"h{k}_ppg_{career.q_name(q)}"
+            if c in o.columns:
+                d = y - o[c].to_numpy().astype(float)
+                losses.append(float(np.mean(np.maximum(q * d, (q - 1) * d))))
+        if losses:
+            pin.append(float(np.mean(losses)))
+    out = {}
+    if cover:
+        out["ppg_cover_2080"] = float(np.mean(cover))
+    if pin:
+        out["ppg_pinball"] = float(np.mean(pin))
+    return out
 
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
@@ -292,6 +327,41 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS) -> pl.Da
         rows.append({"metric": m, "a": float(j[m].mean()), "b": float(j[f"{m}_b"].mean()), "diff_b_minus_a": mean, "se": se,
                      "t": mean / se if se > 0 else float("inf"), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
     return pl.DataFrame(rows)
+
+
+T_GAIN, T_NO_WORSE = 2.4, -1.0
+
+
+def verdict(table: pl.DataFrame) -> str:
+    """The acceptance rule on a ``paired(A, B)`` table, A the candidate and B the baseline (owner,
+    2026-10-06: ordering and error are co-primaries, and both are always shown). ADOPT when A
+    improves either ``spearman_war_top`` (ordering of realized WAR among the top 150 projected) or
+    ``mae_war_top`` (wins error on the same players) past |t| = 2.4 while the other is no worse
+    (t > -1, within noise). TRADE-OFF when one gains past the line and the other dips past the
+    noise band: the owner decides on the magnitudes (a slight ordering dip against a large error
+    gain is a win). NO otherwise. Both are losses against realized outcomes; the market is never in them."""
+    rows = {r["metric"]: r for r in table.to_dicts()}
+    if "spearman_war_top" not in rows or "mae_war_top" not in rows:
+        return "co-primary verdict: n/a (spearman_war_top and mae_war_top needed)"
+    o, e = rows["spearman_war_top"], rows["mae_war_top"]
+    # the table's t is for B - A: a positive t on spearman means B orders better, on mae that A errs less
+    t_order, t_err = -o["t"], e["t"]
+    gain_o, gain_e = t_order >= T_GAIN, t_err >= T_GAIN
+    worse_o, worse_e = t_order < T_NO_WORSE, t_err < T_NO_WORSE
+    if (gain_o and not worse_e) or (gain_e and not worse_o):
+        state = "ADOPT"
+    elif (gain_o and worse_e) or (gain_e and worse_o):
+        state = "TRADE-OFF (owner's call)"
+    else:
+        state = "NO"
+    stats = (f"ordering (spearman, realized WAR, top 150) A {o['a']:.3f} vs B {o['b']:.3f}, t = {t_order:+.2f}"
+             f" | wins error (MAE, top 150) A {e['a']:.3f} vs B {e['b']:.3f}, t = {t_err:+.2f}")
+    why = ("gain on " + " and ".join(n for n, g in (("ordering", gain_o), ("wins error", gain_e)) if g)) if (gain_o or gain_e) else "no gain past the line on either"
+    dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
+    if dips:
+        why += f"; {dips} worse"
+    return (f"co-primary verdict (A = candidate vs B = baseline): {state} | {stats} | {why}"
+            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}")
 
 
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:

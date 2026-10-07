@@ -138,7 +138,9 @@ at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG ite
 
 `scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
 (`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
-(`build_war.py --all-leagues --teams`) and exports the page data to
+(`build_war.py --all-leagues --teams`), rebuilds the analysis summaries the page embeds (draft-slot
+standings and the trade log, `analysis/`, best-effort, so the page carries the lake's newest
+standings; `--skip analysis` leaves the previous ones) and exports the page data to
 `pages/season=S/week=W/run_date=D/projections.json` in the ML bucket. `Dockerfile` builds the
 image; `.github/workflows/deploy-machine-learning.yaml` pushes it, deploys the `ml-weekly-refresh`
 Cloud Run job (4Gi / 2 cpu / 1 h) and keeps a Cloud Scheduler trigger on Tuesdays 15:00 UTC, after
@@ -178,7 +180,15 @@ level; the change from this season's rate; opportunities per game × points per 
 `--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
 cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
-cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
+cohort (mean difference, standard error, t, cohorts won) and prints the verdict. **Acceptance rule
+(owner, 2026-10-06): ordering and error are co-primaries.** A variant is adopted when it improves
+either `spearman_war_top` (how well projected WAR orders the WAR the top-150 projected players
+actually delivered) or `mae_war_top` (the wins error on the same players) past |t| = 2.4 with the
+other no worse (t > −1); a gain on one with a dip past the noise band on the other is printed as
+a **trade-off** with both values for the owner to decide (a slight ordering dip against a large
+error gain is a win). Both are losses against realized outcomes on held-out seasons; the market
+is never in them (its own correlation with realized WAR is printed as context). The ordering metric
+alone under-rewarded the cap and rookie-tail fixes, whose gains were in magnitude.
 
 `weekly` (2026-10-06) is the sequence-shaped group: the season as 18 weekly slots, each with what the
 player did (played / bye / injured reserve / injured out / suspended / practice squad / inactive /
@@ -187,6 +197,18 @@ share, plus how many weeks of the season and the season before went to each reas
 `silver/fantasy/fact_player_week_status` (data engineering), so a lost season carries its cause, and
 it is meant for TabPFN 3.5 (2,000-column limit) where attention across features can learn the
 week-by-week shape instead of the hand-made `trend` columns; 195 columns with every group on.
+
+**Range of outcomes (2026-10-06).** One model, several quantiles: with `--range` the career model
+keeps the 20th / 50th / 80th percentiles of TabPFN's predictive distribution for ppg and games per
+horizon (`h{k}_ppg_q20` / `_q50` / `_q80`, `h{k}_games_q..`; the point stays the mean; the games band is
+capped like the point), the harness scores the band (`ppg_cover_2080`, the share of realized ppg
+inside it, 0.6 when calibrated, and `ppg_pinball`, the proper scoring rule for quantiles, which a
+hedging model cannot game), the WAR build turns it into floor / ceiling wins per span (`war.wins_range`,
+no upside term; a span without a band, this season and next, keeps its point on both sides), the
+in-season refresh (`--range`) fills a rookie's or returning veteran's missing band from the position's
+spread (`inseason.fill_missing_band`), and the page shows WAR floor–ceiling and the ppg band per
+season. The point value, the wins error and the ordering stay what they were; the band is the third
+view. A tree backend has no distribution and leaves the columns out.
 
 `--backend xgb|tabpfn|blend` swaps the estimator under the same frame, targets and cohorts (the same
 flag on `backtest_inseason.py --current`, `build_intrinsic_value.py` and `weekly_refresh.py` picks

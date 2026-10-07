@@ -78,6 +78,34 @@ def wins_above_replacement(df: pl.DataFrame, rep: dict[str, float], curve: WinCu
     return df.with_columns(cols + [pl.Series("war", war_total), pl.Series("par", par_total)])
 
 
+def wins_range(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, components: list[Component],
+               discount_rate: float = value.DEFAULT_DISCOUNT_RATE, lo: str = "q20", hi: str = "q80") -> pl.DataFrame:
+    """Floor and ceiling wins per span and in total: the same arithmetic as ``wins_above_replacement``
+    run on the band's ppg and games (``h{k}_ppg_q20`` / ``_q80``, no upside term) where a span carries
+    one; a span without a band (this season, next season, a tree backend) keeps its point wins on
+    both sides. Adds ``war_lo_k`` / ``war_hi_k`` and ``war_lo`` / ``war_hi``."""
+    rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    cols, lo_total, hi_total = [], np.zeros(df.height), np.zeros(df.height)
+    for comp in components:
+        w = value.discount_weight(comp.k, discount_rate)
+        base = comp.ppg.replace("_ppg_hat", "")
+        both = []
+        for side, q in (("lo", lo), ("hi", hi)):
+            pcol, gcol = f"{base}_ppg_{q}", f"{base}_games_{q}"
+            if pcol in df.columns and df[pcol].null_count() < df.height:
+                ppg = df[pcol].fill_null(0.0).to_numpy().astype(float)
+                games = (df[gcol] if gcol in df.columns else df[comp.games]).fill_null(0.0).to_numpy().astype(float)
+                ex = np.maximum(ppg - rep_arr, 0.0)
+                wins = games * curve.delta_win(curve.mean_points, ex)
+            else:
+                wins = df[f"war_{comp.k}"].fill_null(0.0).to_numpy().astype(float) if f"war_{comp.k}" in df.columns else np.zeros(df.height)
+            both.append(wins)
+            cols.append(pl.Series(f"war_{side}_{comp.k}", wins))
+        lo_total += w * np.minimum(both[0], both[1])
+        hi_total += w * np.maximum(both[0], both[1])
+    return df.with_columns(cols + [pl.Series("war_lo", lo_total), pl.Series("war_hi", hi_total)])
+
+
 def realized_wins(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, horizons: list[int],
                   discount_rate: float = value.DEFAULT_DISCOUNT_RATE) -> pl.DataFrame:
     """What a player actually delivered, in the same wins: per observable season k,

@@ -303,6 +303,34 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8,
     return d.drop([c for c in d.columns if c.startswith("_rp") or c.startswith("_rg") or c in ("_has_tail", "_ab", "_rt", "_rt2")])
 
 
+Z_20_80 = 0.8416     # a 20-80 band is +- 0.84 standard deviations of a normal spread
+
+
+def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int, dict[str, float]] | None) -> pl.DataFrame:
+    """Where the run carries a projected band (``h{k}_ppg_q20`` / ``_q50`` / ``_q80`` from TabPFN) but a
+    player has none (a rookie's or returning veteran's extrapolated tail), give him one from the
+    position's out-of-sample spread: point +- 0.84 sigma, floored at 0; games band = the point. A run
+    without a band is left alone."""
+    if not sigma:
+        return df
+    cols = []
+    for k in horizons:
+        lo, mid, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q50", f"h{k}_ppg_q80"
+        if lo not in df.columns or hi not in df.columns:
+            continue
+        s = df["position"].replace_strict({p: v for p, v in sigma.get(k, {}).items() if p != "__all__"},
+                                          default=sigma.get(k, {}).get("__all__", 3.0), return_dtype=pl.Float64)
+        point = pl.col(f"h{k}_ppg_hat")
+        cols += [pl.coalesce([pl.col(lo), (point - Z_20_80 * s).clip(0.0, None)]).alias(lo),
+                 pl.coalesce([pl.col(hi), point + Z_20_80 * s]).alias(hi)]
+        if mid in df.columns:
+            cols.append(pl.coalesce([pl.col(mid), point]).alias(mid))
+        for g in (f"h{k}_games_q20", f"h{k}_games_q50", f"h{k}_games_q80"):
+            if g in df.columns:
+                cols.append(pl.coalesce([pl.col(g), pl.col(f"h{k}_games_hat")]).alias(g))
+    return df.with_columns(cols) if cols else df
+
+
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
@@ -324,6 +352,7 @@ def inseason_value(
     horizons = [k for k in horizons if k >= 3]
     tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")])
     df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons, rookie_table=rookie_table)
+    df = fill_missing_band(df, horizons, sigma)
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
 
     def excess(mu_col: str, k: int) -> np.ndarray:

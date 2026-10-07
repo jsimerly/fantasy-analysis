@@ -156,6 +156,11 @@ class _TabPFN:
     def predict(self, X):
         return np.asarray(self.model.predict(np.asarray(X, dtype=np.float32)), dtype=float)
 
+    def predict_quantiles(self, X, qs) -> np.ndarray:
+        """(n, len(qs)) quantiles of the predictive distribution (TabPFN returns one per row for free)."""
+        out = self.model.predict(np.asarray(X, dtype=np.float32), output_type="quantiles", quantiles=[float(q) for q in qs])
+        return np.column_stack([np.asarray(a, dtype=float) for a in out])
+
 
 class _Blend:
     """Mean of several estimators' predictions (the xgb + tabpfn blend of the bake-off)."""
@@ -179,8 +184,12 @@ class HorizonModels:
                  features: list[str] | None = None, calibrate: bool = False, holdout: int = 3,
                  quantile_sigma: bool = False, quantiles: tuple[float, float] = (0.16, 0.84),
                  target: str = "level", weight: str | None = None,
-                 backend: str = "xgb", tabpfn_params: dict | None = None, stacked: bool = False, **params):
+                 backend: str = "xgb", tabpfn_params: dict | None = None, stacked: bool = False,
+                 range_quantiles: tuple[float, ...] | None = None, **params):
         self.horizons = list(horizons)
+        # range_quantiles: keep these quantiles of the predictive distribution as h{k}_ppg_q20 / _q50 / _q80
+        # (and games) next to the point; only a backend whose estimator has predict_quantiles (TabPFN) fills them
+        self.range_quantiles = tuple(float(q) for q in range_quantiles) if range_quantiles else None
         # stacked: every horizon's training rows in one frame with "years ahead" (and age + years ahead)
         # as features, one games model and one ppg model for all horizons; the decay over time is then
         # learnt from the features jointly instead of per horizon (each horizon's model hedging on its own)
@@ -531,6 +540,7 @@ class HorizonModels:
                 ppg = self._apply_tier_adjust(df, k, ppg)
             cols += [pl.Series(f"h{k}_games_hat", games), pl.Series(f"h{k}_ppg_hat", ppg),
                      pl.Series(f"h{k}_fpts_hat", games * ppg)]
+            cols += self._range_columns(k, X, df)
             if k in self.quantile_models:
                 # player-specific spread: half the 16th-84th percentile width of the ppg projection,
                 # floored so a projection is never treated as certain; rescaled with the calibration slope
@@ -548,6 +558,33 @@ class HorizonModels:
                     {p: v for p, v in s.items() if p != "__all__"}, default=s["__all__"], return_dtype=pl.Float64
                 ).alias(f"h{k}_ppg_sigma"))
         return df.with_columns(cols)
+
+
+def q_name(q: float) -> str:
+    return f"q{int(round(q * 100)):02d}"
+
+
+def _range_columns_of(self, k: int, X: np.ndarray, df: pl.DataFrame) -> list[pl.Series]:
+    """h{k}_ppg_qNN / h{k}_games_qNN from the backend's predictive distribution; nothing when the
+    backend cannot give one (trees), the models are stacked, or the target is the opportunity split."""
+    if not self.range_quantiles or self.stacked or self.target == "opportunity":
+        return []
+    pm, gm = self.ppg_models.get(k), self.games_models.get(k)
+    if pm is None or not hasattr(pm, "predict_quantiles") or not hasattr(gm, "predict_quantiles"):
+        return []
+    qs = self.range_quantiles
+    qp = pm.predict_quantiles(X, qs)
+    if self.target == "residual":
+        qp = qp + df["ppg"].fill_null(0.0).to_numpy().astype(float)[:, None]
+    qp = np.clip(qp, 0.0, None)
+    qg = np.clip(gm.predict_quantiles(X, qs), 0.0, MAX_GAMES)
+    cols = []
+    for j, q in enumerate(qs):
+        cols += [pl.Series(f"h{k}_ppg_{q_name(q)}", qp[:, j]), pl.Series(f"h{k}_games_{q_name(q)}", qg[:, j])]
+    return cols
+
+
+HorizonModels._range_columns = _range_columns_of
 
 
 def _line(x: np.ndarray, y: np.ndarray, lo: float = 0.5, hi: float = 2.0) -> tuple[float, float]:
@@ -661,7 +698,8 @@ class AgeSurvival:
                     m = pos == p
                     plain[m] = MAX_GAMES * self.survival(str(p), age[m], k)
                 cap = np.where(age >= plain_from, np.minimum(cap, plain), cap)
-            cols.append(pl.Series(name, np.minimum(df[name].to_numpy().astype(float), cap)))
+            for c in [name] + [c for c in df.columns if c.startswith(f"h{k}_games_q")]:     # the band is capped like the point
+                cols.append(pl.Series(c, np.minimum(df[c].to_numpy().astype(float), cap)))
         return df.with_columns(cols)
 
 

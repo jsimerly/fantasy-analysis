@@ -399,9 +399,18 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     16 GB, Ryzen 9 9950X3D2): torch had to be reinstalled from the CUDA 13.0 index for Blackwell, the
     licence token is cached (browser callback) and the 3.5 regressor weights downloaded; the v2
     refresh whose projection step took 1 h 55 min on the RTX 2060 ran the whole pipeline in 32 min.
-    The 3.5 harness is queued (`tabpfn35_w`, `tabpfn35_w5`, then `tabpfn_v2_cap30t_w` for a
-    like-for-like v2 under the production cap); whichever passes the paired test on
-    `spearman_war_top` becomes production. Both runs went
+    **Results 2026-10-06/07 (3-year harness, production cap `30+t`, co-primary rule):**
+    `tabpfn_v2_cap30t_w` (v2, base+career) vs the trees `cap30t_w`: ordering 0.618 vs 0.605
+    (t = 1.3), all-player ordering 0.628 vs 0.624 (t = 3.0), wins error 0.513 vs 0.524 (t = 2.5),
+    top decile 0.677 vs 0.684 (t = 0.6) -> **ADOPT** (error gain past the line, ordering better):
+    the production choice of v2 for the in-season tail is now validated under the rule.
+    `tabpfn35_w` (3.5, same inputs): ordering 0.604, wins error 0.516, share error 0.121 vs the
+    trees' 0.094 (t = 4.3) -> tie with the trees, and v2 beats it on both co-primaries (0.618 /
+    0.513 vs 0.604 / 0.516); at ~6x the GPU time per cohort 3.5 earns nothing on base inputs. The
+    5-year 3.5 run was stopped after one cohort (60 min each) to bring the feature-set runs
+    forward; re-run only if the feature set wins on 3.5. Open: the feature set
+    (`tabpfn35_set_w`: base, career, injury, trend, situation, rookie, college) and the weekly
+    sequence group (`tabpfn35_setw_w`) on 3.5, queued. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
@@ -634,7 +643,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     would have been right with the model), a Trades tab on the page, and realized wins per season
     elapsed so 2021 and 2025 trades compare.
 
-26. **Valuing the owner's own roster: bench players and the range of outcomes.** Suspicion: the
+26. **Valuing the owner's own roster: bench players and the range of outcomes.** *(2026-10-06,
+    first cut built: the career model keeps TabPFN's 20/50/80 ppg and games quantiles per horizon
+    (`--range`), the harness scores coverage and pinball loss, the WAR build adds floor / ceiling
+    wins per span, rookies get a band from the position spread, and the page shows WAR
+    floor–ceiling and the ppg band per season; refresh with `--range` queued behind the 3.5 runs.
+    Owner's framing: range, error and ordering together per player; the distribution loss (CRPS /
+    pinball) becomes the primary once the harness reads distributions everywhere, item 29 the
+    path-dependent version.)* Suspicion: the
     roster layer slightly undervalues bench players, and the cause may be that the projection is
     collapsed to one number per player per year too early. Today a player's spread (`h{k}_ppg_sigma`,
     one per position and horizon) enters only through the expected-excess-over-replacement
@@ -676,3 +692,33 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     with an explicit era flag, (b) harness `--first-cohort 2015` is unaffected (every cohort trains
     on 2006+ rows for the grade), (c) the test is the same paired harness as every other group, on
     TabPFN 3.5 (the 85-feature pretraining limit of v2 no longer binds there).
+
+**Acceptance rule from 2026-10-06 (owner): ordering and error are co-primaries.** `--paired` prints
+the verdict: adopt when the candidate improves `spearman_war_top` or `mae_war_top` past |t| = 2.4
+with the other no worse (t > −1). Earlier rounds were judged on ordering with error as the
+tiebreaker; nothing adopted before this date would change under the new rule (the cap and rookie
+tails gained on both), and the 3.5 base run (0.604 vs 0.605 ordering, 0.516 vs 0.524 wins error,
+t = 1.45) stays a tie.
+
+29. **Autoregressive career simulation (owner, 2026-10-06: "LLMs guess the next word; can we guess the
+    next season, or game, and keep going instead of synthesizing one number?").** Yes, and the
+    frame is close to it already. Today the career model is a set of DIRECT models: one pair
+    (games, ppg) per horizon k, each predicting season T+k from the season-T row, chosen over
+    rolling a one-year model forward because a rolled mean compounds its own errors and the model
+    never saw its own guesses as inputs. The LLM analogy adds the missing piece: SAMPLE, do not
+    roll the mean. Draw next season's (games, ppg) from the one-step predictive distribution
+    (TabPFN already returns a 5,000-bucket distribution per row, card 7 on the page), rebuild the
+    row for T+1 (age + 1, lags shifted, career totals accumulated, the sampled season as "this
+    season"), draw T+2 from that, and so on to T+10; a few hundred draws per player give a
+    distribution of careers, not a point: the chance of a lost season, the boom and bust paths,
+    the bimodal shape of a player like Nabers (item 24), and a mean that respects path dependence
+    (an injury season changes what follows, which a direct horizon-k model can only average over).
+    Scoring: the same harness (mean of the trajectory distribution -> WAR -> `spearman_war_top`
+    against the direct models) PLUS the distribution itself (coverage of the 10-90 % interval of
+    realized 3-year WAR, CRPS), which is what items 26 and 27 need. Design: a one-step TabPFN
+    model on season-level inputs only (the weekly slots of a simulated season do not exist), the
+    context cached once per cohort (`fit_with_cache`, fine at 16 GB) so each step is test rows
+    only (450 players x 300 draws = 135k test rows per step); exposure bias is the risk and
+    sampling from a calibrated distribution is the mitigation; the game-level version (roll a
+    per-game model within a season) comes after the season-level one works. Not started: queued
+    behind the 3.5 feature-set and weekly runs (same GPU).
