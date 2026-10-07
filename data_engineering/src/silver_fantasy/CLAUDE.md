@@ -20,7 +20,7 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
 | `fact_asset_values.py` | `silver-fact-asset-values` | player values (KTC + FantasyCalc), partitioned by `market_type` |
 | `fact_pick_values.py` | `silver-fact-pick-values` | pick **tier** value over time (ownership-independent) |
 | `fact_roster_membership.py` | `silver-fact-roster-membership` | SCD2 ownership ledger (players + picks), back to 2021 |
-| `fact_team_season_strength.py` | `silver-fact-team-season-strength` | team x season: market rating (mean closing spread), total line, record, EPA/play, QB situation; current franchise codes |
+| `fact_team_season_strength.py` | `silver-fact-team-season-strength` | team x season: market rating (mean closing spread), total line, record, EPA/play, QB situation; current franchise codes. Same job also writes `fact_team_week_strength` (team x season x week, the same quantities to date + this week's line, for the in-season model) |
 | `fact_player_contract_season.py` | `silver-fact-player-contract-season` | player x season: the contract in force (cap share, guarantees, years left, rookie deal, cap number, position rank) from Over The Cap |
 | `_pick_projection.py` | — (analysis helper) | reverse-standings tier projection (the measure layer, not a fact) |
 | `utils.py` | — | shared `get_latest_bronze_path`, `merge_full_and_incremental`, `read_latest_incremental_by_key` |

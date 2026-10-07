@@ -213,6 +213,13 @@ age of the deal, the cap number carried that year and the one scheduled next, th
 position's deals, deals signed so far, and a has-contract flag (null before the 1994 cap era); 13
 columns, on file for 91-98 % of rows from 2015, 57 % for 2010-14, thin before (the foundation model
 reads the null as a state). Leakage rule: a deal counts from its signing year on, never earlier.
+The in-season model (this season and next, `inseason.InSeasonModels`) has its own versions of both
+(`--inseason-groups team,contract` on `backtest_inseason.py` / `weekly_refresh.py`): `team` is the
+team to date at the snapshot week from `silver/fantasy/fact_team_week_strength` (the market's rating
+over the games played so far, total, win probability, point differential, record, EPA per play and
+pass rate to date, this week's own line, last season's rating), `contract` the same deal columns
+keyed to the season; `inseason.extra_columns` lists them and `InSeasonModels(extra_features=...)`
+trains on them next to the base snapshot features.
 
 **Range of outcomes (2026-10-06).** One model, several quantiles: with `--range` the career model
 keeps the 20th / 50th / 80th percentiles of TabPFN's predictive distribution for ppg and games per

@@ -127,6 +127,59 @@ class TestInSeasonValue:
         assert b["vorp_ros"] == 0.0 and b["vorp_next"] == 32.0 and abs(b["iv_inseason"] - 16.0) < 1e-9
 
 
+def _team_week():
+    rows = []
+    for w in range(1, 7):
+        rows.append(dict(season=2023, team="KC", week=w, mkt_margin_td=1.0 * w, mkt_total_td=48.0, mkt_win_prob_td=0.6, point_diff_td=2.0 * w, win_pct_td=0.7,
+                         off_epa_td=0.1, pass_rate_td=0.6, line_this_week=3.0 if w != 4 else None, total_this_week=47.0, mkt_margin_prev=2.5, point_diff_prev=4.0))
+        rows.append(dict(season=2023, team="DET", week=w, mkt_margin_td=-1.0 * w, mkt_total_td=44.0, mkt_win_prob_td=0.4, point_diff_td=-2.0 * w, win_pct_td=0.3,
+                         off_epa_td=-0.05, pass_rate_td=0.55, line_this_week=-3.0, total_this_week=43.0, mkt_margin_prev=None, point_diff_prev=None))
+    for w in (1, 2, 3):
+        rows.append(dict(season=2024, team="KC", week=w, mkt_margin_td=5.0, mkt_total_td=50.0, mkt_win_prob_td=0.7, point_diff_td=8.0, win_pct_td=1.0,
+                         off_epa_td=0.2, pass_rate_td=0.65, line_this_week=6.0, total_this_week=49.0, mkt_margin_prev=6.0, point_diff_prev=5.0))
+    return pl.DataFrame(rows)
+
+
+def _contracts():
+    return pl.DataFrame({"gsis_id": ["A", "A"], "season": [2023, 2024], "position": ["WR", "WR"], "apy_cap_pct": [0.05, 0.09], "guaranteed_cap_pct": [0.1, 0.2],
+                         "years_left": [0, 3], "contract_year": [True, False], "is_rookie_deal": [True, False], "contract_age": [3, 0], "apy_cap_pct_pos_pctl": [0.6, 0.95]})
+
+
+class TestExtras:
+    def test_team_to_date_joins_the_snapshot_week_and_the_contract_the_season(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2, 4], team_week=_team_week(), contracts=_contracts()).sort(["player_id", "season", "week"])
+        a23w2 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023) & (pl.col("week") == 2)).row(0, named=True)
+        a23w4 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2023) & (pl.col("week") == 4)).row(0, named=True)
+        b23w2 = snaps.filter((pl.col("player_id") == "B") & (pl.col("season") == 2023) & (pl.col("week") == 2)).row(0, named=True)
+        assert a23w2["tm_mkt_margin_td"] == 2.0 and a23w4["tm_mkt_margin_td"] == 4.0 and a23w4["tm_line_this_week"] is None and a23w2["tm_line_this_week"] == 3.0
+        assert a23w2["tm_mkt_margin_prev"] == 2.5 and b23w2["tm_mkt_margin_td"] == -2.0 and b23w2["tm_mkt_margin_prev"] is None
+        assert a23w2["ct_apy_cap_pct"] == 0.05 and a23w2["ct_contract_year"] == 1.0 and a23w2["ct_is_rookie_deal"] == 1.0 and a23w2["ct_has_contract"] == 1.0
+        assert a23w4["ct_years_left"] == 0.0 and b23w2["ct_has_contract"] == 0.0 and b23w2["ct_apy_cap_pct"] is None
+        a24 = snaps.filter((pl.col("player_id") == "A") & (pl.col("season") == 2024) & (pl.col("week") == 2)).row(0, named=True)
+        assert a24["tm_mkt_margin_td"] == 5.0 and a24["ct_apy_cap_pct"] == 0.09 and a24["ct_years_left"] == 3.0
+
+    def test_old_team_codes_map_to_the_current_franchise(self):
+        tw = _team_week().with_columns(pl.when(pl.col("team") == "KC").then(pl.lit("KC")).otherwise(pl.lit("OAK")).alias("team"))
+        wk = _weeks().with_columns(pl.when(pl.col("team") == "DET").then(pl.lit("LV")).otherwise(pl.col("team")).alias("team"))
+        snaps = inseason.build_snapshots(wk, _seasons(), weeks=[2], team_week=tw)
+        b = snaps.filter(pl.col("player_id") == "B").row(0, named=True)
+        assert b["tm_mkt_margin_td"] == -2.0
+
+    def test_feature_frame_and_models_take_the_extra_columns(self):
+        snaps = inseason.build_snapshots(_weeks(), _seasons(), weeks=[2], team_week=_team_week(), contracts=_contracts())
+        extra = inseason.extra_columns(["team", "contract"])
+        X = inseason.feature_frame(snaps, extra)
+        assert X.width == len(inseason.FEATURES) + len(extra) and set(extra) <= set(X.columns)
+        assert inseason.feature_frame(snaps.drop(extra), extra)[extra[0]].null_count() == snaps.height   # absent columns are null, not an error
+        assert inseason.extra_columns(["contract"]) == inseason.CONTRACT_SNAP_COLS and inseason.extra_columns([]) == []
+        with pytest.raises(ValueError):
+            inseason.extra_columns(["weather"])
+        wk, ss = _big()
+        big = inseason.build_snapshots(wk, ss, weeks=[3, 8], contracts=_contracts())
+        m = inseason.InSeasonModels(n_estimators=5, max_depth=2, extra_features=inseason.CONTRACT_SNAP_COLS).fit(big, as_of_season=2022)
+        assert m.models["ros_ppg"].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
+
+
 class TestModels:
     def test_fit_predict_and_as_of_guard(self):
         wk, ss = _big()

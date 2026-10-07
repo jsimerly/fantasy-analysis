@@ -43,7 +43,51 @@ DEPTH_COLS = ["td_depth_rank", "td_depth_change", "td_is_starter"]
 POSITIONS = ["QB", "RB", "WR", "TE"]
 FEATURES = TD_COLS + DEPTH_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS + FLAG_COLS + [f"pos_{p}" for p in POSITIONS]
 
+# optional in-season groups (BACKLOG 31), joined to a snapshot when the lake tables are given:
+#   team     - the player's team to date at the snapshot week (fact_team_week_strength): the market's
+#              rating so far (mean closing line), total, win probability, point differential, record,
+#              offensive EPA per play and pass rate to date, this week's own line, last season's rating
+#   contract - the contract in force that season (fact_player_contract_season): cap share, guarantees,
+#              years left, contract year, rookie deal, age of the deal, rank among the position's deals
+TEAM_WEEK_PATH = "silver/fantasy/fact_team_week_strength/data.parquet"
+CONTRACT_PATH = "silver/fantasy/fact_player_contract_season/data.parquet"
+TEAM_WEEK_SRC = ["mkt_margin_td", "mkt_total_td", "mkt_win_prob_td", "point_diff_td", "win_pct_td", "off_epa_td", "pass_rate_td",
+                 "line_this_week", "total_this_week", "mkt_margin_prev", "point_diff_prev"]
+TEAM_WEEK_COLS = [f"tm_{c}" for c in TEAM_WEEK_SRC]
+CONTRACT_SRC = ["apy_cap_pct", "guaranteed_cap_pct", "years_left", "contract_year", "is_rookie_deal", "contract_age", "apy_cap_pct_pos_pctl"]
+CONTRACT_SNAP_COLS = [f"ct_{c}" for c in CONTRACT_SRC] + ["ct_has_contract"]
+EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS}
+TEAM_CODE = {"OAK": "LV", "SD": "LAC", "STL": "LA", "JAC": "JAX", "LAR": "LA"}
+CONTRACT_FIRST_SEASON = 1994
+
 DEFAULT_PARAMS = {**career.DEFAULT_PARAMS}
+
+
+def extra_columns(groups: Iterable[str]) -> list[str]:
+    """The snapshot feature columns of the named in-season groups, in registry order."""
+    names = [g.strip() for g in groups if g and g.strip()]
+    unknown = [g for g in names if g not in EXTRA_GROUPS]
+    if unknown:
+        raise ValueError(f"unknown in-season group(s) {unknown}; known: {sorted(EXTRA_GROUPS)}")
+    return [c for g in EXTRA_GROUPS if g in names for c in EXTRA_GROUPS[g]]
+
+
+def _norm_team(col: str = "team") -> pl.Expr:
+    return pl.col(col).cast(pl.Utf8).str.strip_chars().replace(TEAM_CODE)
+
+
+def team_week_features(team_week: pl.DataFrame, week: int) -> pl.DataFrame:
+    """(season, team) -> the team's to-date columns after ``week`` (current franchise codes)."""
+    t = team_week.filter(pl.col("week") == week).with_columns(pl.col("season").cast(pl.Int64), _norm_team().alias("team"))
+    return t.select(["season", "team"] + [pl.col(c).cast(pl.Float64, strict=False).alias(f"tm_{c}") for c in TEAM_WEEK_SRC if c in t.columns])
+
+
+def contract_features(contracts: pl.DataFrame) -> pl.DataFrame:
+    """(player_id, season) -> the contract in force that season, with a has-contract flag."""
+    c = contracts.with_columns(pl.col("season").cast(pl.Int64), pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"))
+    return (c.select(["player_id", "season"] + [pl.col(x).cast(pl.Float64, strict=False).alias(f"ct_{x}") for x in CONTRACT_SRC if x in c.columns]
+                     + [pl.lit(1.0).alias("ct_has_contract")])
+             .unique(["player_id", "season"], keep="first", maintain_order=True))
 
 
 # ---------------------------------------------------------------------------- snapshots
@@ -98,11 +142,14 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
 
 
 def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
-                    depth: pl.DataFrame | None = None) -> pl.DataFrame:
+                    depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
+                    contracts: pl.DataFrame | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
-    features (+ depth-chart standing when ``depth`` is given) + ROS / next-season targets
-    (null where not observable)."""
+    features (+ depth-chart standing when ``depth`` is given, + the team to date when
+    ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
+    next-season targets (null where not observable)."""
     prev = prior_season_features(season_df)
+    ct = contract_features(contracts) if contracts is not None else None
     done = season_df.filter(pl.col("season_complete")) if "season_complete" in season_df.columns else season_df
     complete = set(done["season"].unique().to_list())
     last_complete = max(complete) if complete else int(season_df["season"].max())
@@ -113,6 +160,12 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
         snap = to_date_features(wk, w).join(prev, on=["player_id", "season"], how="left")
         if depth is not None:
             snap = snap.join(depth_features(depth, w), on=["player_id", "season"], how="left")
+        if team_week is not None:
+            snap = (snap.with_columns(_norm_team().alias("_tm")).join(team_week_features(team_week, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
+                        .drop("_tm"))
+        if ct is not None:
+            snap = snap.join(ct, on=["player_id", "season"], how="left").with_columns(
+                pl.when(pl.col("season") >= CONTRACT_FIRST_SEASON).then(pl.col("ct_has_contract").fill_null(0.0)).otherwise(None).alias("ct_has_contract"))
         ros = wk.filter(pl.col("week") > w).group_by("player_id", "season").agg(
             pl.len().alias("ros_games"), pl.col("fpts").sum().alias("ros_fpts"))
         snap = snap.join(ros, on=["player_id", "season"], how="left").join(nxt, on=["player_id", "season"], how="left")
@@ -133,9 +186,9 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
     return pl.concat(out, how="diagonal_relaxed")
 
 
-def feature_frame(df: pl.DataFrame) -> pl.DataFrame:
+def feature_frame(df: pl.DataFrame, extra: Iterable[str] = ()) -> pl.DataFrame:
     cols = []
-    for c in TD_COLS + DEPTH_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS:
+    for c in TD_COLS + DEPTH_COLS + [f"prev_{c}" for c in PREV_COLS] + BIO_COLS + list(extra):
         cols.append(pl.col(c).cast(pl.Float64, strict=False) if c in df.columns else pl.lit(None, pl.Float64).alias(c))
     for b in FLAG_COLS:
         cols.append((pl.col(b).cast(pl.Int8) if b in df.columns else pl.lit(0, pl.Int8)).alias(b))
@@ -149,8 +202,9 @@ class InSeasonModels:
     """Four regressors: ros_ppg (on rows that played again), ros_games, next_ppg (on rows that
     played next year), next_games."""
 
-    def __init__(self, device: str = "cpu", seed: int = 0, **params):
+    def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), **params):
         self.device, self.seed = device, seed
+        self.extra_features = list(extra_features)       # in-season group columns (extra_columns) on top of FEATURES
         self.params = {**DEFAULT_PARAMS, **params}
         self.models: dict[str, XGBRegressor] = {}
 
@@ -170,11 +224,11 @@ class InSeasonModels:
         for name, (rows, target) in specs.items():
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")
-            self.models[name] = self._new().fit(feature_frame(rows).to_numpy(), rows[target].to_numpy().astype(float))
+            self.models[name] = self._new().fit(feature_frame(rows, self.extra_features).to_numpy(), rows[target].to_numpy().astype(float))
         return self
 
     def predict(self, snaps: pl.DataFrame) -> pl.DataFrame:
-        X = feature_frame(snaps).to_numpy()
+        X = feature_frame(snaps, self.extra_features).to_numpy()
         ros_g = np.clip(self.models["ros_games"].predict(X), 0, MAX_GAMES)
         ros_p = np.clip(self.models["ros_ppg"].predict(X), 0, None)
         nx_g = np.clip(self.models["next_games"].predict(X), 0, MAX_GAMES)

@@ -11,9 +11,12 @@ to it. The dynasty model joins it to a player's team for the season (machine_lea
 item 31).
 
 Inputs:  bronze/nflverse/schedules/season=YYYY/*.parquet, bronze/nflverse/team_stats/season=YYYY/*.parquet
-Output:  silver/fantasy/fact_team_season_strength/data.parquet
+Outputs: silver/fantasy/fact_team_season_strength/data.parquet
          grain (season, team), team in the CURRENT franchise code (OAK->LV, SD->LAC, STL->LA,
          JAC->JAX) so the season fact, which carries both eras' codes, joins on it after the same map.
+         silver/fantasy/fact_team_week_strength/data.parquet
+         grain (season, team, week): the same quantities to date after that week (for the in-season
+         model's snapshots), this week's own line, last season's rating; every week of the schedule.
 
 Run: ``PYTHONPATH=src python -m silver_fantasy.fact_team_season_strength``
 """
@@ -31,6 +34,7 @@ from silver_fantasy.utils import read_bronze_prefix
 SCHEDULES_PREFIX = "bronze/nflverse/schedules/"
 TEAM_STATS_PREFIX = "bronze/nflverse/team_stats/"
 OUTPUT_PATH = "silver/fantasy/fact_team_season_strength/data.parquet"
+OUTPUT_WEEK_PATH = "silver/fantasy/fact_team_week_strength/data.parquet"   # the in-season (to-date) view, same job
 TEAM_CODE = {"OAK": "LV", "SD": "LAC", "STL": "LA", "JAC": "JAX", "LAR": "LA"}
 
 
@@ -128,6 +132,74 @@ def build_fact_team_season_strength(sched: pl.DataFrame, team_stats: pl.DataFram
     return out.join(prev, on=["season", "team"], how="left").sort(["season", "team"])
 
 
+def _weekly_offense(team_stats: pl.DataFrame) -> pl.DataFrame:
+    """Per (season, week, team) of the regular season: offensive EPA, plays and dropbacks of that game."""
+    t = team_stats.filter(pl.col("season_type") == "REG") if "season_type" in team_stats.columns else team_stats
+    if t.height == 0 or "week" not in t.columns:
+        return pl.DataFrame(schema={"season": pl.Int64, "week": pl.Int64, "team": pl.Utf8, "_epa": pl.Float64, "_plays": pl.Float64, "_dropbacks": pl.Float64})
+
+    def num(c: str) -> pl.Expr:
+        return pl.col(c).cast(pl.Float64, strict=False).fill_null(0.0) if c in t.columns else pl.lit(0.0)
+
+    return (t.with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), normalize_team("team").alias("team"),
+                           (num("passing_epa") + num("rushing_epa")).alias("_epa"),
+                           (num("attempts") + num("carries") + num("sacks_suffered")).alias("_plays"),
+                           (num("attempts") + num("sacks_suffered")).alias("_dropbacks"))
+             .unique(["season", "week", "team"], keep="first", maintain_order=True)
+             .select("season", "week", "team", "_epa", "_plays", "_dropbacks"))
+
+
+def build_fact_team_week_strength(sched: pl.DataFrame, team_stats: pl.DataFrame) -> pl.DataFrame:
+    """The in-season view of ``build_fact_team_season_strength``: per (season, team, week) what was
+    known after that week's games: the to-date market rating (mean closing line over the games played
+    so far), to-date total, record and point differential, offensive EPA per play and pass rate to
+    date, this week's own line and total (null on a bye), and last season's full-season rating. One
+    row for every week of the season's schedule, to-date values carried through byes; weeks with a
+    line but no score yet (the current week) keep the line in the rating and the record as it was."""
+    sides = team_game_sides(sched)
+    if sides.height == 0:
+        return pl.DataFrame()
+    g = sides.sort(["season", "team", "week"]).with_columns(
+        pl.col("pts_for").is_not_null().alias("_played"), pl.col("line_margin").is_not_null().alias("_lined"))
+    over = ["season", "team"]
+    g = g.with_columns(
+        pl.col("_played").cast(pl.Int64).cum_sum().over(over).alias("games_td"),
+        pl.col("_lined").cast(pl.Int64).cum_sum().over(over).alias("games_lined_td"),
+        pl.col("line_margin").fill_null(0.0).cum_sum().over(over).alias("_cum_margin"),
+        pl.col("total_line").fill_null(0.0).cum_sum().over(over).alias("_cum_total"),
+        pl.col("win_prob").is_not_null().cast(pl.Int64).cum_sum().over(over).alias("_n_prob"),
+        pl.col("win_prob").fill_null(0.0).cum_sum().over(over).alias("_cum_prob"),
+        pl.when(pl.col("_played")).then(pl.col("pts_for") - pl.col("pts_against")).otherwise(0.0).cum_sum().over(over).alias("_cum_diff"),
+        pl.when(pl.col("_played")).then((pl.col("pts_for") > pl.col("pts_against")).cast(pl.Float64) + 0.5 * (pl.col("pts_for") == pl.col("pts_against")).cast(pl.Float64))
+          .otherwise(0.0).cum_sum().over(over).alias("_cum_wins"),
+    ).with_columns(
+        pl.when(pl.col("games_lined_td") > 0).then(pl.col("_cum_margin") / pl.col("games_lined_td")).otherwise(None).alias("mkt_margin_td"),
+        pl.when(pl.col("games_lined_td") > 0).then(pl.col("_cum_total") / pl.col("games_lined_td")).otherwise(None).alias("mkt_total_td"),
+        pl.when(pl.col("_n_prob") > 0).then(pl.col("_cum_prob") / pl.col("_n_prob")).otherwise(None).alias("mkt_win_prob_td"),
+        pl.when(pl.col("games_td") > 0).then(pl.col("_cum_diff") / pl.col("games_td")).otherwise(None).alias("point_diff_td"),
+        pl.when(pl.col("games_td") > 0).then(pl.col("_cum_wins") / pl.col("games_td")).otherwise(None).alias("win_pct_td"),
+        pl.col("line_margin").alias("line_this_week"), pl.col("total_line").alias("total_this_week"), pl.col("_played").alias("played_this_week"),
+    )
+    off = _weekly_offense(team_stats).sort(["season", "team", "week"]).with_columns(
+        pl.col("_epa").cum_sum().over(over).alias("_cum_epa"), pl.col("_plays").cum_sum().over(over).alias("_cum_plays"),
+        pl.col("_dropbacks").cum_sum().over(over).alias("_cum_db")).with_columns(
+        pl.when(pl.col("_cum_plays") > 0).then(pl.col("_cum_epa") / pl.col("_cum_plays")).otherwise(None).alias("off_epa_td"),
+        pl.when(pl.col("_cum_plays") > 0).then(pl.col("_cum_db") / pl.col("_cum_plays")).otherwise(None).alias("pass_rate_td"),
+    ).select("season", "week", "team", "off_epa_td", "pass_rate_td")
+    # every week of the schedule for every team, to-date values carried through byes
+    span = sides.group_by("season").agg(pl.col("week").min().alias("_w0"), pl.col("week").max().alias("_w1"))
+    grid = (sides.select("season", "team").unique().join(span, on="season")
+                 .with_columns(pl.int_ranges("_w0", pl.col("_w1") + 1).alias("week")).explode("week").drop(["_w0", "_w1"]))
+    td_cols = ["games_td", "games_lined_td", "mkt_margin_td", "mkt_total_td", "mkt_win_prob_td", "point_diff_td", "win_pct_td"]
+    out = (grid.join(g.select(["season", "team", "week"] + td_cols + ["line_this_week", "total_this_week", "played_this_week"]), on=["season", "team", "week"], how="left")
+               .join(off, on=["season", "team", "week"], how="left").sort(["season", "team", "week"])
+               .with_columns([pl.col(c).fill_null(strategy="forward").over(over) for c in td_cols + ["off_epa_td", "pass_rate_td"]])
+               .with_columns(pl.col("games_td").fill_null(0), pl.col("games_lined_td").fill_null(0), pl.col("played_this_week").fill_null(False)))
+    prev = (season_market_and_record(sides).select((pl.col("season") + 1).alias("season"), "team", pl.col("mkt_margin").alias("mkt_margin_prev"),
+                                                   pl.col("point_diff_pg").alias("point_diff_prev")))
+    return out.join(prev, on=["season", "team"], how="left").sort(["season", "team", "week"])
+
+
 def _bucket() -> str:
     b = os.environ.get("GCS_BUCKET_NAME")
     if not b:
@@ -135,11 +207,11 @@ def _bucket() -> str:
     return b
 
 
-def save_df_to_gcs(df: pl.DataFrame, bucket_name: str) -> None:
+def save_df_to_gcs(df: pl.DataFrame, bucket_name: str, path: str = OUTPUT_PATH) -> None:
     buf = io.BytesIO()
     df.write_parquet(buf)
-    storage.Client().bucket(bucket_name).blob(OUTPUT_PATH).upload_from_string(buf.getvalue(), content_type="application/octet-stream")
-    print(f"Saved fact_team_season_strength ({df.shape[0]} rows) to gs://{bucket_name}/{OUTPUT_PATH}")
+    storage.Client().bucket(bucket_name).blob(path).upload_from_string(buf.getvalue(), content_type="application/octet-stream")
+    print(f"Saved {path.split('/')[-2]} ({df.shape[0]} rows) to gs://{bucket_name}/{path}")
 
 
 def main() -> None:
@@ -154,6 +226,10 @@ def main() -> None:
     top = lined.filter(pl.col("season") == lined["season"].max()).sort("mkt_margin", descending=True)
     print(f"{top['season'][0]} market top: {top.head(3).select('team', 'mkt_margin').to_dicts()} bottom: {top.tail(2).select('team', 'mkt_margin').to_dicts()}")
     save_df_to_gcs(fact, bucket)
+    week = build_fact_team_week_strength(sched, ts)
+    print(f"week grid: {week.height:,} rows; to-date rating filled {week['mkt_margin_td'].is_not_null().mean():.0%}; "
+          f"EPA to date filled {week['off_epa_td'].is_not_null().mean():.0%}; byes {(~week['played_this_week'] & week['line_this_week'].is_null()).sum():,}")
+    save_df_to_gcs(week, bucket, OUTPUT_WEEK_PATH)
 
 
 if __name__ == "__main__":

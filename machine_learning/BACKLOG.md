@@ -895,5 +895,11 @@ t = 1.45) stays a tie.
     20 % in 2005-09, under 5 % before (OTC's history is dense from the 2011 CBA; the model reads the
     null as a state, as with college and injury). Queued on the GPU behind the feature-push chain:
     `tabpfn35_set_team_stacked_w`, `tabpfn35_set_contract_stacked_w`, `tabpfn35_set_tc_stacked_w`,
-    each paired against the pooled candidate. Not built yet: the week-level team table for the
-    in-season model, and preseason win-total futures (no source in the lake).
+    each paired against the pooled candidate. **In-season model (same evening):** the week-level
+    table `fact_team_week_strength` (15,373 team-weeks, the same quantities to date after each week,
+    this week's own line, last season's rating; byes carry the to-date values) is written by the same
+    job, and the in-season model takes `--inseason-groups team,contract` (`inseason.EXTRA_GROUPS`:
+    11 team-to-date columns at the snapshot week, 8 contract columns for the season). A/B on the
+    trees, cohorts 2021-24, weeks 3/6/9/13, queued on the CPU: none / team / contract / both, read
+    against the baseline's next-season and rest-of-season rank agreement (0.546-0.596 / 0.784-0.694
+    on the 2026-10-01 run). Still not built: preseason win-total futures (no source in the lake).

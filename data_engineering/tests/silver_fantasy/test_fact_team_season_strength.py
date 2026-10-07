@@ -77,6 +77,32 @@ class TestOffenseAndLags:
         assert set(out["team"].unique().to_list()) == {"LA", "SEA"}
 
 
+class TestWeekGrid:
+    def test_to_date_values_after_each_week_and_the_current_weeks_line(self):
+        out = m.build_fact_team_week_strength(_sched(), _team_stats())
+        stl = {r["week"]: r for r in out.filter((pl.col("season") == 2015) & (pl.col("team") == "LA")).to_dicts()}
+        assert sorted(stl) == [1, 2, 3, 4]                                                     # the regular-season span; the playoff week is out
+        assert stl[1]["mkt_margin_td"] == 3.0 and stl[1]["point_diff_td"] == 10.0 and stl[1]["games_td"] == 1 and stl[1]["line_this_week"] == 3.0
+        assert abs(stl[2]["mkt_margin_td"] - (-0.5)) < 1e-9 and abs(stl[2]["point_diff_td"] - 5.0) < 1e-9 and abs(stl[2]["win_pct_td"] - 0.75) < 1e-9
+        assert abs(stl[3]["mkt_margin_td"] - 2.0) < 1e-9 and abs(stl[3]["point_diff_td"] - (-7 / 3)) < 1e-9 and stl[3]["games_td"] == 3
+        # week 4 has a line but no score yet: the rating moves, the record does not
+        assert abs(stl[4]["mkt_margin_td"] - 1.0) < 1e-9 and abs(stl[4]["point_diff_td"] - (-7 / 3)) < 1e-9 and stl[4]["games_td"] == 3
+        assert stl[4]["line_this_week"] == -2.0 and stl[4]["played_this_week"] is False and stl[3]["played_this_week"] is True
+        assert abs(stl[1]["off_epa_td"] - 0.2) < 1e-9 and abs(stl[2]["off_epa_td"] - 0.05) < 1e-9 and abs(stl[2]["pass_rate_td"] - 0.7) < 1e-9
+        assert abs(stl[4]["off_epa_td"] - 0.05) < 1e-9                                            # carried forward past the last stats row
+        assert stl[1]["mkt_margin_prev"] is None
+
+    def test_bye_weeks_carry_the_to_date_values_and_have_no_line(self):
+        sched = _sched().filter(pl.col("game_id") != "b")                                        # week 2 becomes a bye for both teams
+        out = m.build_fact_team_week_strength(sched, _team_stats())
+        stl = {r["week"]: r for r in out.filter((pl.col("season") == 2015) & (pl.col("team") == "LA")).to_dicts()}
+        assert stl[2]["line_this_week"] is None and stl[2]["played_this_week"] is False
+        assert stl[2]["mkt_margin_td"] == 3.0 and stl[2]["games_td"] == 1 and stl[2]["point_diff_td"] == 10.0
+        assert abs(stl[3]["mkt_margin_td"] - 5.0) < 1e-9 and stl[3]["games_td"] == 2
+        la16 = out.filter((pl.col("season") == 2016) & (pl.col("team") == "LA")).row(0, named=True)
+        assert abs(la16["mkt_margin_prev"] - (3 + 7 - 2) / 3) < 1e-9                               # last season's full rating, normalized code
+
+
 class TestNormalizeTeam:
     def test_every_old_code_maps_to_the_current_franchise(self):
         df = pl.DataFrame({"team": ["OAK", "SD", "STL", "JAC", "LAR", "KC", " LV "]}).with_columns(m.normalize_team().alias("n"))
