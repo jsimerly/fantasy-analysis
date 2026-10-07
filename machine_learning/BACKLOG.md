@@ -410,7 +410,11 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     5-year 3.5 run was stopped after one cohort (60 min each) to bring the feature-set runs
     forward; re-run only if the feature set wins on 3.5. Open: the feature set
     (`tabpfn35_set_w`: base, career, injury, trend, situation, rookie, college) and the weekly
-    sequence group (`tabpfn35_setw_w`) on 3.5, queued. Both runs went
+    sequence group (`tabpfn35_setw_w`) on 3.5, queued; then (owner, 2026-10-07) pooled horizons
+    (`--stacked`: one games and one ppg model over every horizon, years-ahead and age-at-horizon
+    as inputs, ~37k rows, two fits per cohort instead of six) on v2 (`tabpfn_v2_stacked_w`), on 3.5
+    base+career (`tabpfn35_stacked_w`) and on 3.5 with the feature set (`tabpfn35_set_stacked_w`),
+    each paired against its per-horizon twin; on the trees the pooled model tied (item 24). Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
