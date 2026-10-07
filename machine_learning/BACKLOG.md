@@ -414,7 +414,20 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     (`--stacked`: one games and one ppg model over every horizon, years-ahead and age-at-horizon
     as inputs, ~37k rows, two fits per cohort instead of six) on v2 (`tabpfn_v2_stacked_w`), on 3.5
     base+career (`tabpfn35_stacked_w`) and on 3.5 with the feature set (`tabpfn35_set_stacked_w`),
-    each paired against its per-horizon twin; on the trees the pooled model tied (item 24). Both runs went
+    each paired against its per-horizon twin; on the trees the pooled model tied (item 24).
+    **Feature-set verdicts (2026-10-07 00:32-02:24, co-primary rule, 3-year):** the owner's set
+    (base, career, injury, trend, situation, rookie, college; 122 columns) adds nothing on either
+    model: 3.5 set 0.603 / 0.515 vs 3.5 base 0.604 / 0.516 (NO), v2 set 0.619 / 0.511 vs v2 base
+    0.618 / 0.513 (NO). The **residual target** (the ppg model learns the change from this
+    season's rate) is the live ingredient: 3.5 set + residual 0.613 / 0.507 vs 3.5 set 0.603 /
+    0.515 -> ADOPT (wins error t = 4.6, share error 0.096 vs 0.117), and vs 3.5 base -> ADOPT
+    (t = 3.9). Against production v2 (0.618 / 0.513) it is short of the line: wins error t = 2.05,
+    ordering 0.613 (t = -0.6), and the prior-top-12 bias is worse (0.098 vs 0.057, t = 3.7) -> NO.
+    So production stays v2; the residual target on v2 (base and with the set) and on 3.5 base are
+    queued (`tabpfn_v2_res_w`, `tabpfn_v2_set_res_w`, `tabpfn35_res_w`) to isolate the gain where it
+    is cheap. Timing on the 5070 Ti: 3.5 with 195 columns ~3.5 min per cohort (30 min a run);
+    v2 with 195 columns ~7 min per cohort (it scales its ensemble up past its 85-column
+    pretraining width), so 3.5 is the faster model on wide inputs. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
