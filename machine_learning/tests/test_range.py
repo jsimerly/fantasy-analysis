@@ -98,3 +98,13 @@ def test_inseason_value_keeps_the_band_columns():
     out = inseason.inseason_value(snaps, tail, {"WR": 8.0}, {3: {"__all__": 3.0}}, [1, 2, 3], 0.2)
     r = out.row(0, named=True)
     assert r["h3_ppg_q20"] == 8.0 and r["h3_ppg_q80"] == 14.0 and r["h3_games_q80"] == 16.0
+
+
+def test_pooled_models_keep_the_band_too():
+    m = career.HorizonModels([1, 2], backend="xgb", stacked=True, range_quantiles=(0.2, 0.5, 0.8))
+    m.stacked_models = {"ppg": _FakeQuantileModel(12.0, 3.0), "games": _FakeQuantileModel(14.0, 2.0)}
+    m.games_models = {1: m.stacked_models["games"], 2: m.stacked_models["games"]}
+    m.ppg_models = {1: m.stacked_models["ppg"], 2: m.stacked_models["ppg"]}
+    m.feature_frame = lambda df: pl.DataFrame({"x": [0.0] * df.height})
+    out = m.predict(_df())
+    assert out["h2_ppg_q20"][0] == 12.0 - 1.8 and out["h2_games_q80"][0] == 15.2

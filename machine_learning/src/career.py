@@ -567,9 +567,13 @@ def q_name(q: float) -> str:
 def _range_columns_of(self, k: int, X: np.ndarray, df: pl.DataFrame) -> list[pl.Series]:
     """h{k}_ppg_qNN / h{k}_games_qNN from the backend's predictive distribution; nothing when the
     backend cannot give one (trees), the models are stacked, or the target is the opportunity split."""
-    if not self.range_quantiles or self.stacked or self.target == "opportunity":
+    if not self.range_quantiles or self.target == "opportunity":
         return []
-    pm, gm = self.ppg_models.get(k), self.games_models.get(k)
+    if self.stacked:                                  # pooled models: the same estimator for every horizon, horizon in the inputs
+        pm, gm = self.stacked_models.get("ppg"), self.stacked_models.get("games")
+        X = self._stack_X(df, k)
+    else:
+        pm, gm = self.ppg_models.get(k), self.games_models.get(k)
     if pm is None or not hasattr(pm, "predict_quantiles") or not hasattr(gm, "predict_quantiles"):
         return []
     qs = self.range_quantiles
