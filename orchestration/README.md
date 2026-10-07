@@ -100,3 +100,20 @@ nflverse-daily-scheduler-trigger
 
 (These are Cloud Scheduler jobs, not the Cloud Run jobs — deleting a trigger does not
 touch the job it ran.)
+
+## Yearly college refresh
+
+`orchestration/college.yaml` is a second, tiny workflow (`fantasy-college-yearly`): run the
+`cfbd-backfill` Cloud Run job (College Football Data, `CFBD_SEASONS=last` = the season that just
+finished, re-fetched), then `silver-fact-college-player-season` (the per-player college fact and
+the CFBD-to-gsis crosswalk the ML `college` feature group reads). One Cloud Scheduler
+(`fantasy-college-yearly`, `0 12 5 2 *`: 5 February 12:00 UTC, about two weeks after the CFP
+title game) triggers it; both are deployed by `deploy-orchestration.yaml`. The backfill job reads
+its API key from Secret Manager (`cfbd-api-key`), which has to exist once:
+
+```
+echo -n "<key>" | gcloud secrets create cfbd-api-key --data-file=- --project fantasy-football-473418
+gcloud secrets add-iam-policy-binding cfbd-api-key   --member=serviceAccount:624985976737-compute@developer.gserviceaccount.com   --role=roles/secretmanager.secretAccessor --project fantasy-football-473418
+```
+
+A manual run any time: `gcloud workflows run fantasy-college-yearly --location us-central1`.

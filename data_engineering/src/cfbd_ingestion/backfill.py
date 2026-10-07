@@ -122,14 +122,31 @@ def run(datasets: list[str], start: int, end: int, force: bool = False, sleep_s:
     return written
 
 
+def last_completed_season(today: datetime | None = None) -> int:
+    """The college season that has finished: the previous calendar year (the CFP ends in January)."""
+    return (today or datetime.now()).year - 1
+
+
 def main() -> None:
+    """CLI, with environment defaults for Cloud Run (a job runs ``python -m cfbd_ingestion.backfill``
+    with no arguments): ``CFBD_SEASONS=last`` refreshes the season that just finished (re-fetched
+    even if a partial partition exists), ``CFBD_DATASETS`` narrows the datasets, ``CFBD_FORCE=1``
+    re-fetches every season in the range."""
+    env = os.environ
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--datasets", default=",".join(DATASETS))
-    ap.add_argument("--start", type=int, default=2010)
-    ap.add_argument("--end", type=int, default=datetime.now().year)
-    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--datasets", default=env.get("CFBD_DATASETS") or ",".join(DATASETS))
+    ap.add_argument("--start", type=int, default=int(env["CFBD_START"]) if env.get("CFBD_START") else 2010)
+    ap.add_argument("--end", type=int, default=int(env["CFBD_END"]) if env.get("CFBD_END") else datetime.now().year)
+    ap.add_argument("--seasons", choices=["range", "last"], default=env.get("CFBD_SEASONS", "range"),
+                    help="last = only the most recently completed season, re-fetched (the yearly run); range = --start..--end")
+    ap.add_argument("--force", action="store_true", default=env.get("CFBD_FORCE", "").lower() in ("1", "true", "yes"))
     args = ap.parse_args()
     client.api_key()
+    if args.seasons == "last":
+        season = last_completed_season()
+        print(f"yearly refresh: season {season}, re-fetched")
+        run([d for d in args.datasets.split(",") if d], season, season, force=True)
+        return
     run([d for d in args.datasets.split(",") if d], args.start, args.end, force=args.force)
 
 

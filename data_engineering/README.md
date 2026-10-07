@@ -81,7 +81,10 @@ rosters, schedules (byes), snap counts, `fact_player_week`, `fact_player_injury_
 PYTHONPATH=src uv run python -m silver_fantasy.fact_player_week_status
 ```
 
-Not scheduled: college seasons change once a year; rerun both after each NFL draft
+Scheduled once a year: the `fantasy-college-yearly` Cloud Workflow (orchestration/college.yaml)
+runs `cfbd-backfill` with `CFBD_SEASONS=last` and then the silver job on 5 February, two weeks
+after the CFP title game; the key comes from Secret Manager (`cfbd-api-key`, see
+orchestration/README.md). Locally, `--seasons last` does the same refresh
 (`--datasets draft_picks --force` for the new class).
 
 ## Deploy

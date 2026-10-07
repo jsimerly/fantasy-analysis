@@ -62,3 +62,10 @@ def test_api_key_required(monkeypatch):
         client.api_key()
     monkeypatch.setenv("CFBD_API_KEY", "abc")
     assert client.api_key() == "abc"
+
+
+def test_last_completed_season_is_the_previous_calendar_year():
+    from datetime import datetime
+    import cfbd_ingestion.backfill as b
+    assert b.last_completed_season(datetime(2027, 2, 5)) == 2026      # the yearly run, two weeks after the CFP
+    assert b.last_completed_season(datetime(2026, 10, 6)) == 2025     # mid-season: the finished one
