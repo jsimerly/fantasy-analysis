@@ -115,6 +115,8 @@ def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
 def test_verdict_co_primaries():
     assert ex.verdict(_paired_table(-3.0, 0.5)).startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT")     # ordering gain, error within noise
     assert ex.verdict(_paired_table(0.3, 2.6)).startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT")      # error gain, ordering within noise
-    assert "NO" in ex.verdict(_paired_table(-3.0, -1.5)) and "wins error worse" in ex.verdict(_paired_table(-3.0, -1.5))    # ordering gain but error worse
+    v = ex.verdict(_paired_table(-3.0, -1.5))
+    assert "TRADE-OFF" in v and "wins error worse" in v and "A 0.610 vs B 0.600" in v and "A 0.500 vs B 0.520" in v   # ordering gain, error worse: flagged with both
+    assert "TRADE-OFF" in ex.verdict(_paired_table(1.2, 3.0))                                                              # big error gain, ordering dip: the owner's "huge win" case
     assert "NO" in ex.verdict(_paired_table(-1.0, 1.0)) and "no gain" in ex.verdict(_paired_table(-1.0, 1.0))              # nothing past the line
     assert "n/a" in ex.verdict(pl.DataFrame({"metric": ["share_abs_err"], "t": [1.0]}))
