@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import polars as pl  # noqa: E402
 
 import career  # noqa: E402
+import feature_groups as fg  # noqa: E402
 import gcs_io  # noqa: E402
 import power  # noqa: E402
 import market  # noqa: E402
@@ -45,6 +46,9 @@ def main() -> None:
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb", help="career model estimator")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. model_version=v2")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all | none")
+    ap.add_argument("--groups", default="base,career", help="feature groups (feature_groups.GROUPS)")
+    ap.add_argument("--stacked", action="store_true", help="pooled horizons: one games and one ppg model over every horizon")
+    ap.add_argument("--target", choices=["level", "residual"], default="level")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
@@ -54,6 +58,9 @@ def main() -> None:
     today = datetime.now(timezone.utc).date()
 
     df = career.build_career_matrix(H)
+    groups = fg.resolve(args.groups.split(","))
+    if args.groups != "base,career":
+        df = fg.assemble(df, groups, fg.Context())
     last = career.last_complete_season(df)
     slots, teams = replacement.league_lineup(gcs_io.read_lake(SETTINGS_PATH))
     starters = replacement.starters_per_position(slots, teams)
@@ -69,7 +76,8 @@ def main() -> None:
             tabpfn_params[k] = int(v)
         except ValueError:
             tabpfn_params[k] = v
-    models = career.HorizonModels(H, device=args.device, backend=args.backend, tabpfn_params=tabpfn_params).fit(df, as_of_season=last)
+    models = career.HorizonModels(H, device=args.device, backend=args.backend, tabpfn_params=tabpfn_params, features=fg.feature_columns(groups),
+                                  stacked=args.stacked, target=args.target).fit(df, as_of_season=last)
     sigma = models.estimate_sigma(df, as_of_season=last)
     print("out-of-sample ppg spread by horizon (all positions):",
           {k: round(v["__all__"], 2) for k, v in sigma.items()})

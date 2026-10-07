@@ -170,6 +170,7 @@ def main() -> None:
     ap.add_argument("--horizons", nargs="+", type=int, default=[3])
     ap.add_argument("--backends", nargs="+", default=["xgb"], choices=["xgb", "tabpfn", "blend"])
     ap.add_argument("--groups", default="base,career")
+    ap.add_argument("--stacked", action="store_true", help="pooled horizons: one games and one ppg model over every horizon")
     ap.add_argument("--first-cohort", type=int, default=2020)
     ap.add_argument("--last-cohort", type=int, default=None)
     ap.add_argument("--replacement", choices=["share", "fill", "weekly"], default="weekly")
@@ -209,7 +210,8 @@ def main() -> None:
         print(f"horizon {h}: cohorts {bc.cohorts[0]}-{bc.cohorts[-1]}")
         for backend in args.backends:
             cfg = ex.ExperimentConfig(name=f"{backend}{args.suffix}_h{h}", groups=args.groups.split(","), horizons=H, cohorts=bc.cohorts, device=args.device,
-                                      curve=bc.curve, replacement=args.replacement, target=args.target, backend=backend, tabpfn_params=tp, calibrate=args.calibrate or False)
+                                      curve=bc.curve, replacement=args.replacement, target=args.target, backend=backend, tabpfn_params=tp, calibrate=args.calibrate or False,
+                                      stacked=args.stacked)
             got: list[pl.DataFrame] = []
             per_cohort, summary = ex.run_experiment(bc.matrix, cfg, bc.ctx, bc.rep_for, bc.market_for, collect=got)
             frames += [g.with_columns(pl.lit(h).alias("horizon"), pl.lit(backend + args.suffix).alias("variant")) for g in got]
