@@ -433,7 +433,25 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     NO, short of the line; vs 3.5 base 0.611 / 0.513 against 0.604 / 0.516 -> NO (prior-top-12
     bias better, 0.102 vs 0.115, t = 2.3). Consistent lean on ordering, nothing past 2.4. ~7 min
     per cohort. Queued: the weekly group WITH the residual target (`tabpfn35_setw_res_w`), paired
-    against the best 3.5 run so far (`tabpfn35_set_res_w`) and production. Both runs went
+    against the best 3.5 run so far (`tabpfn35_set_res_w`) and production.
+    **Pooled horizons (2026-10-07 04:00-11:00): the first variant to beat production.**
+    `tabpfn35_set_stacked_w` (3.5, the owner's feature set, one games and one ppg model over all
+    horizons with years-ahead and age-at-horizon as inputs, level target) vs production v2
+    (`tabpfn_v2_cap30t_w`): ordering 0.622 vs 0.618 (t = 0.4), wins error 0.474 vs 0.513 (t = 7.0,
+    8 of 8 cohorts), prior-top-12 bias -0.043 vs +0.057 -> **ADOPT**; vs 3.5 with the set
+    per-horizon (0.603 / 0.515): ADOPT (t = 7.5). Pooled on 3.5 without the set
+    (`tabpfn35_stacked_w`): the same error gain (0.474, t = 7.4 vs production) but ordering 0.607
+    (t = -1.6) -> TRADE-OFF; the feature set is what keeps the ordering. Pooled on v2
+    (`tabpfn_v2_stacked_w`): NO (ordering 0.606, error 0.515; v2 at 37k pooled rows is far past its
+    10k pretraining, 3 h per run). Caveats: the position-share error is worse (0.126 vs 0.100,
+    t = -2.2) and the prior top 12 flips from under- to slightly over-projected; both are
+    calibration-sized. Timing: 55 min for the 8-cohort run with the set (two fits per cohort;
+    strangely 3 h without it, the memory-saving fallback). **Before it becomes production:** (1) the
+    5-year harness (`tabpfn35_set_stacked_w5` vs the trees' `cap30t_w5` and a v2 5-year baseline),
+    (2) the residual target on top (`tabpfn35_set_stacked_res_w`), (3) the market backtest, (4) the
+    production path needs `--groups` and `--stacked` (the career tail today assembles base+career
+    only) and the band for pooled models (`_range_columns` skips them today). Runs queued after the
+    final refresh. Both runs went
     through CUDA on the RTX 2060 (~1.5 h for TabPFN v2 alone, ~1.4 h for the blend).
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
