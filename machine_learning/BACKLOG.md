@@ -452,6 +452,22 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     production path needs `--groups` and `--stacked` (the career tail today assembles base+career
     only) and the band for pooled models (`_range_columns` skips them today). Runs queued after the
     final refresh.
+    **Data caveat for every 2026-10-07 comparison.** The 10:00 UTC pipeline rebuilt the facts with the
+    league's real fumble setting (0, not the -1 of an older season's row the legacy trigger kept
+    stamping as current; see the DE commit of the same day): QB seasons rose ~4 points, RB ~1.
+    Runs that started before 06:00 local (the trees `cap30t_w`, production `tabpfn_v2_cap30t_w`,
+    `tabpfn35_w`, the feature-set and weekly runs) and runs after it (the pooled, position-scale and
+    residual runs) are therefore NOT on the same data; the realized QB share moved from 27 % to
+    30 %. Every post-rebuild candidate is re-paired against same-data baselines
+    (`tabpfn_v2_cap30t_w_b`, `cap30t_w_b`) in the final chain before anything is called adopted.
+    **Residual target (2026-10-07 12:00-14:34, post-rebuild data):** v2 base + residual
+    (`tabpfn_v2_res_w`) 0.613 / 0.474 - the same 0.474 wins error as the pooled 3.5 candidate, in
+    26 minutes on the cheap model; v2 feature set + residual 0.621 / 0.505 (the set costs v2 error);
+    3.5 base + residual 0.619 / 0.507. Against the OLD-data production row these print ADOPT
+    (t = 14 on error), which is exactly the contamination above: the verdicts that count are the
+    same-data ones in the final chain. Open question that chain answers: how much of the 0.513 ->
+    0.474 is the scoring fix (the baseline will move too) and how much is the pooled model or the
+    residual target.
     **Position-share calibration re-test (2026-10-07 11:00-11:58, v2, `--position-scale` vs
     production):** wins error 0.484 vs 0.513 (t = 7.9, 8 of 8), prior-top-12 bias 0.037 vs 0.057
     (t = 3.1), ordering 0.606 vs 0.618 (t = -1.5) -> TRADE-OFF by the rule, and the one thing it was
