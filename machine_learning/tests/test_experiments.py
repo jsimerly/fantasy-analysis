@@ -104,3 +104,17 @@ def test_paired_comparison_is_cohort_by_cohort(monkeypatch):
     mae = out.filter(pl.col("metric") == "mae_war_top").row(0, named=True)
     assert abs(mae["diff_b_minus_a"]) < 1e-9 and mae["b_wins"] == 1
 
+
+
+
+def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
+    return pl.DataFrame({"metric": ["spearman_war_top", "mae_war_top"], "a": [0.61, 0.50], "b": [0.60, 0.52],
+                         "diff_b_minus_a": [-0.01, 0.02], "se": [0.004, 0.008], "t": [t_order_b_minus_a, t_err_b_minus_a], "b_wins": [2, 7], "cohorts": [8, 8]})
+
+
+def test_verdict_co_primaries():
+    assert ex.verdict(_paired_table(-3.0, 0.5)).startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT")     # ordering gain, error within noise
+    assert ex.verdict(_paired_table(0.3, 2.6)).startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT")      # error gain, ordering within noise
+    assert "NO" in ex.verdict(_paired_table(-3.0, -1.5)) and "wins error worse" in ex.verdict(_paired_table(-3.0, -1.5))    # ordering gain but error worse
+    assert "NO" in ex.verdict(_paired_table(-1.0, 1.0)) and "no gain" in ex.verdict(_paired_table(-1.0, 1.0))              # nothing past the line
+    assert "n/a" in ex.verdict(pl.DataFrame({"metric": ["share_abs_err"], "t": [1.0]}))

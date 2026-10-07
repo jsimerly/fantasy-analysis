@@ -180,7 +180,13 @@ level; the change from this season's rate; opportunities per game × points per 
 `--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
 cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
-cohort (mean difference, standard error, t, cohorts won), which is how a small gain is accepted.
+cohort (mean difference, standard error, t, cohorts won) and prints the verdict. **Acceptance rule
+(owner, 2026-10-06): ordering and error are co-primaries.** A variant is adopted when it improves
+either `spearman_war_top` (how well projected WAR orders the WAR the top-150 projected players
+actually delivered) or `mae_war_top` (the wins error on the same players) past |t| = 2.4 with the
+other no worse (t > −1). Both are losses against realized outcomes on held-out seasons; the market
+is never in them (its own correlation with realized WAR is printed as context). The ordering metric
+alone under-rewarded the cap and rookie-tail fixes, whose gains were in magnitude.
 
 `weekly` (2026-10-06) is the sequence-shaped group: the season as 18 weekly slots, each with what the
 player did (played / bye / injured reserve / injured out / suspended / practice squad / inactive /

@@ -294,6 +294,37 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS) -> pl.Da
     return pl.DataFrame(rows)
 
 
+T_GAIN, T_NO_WORSE = 2.4, -1.0
+
+
+def verdict(table: pl.DataFrame) -> str:
+    """The acceptance rule on a ``paired(A, B)`` table, A the candidate and B the baseline (owner,
+    2026-10-06: ordering and error are co-primaries). ADOPT when A improves either
+    ``spearman_war_top`` (ordering of realized WAR among the top 150 projected) or ``mae_war_top``
+    (wins error on the same players) past |t| = 2.4 while the other is no worse (t > -1, i.e.
+    within noise). Both are losses against realized outcomes; the market is never in them."""
+    rows = {r["metric"]: r for r in table.to_dicts()}
+    if "spearman_war_top" not in rows or "mae_war_top" not in rows:
+        return "co-primary verdict: n/a (spearman_war_top and mae_war_top needed)"
+    # the table's t is for B - A: a positive t on spearman means B orders better, on mae that A errs less
+    t_order = -rows["spearman_war_top"]["t"]          # > 0: A orders realized WAR better
+    t_err = rows["mae_war_top"]["t"]                  # > 0: A has the lower wins error
+    adopt = (t_order >= T_GAIN and t_err >= T_NO_WORSE) or (t_err >= T_GAIN and t_order >= T_NO_WORSE)
+    how = ("ordering" if t_order >= T_GAIN else "") + (" and " if t_order >= T_GAIN and t_err >= T_GAIN else "") + ("wins error" if t_err >= T_GAIN else "")
+    worse = [m for m, tv in (("ordering", t_order), ("wins error", t_err)) if tv < T_NO_WORSE]
+    line = (f"co-primary verdict (A = candidate vs B = baseline): {'ADOPT' if adopt else 'NO'} | ordering t = {t_order:+.2f}, wins error t = {t_err:+.2f}"
+            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}")
+    if adopt:
+        line += f" | gain on {how}"
+    elif how:
+        line += f" | gain on {how} but {', '.join(worse)} worse"
+    elif worse:
+        line += f" | {', '.join(worse)} worse"
+    else:
+        line += " | no gain past the line on either"
+    return line
+
+
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:
     """Variants ranked by the market-free primary metric (rank agreement of projected WAR with
     realized WAR among the top-N projected players); filter to one horizon / cohort span so the

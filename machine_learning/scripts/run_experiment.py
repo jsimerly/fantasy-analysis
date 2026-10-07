@@ -139,7 +139,9 @@ def main() -> None:
         return
     if args.paired:
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
-            print(ex.paired(*args.paired))
+            table = ex.paired(*args.paired)
+            print(table)
+            print(ex.verdict(table))
         return
     if args.leaderboard:
         ledger = ex.load_ledger()

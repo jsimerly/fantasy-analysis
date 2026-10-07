@@ -677,6 +677,13 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     on 2006+ rows for the grade), (c) the test is the same paired harness as every other group, on
     TabPFN 3.5 (the 85-feature pretraining limit of v2 no longer binds there).
 
+**Acceptance rule from 2026-10-06 (owner): ordering and error are co-primaries.** `--paired` prints
+the verdict: adopt when the candidate improves `spearman_war_top` or `mae_war_top` past |t| = 2.4
+with the other no worse (t > −1). Earlier rounds were judged on ordering with error as the
+tiebreaker; nothing adopted before this date would change under the new rule (the cap and rookie
+tails gained on both), and the 3.5 base run (0.604 vs 0.605 ordering, 0.516 vs 0.524 wins error,
+t = 1.45) stays a tie.
+
 29. **Autoregressive career simulation (owner, 2026-10-06: "LLMs guess the next word; can we guess the
     next season, or game, and keep going instead of synthesizing one number?").** Yes, and the
     frame is close to it already. Today the career model is a set of DIRECT models: one pair
