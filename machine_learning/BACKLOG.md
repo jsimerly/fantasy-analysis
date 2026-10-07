@@ -717,7 +717,7 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     first cut built: the career model keeps TabPFN's 20/50/80 ppg and games quantiles per horizon
     (`--range`), the harness scores coverage and pinball loss, the WAR build adds floor / ceiling
     wins per span, rookies get a band from the position spread, and the page shows WAR
-    floor–ceiling and the ppg band per season; refresh with `--range` queued behind the 3.5 runs.
+    floor–ceiling and the ppg band per season; on the page since v43 (2026-10-07, week 4, the corrected scoring): e.g. Nabers WAR 0.78 with a 0.4–2.0 band, season-3 ppg 11.5 (8.0–14.9). The first `--range` refresh lost the band to a select in `inseason_value` (fixed); the second wrote to week 4 because the lake had advanced.
     Owner's framing: range, error and ordering together per player; the distribution loss (CRPS /
     pinball) becomes the primary once the harness reads distributions everywhere, item 29 the
     path-dependent version.)* Suspicion: the
