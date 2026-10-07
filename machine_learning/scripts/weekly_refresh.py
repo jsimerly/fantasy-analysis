@@ -5,7 +5,9 @@ in the ML bucket stay current without anyone running scripts by hand.
 Steps (each is the existing script, run as a subprocess so its own CLI stays the source of truth):
   1. ``backtest_inseason.py --current``  -> inseason/season=S/week=W/run_date=D/projections.parquet
   2. ``build_war.py --source inseason --all-leagues --teams``  -> war/league=.../season=S/week=W/run_date=D/
-  3. ``export_projections.py``  -> pages/season=S/week=W/run_date=D/projections.json in the ML bucket
+  3. the analysis reports the page embeds (``analysis/pick_slots.py`` + ``pick_slots_report.py --publish``,
+     ``analysis/trade_report.py --rebuild --publish``), best-effort, in the repo-root venv
+  4. ``export_projections.py``  -> pages/season=S/week=W/run_date=D/projections.json in the ML bucket
      (the published page is republished from that file; a job cannot update a claude.ai artifact)
 
 Season and week come from the weekly fact (the last week with stats), the run date is today (UTC).
@@ -28,7 +30,10 @@ import gcs_io  # noqa: E402
 import power  # noqa: E402
 
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
-STEPS = ["inseason", "war", "export"]
+STEPS = ["inseason", "war", "analysis", "export"]
+# the analysis reports the page embeds (draft-slot standings, the trade log) run in the repo-root
+# venv (analysis/ has its own deps); when it is absent this interpreter is used
+ANALYSIS_PY = ROOT.parent / ".venv" / "Scripts" / "python.exe"
 
 
 def current_season_week() -> tuple[int, int]:
@@ -38,10 +43,14 @@ def current_season_week() -> tuple[int, int]:
     return season, week
 
 
-def run(cmd: list[str], dry: bool) -> None:
+def run(cmd: list[str], dry: bool, cwd: Path | None = None, best_effort: bool = False) -> bool:
     print("+", " ".join(cmd), flush=True)
-    if not dry:
-        subprocess.run(cmd, check=True, cwd=ROOT)
+    if dry:
+        return True
+    r = subprocess.run(cmd, check=not best_effort, cwd=cwd or ROOT)
+    if r.returncode != 0:
+        print(f"WARNING: step failed (exit {r.returncode}) and was skipped: {cmd[1] if len(cmd) > 1 else cmd}", flush=True)
+    return r.returncode == 0
 
 
 def main() -> None:
@@ -64,6 +73,16 @@ def main() -> None:
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)
+    if "analysis" not in args.skip:
+        # the page's Draft slots and Trades tabs come from these summaries (latest run in the ML bucket);
+        # rebuilt here so they carry the lake's newest standings and transactions. Best-effort: a failure
+        # leaves the previous summaries in place and the refresh goes on.
+        apy = str(ANALYSIS_PY) if ANALYSIS_PY.exists() else py
+        root = ROOT.parent
+        for cmd in (["analysis/pick_slots.py"],
+                    ["analysis/pick_slots_report.py", "--out", "analysis/_cache/pick_slots", "--publish"],
+                    ["analysis/trade_report.py", "--rebuild", "--out", "analysis/_cache/trades", "--min-seasons", "1", "--publish"]):
+            run([apy, *cmd], args.dry_run, cwd=root, best_effort=True)
     if "export" not in args.skip:
         out = ROOT / "projections.json"
         run([py, "scripts/export_projections.py", "--source", "inseason", "--season", str(season), "--week", str(week),

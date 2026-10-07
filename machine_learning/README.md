@@ -138,7 +138,9 @@ at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG ite
 
 `scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
 (`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
-(`build_war.py --all-leagues --teams`) and exports the page data to
+(`build_war.py --all-leagues --teams`), rebuilds the analysis summaries the page embeds (draft-slot
+standings and the trade log, `analysis/`, best-effort, so the page carries the lake's newest
+standings; `--skip analysis` leaves the previous ones) and exports the page data to
 `pages/season=S/week=W/run_date=D/projections.json` in the ML bucket. `Dockerfile` builds the
 image; `.github/workflows/deploy-machine-learning.yaml` pushes it, deploys the `ml-weekly-refresh`
 Cloud Run job (4Gi / 2 cpu / 1 h) and keeps a Cloud Scheduler trigger on Tuesdays 15:00 UTC, after
