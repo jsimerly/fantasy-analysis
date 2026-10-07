@@ -4,9 +4,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# -------------------------------------------------------------------------
-# CONFIGURATION
-# -------------------------------------------------------------------------
 BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
 BUCKET_ROOT = f"gs://{BUCKET_NAME}"
 
@@ -31,7 +28,7 @@ def resolve_and_split(df_staging: pl.DataFrame, df_dim: pl.DataFrame):
     Returns (df_valid, df_unmapped): rows that resolved to a player_id, and the
     de-duplicated set of rows that did not (for the quarantine report).
     """
-    # --- Branch A: KTC ---
+    # Branch A — KTC
     # KTC source_id is a slug (e.g. "patrick-mahomes-1234"); extract the trailing
     # numeric id to match the Master 'ktc_id' (Int64).
     ktc_staging = df_staging.filter(pl.col("source_system") == "KTC").with_columns(
@@ -50,7 +47,7 @@ def resolve_and_split(df_staging: pl.DataFrame, df_dim: pl.DataFrame):
         .with_columns(pl.coalesce(["name", "asset_name"]).alias("name"))
     )
 
-    # --- Branch B: FantasyCalc ---
+    # Branch B — FantasyCalc
     # Fallback: join on name since Master has no fantasycalc_id column.
     fc_joined = (
         df_staging.filter(pl.col("source_system") == "FANTASYCALC")

@@ -38,24 +38,22 @@ def get_google_sheet_data(sheet_id: str, gid: str = "0") -> pl.DataFrame:
 def transform_dim_users() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
 
-    # --- 1. Load Sleeper User Data (The "Automated" Source) ---
+    # automated source: Sleeper users
     users_path = get_latest_bronze_path(bucket_name, "rosters/users/weekly")
     raw_users_df = pl.read_parquet(users_path)
     
     dim_users = raw_users_df.unique(subset=['user_id'], keep='last')
 
-    # --- 2. Load Manual Enrichment (Google Sheet) ---
+    # manual enrichment: a public Google Sheet of real names
     SHEET_ID = "1o0ToVCGCPZRuZzs_pGjUvtVP_IXNdyrFIaXHJ39xslA"
     manual_map_df = get_google_sheet_data(SHEET_ID)
 
-    # --- 3. Merge Automated + Manual ---
     dim_users = dim_users.join(
         manual_map_df,
         on='user_id',
         how='left'
     )
 
-    # --- 4. Final Transformations ---
     dim_users = dim_users.with_columns([
         pl.coalesce([
             pl.col('real_name') if 'real_name' in dim_users.columns else pl.lit(None),
@@ -67,7 +65,6 @@ def transform_dim_users() -> pl.DataFrame:
         pl.lit(datetime.now()).alias('loaded_at')
     ])
 
-    # Select standard columns
     target_cols = [
         'user_id',
         'display_name', 

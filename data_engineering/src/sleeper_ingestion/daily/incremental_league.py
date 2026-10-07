@@ -34,6 +34,31 @@ LEAGUES_SCHEMA = {
     'previous_league_id': pl.Utf8,
 }
 
+# Pinned dtypes for the per-league `leagues` frame. Sleeper nulls/omits several of these
+# depending on season phase (`bracket_id` is null until the playoff bracket exists,
+# `last_scored_leg` is absent until the first game is scored, `previous_league_id` is null
+# for a lineage root, ...). A column that is None for every row of a one-league frame comes
+# out of pl.DataFrame as the Null dtype, and the vertical concat across leagues in main() then
+# fails ("type Int64 is incompatible with expected type Null") whenever the first league in the
+# batch carries the null and a later one a real value -- an order that depends on the
+# non-deterministic row order of dim_leagues_meta, hence the every-other-day flakiness of
+# sleeper-incremental-league in 2026-09. Pin every column instead of one at a time
+# (leg/last_scored_leg were pinned in PR #18; bracket_id was the next to bite). Dtypes match
+# the full_load bronze so silver's diagonal merge stays uniform.
+LEAGUES_SCHEMA = {
+    'league_id': pl.Utf8,
+    'league_name': pl.Utf8,
+    'season': pl.Utf8,
+    'status': pl.Utf8,
+    'season_type': pl.Utf8,
+    'total_rosters': pl.Int64,
+    'draft_id': pl.Utf8,
+    'bracket_id': pl.Int64,
+    'leg': pl.Int64,
+    'last_scored_leg': pl.Int64,
+    'previous_league_id': pl.Utf8,
+}
+
 def flatten_league_to_parquets(league: dict):
     leagues_records = []
     settings_records = []

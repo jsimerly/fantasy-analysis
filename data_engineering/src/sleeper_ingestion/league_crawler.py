@@ -1,27 +1,10 @@
 """Sleeper league crawler — broad discovery harvest.
 
-Breadth-first walk of the Sleeper user/league graph, seeded from the users already
-in our dataset (the franchise owners). For each user we pull their leagues for a
-target season, and for each new league we pull its rosters (which give both the
-player "bags" and the owner_ids that feed the next BFS layer). This harvests a large
-connected component of real leagues that we can later layer KTC values onto.
-
-Two API calls per step (both unauthenticated, documented public endpoints):
-  GET /v1/user/<user_id>/leagues/nfl/<season>   -> full league objects (settings etc.)
-  GET /v1/league/<league_id>/rosters            -> rosters (players + owner_id fan-out)
-
-Sleeper asks callers to stay under 1000 requests/minute; we hold a steady rate well
-below that and back off on 429/5xx. Stops at CRAWL_MAX_LEAGUES leagues.
-
-Output: a distinct top-level prefix, deliberately NOT under bronze/sleeper/ so it can
-never be swept into the curated 3-league ingestion or the silver builders:
-  bronze/sleeper_crawl/leagues/load_date=<DATE>/data.parquet
-  bronze/sleeper_crawl/rosters/load_date=<DATE>/data.parquet
-  bronze/sleeper_crawl/users/load_date=<DATE>/data.parquet
-A local mirror is also written to analysis/_cache/sleeper_crawl/ as a crash-safe checkpoint.
-
-Env: GCS_BUCKET_NAME (default nfl-data-bronze), CRAWL_SEASON (2025),
-     CRAWL_MAX_LEAGUES (10000), CRAWL_RATE_PER_MIN (650), CRAWL_NO_GCS (skip GCS write).
+BFS over the public Sleeper user/league graph from our franchise owners to ~CRAWL_MAX_LEAGUES real
+leagues + their rosters (for the team-finish modeling). Writes bronze/sleeper_crawl/{leagues,rosters,
+users} (kept separate from curated bronze/sleeper) + a local mirror in analysis/_cache/sleeper_crawl/.
+Env: GCS_BUCKET_NAME, CRAWL_SEASON, CRAWL_MAX_LEAGUES, CRAWL_RATE_PER_MIN, CRAWL_NO_GCS.
+See ./CLAUDE.md for the curated-vs-crawl split and rate-limit rationale.
 """
 from __future__ import annotations
 
