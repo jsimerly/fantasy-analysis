@@ -900,6 +900,15 @@ t = 1.45) stays a tie.
     this week's own line, last season's rating; byes carry the to-date values) is written by the same
     job, and the in-season model takes `--inseason-groups team,contract` (`inseason.EXTRA_GROUPS`:
     11 team-to-date columns at the snapshot week, 8 contract columns for the season). A/B on the
-    trees, cohorts 2021-24, weeks 3/6/9/13, queued on the CPU: none / team / contract / both, read
-    against the baseline's next-season and rest-of-season rank agreement (0.546-0.596 / 0.784-0.694
-    on the 2026-10-01 run). Still not built: preseason win-total futures (no source in the lake).
+    trees, cohorts 2021-24, weeks 3/6/9/13, on the CPU (45 s a run), rank agreement with
+    next-season points / rest-of-season ppg among KTC-priced players at weeks 3 / 6 / 9 / 13:
+    none 0.545 / 0.559 / 0.581 / 0.599 and 0.793 / 0.773 / 0.753 / 0.696 (KTC 0.552 / 0.563 /
+    0.573 / 0.579 and 0.703 / 0.673 / 0.643 / 0.565); team 0.531 / 0.542 / 0.574 / 0.591 and
+    0.795 / 0.777 / 0.754 / 0.696; contract 0.548 / 0.565 / 0.581 / 0.593 and 0.796 / 0.772 /
+    0.752 / 0.699; both 0.540 / 0.552 / 0.571 / 0.592 and 0.795 / 0.773 / 0.756 / 0.698. **On the
+    trees: no gain.** The team group costs next-season ordering about 0.01 at every checkpoint and
+    adds a hair to rest-of-season; the contract group is a wash. The same pattern as the career
+    model, where the feature set did nothing for the trees and v2 and only moved 3.5 pooled, so
+    the in-season model on TabPFN 3.5 (snapshots subsampled to its 50k-row limit, recent seasons
+    first) is the test that counts; not adopted on the trees. Still not built: preseason
+    win-total futures (no source in the lake).
