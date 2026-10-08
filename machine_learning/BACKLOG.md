@@ -931,5 +931,18 @@ t = 1.45) stays a tie.
     (the checkpoint weeks only, then recent seasons whole and a random share of the oldest that
     fits), `--inseason-backend tabpfn` on the backtest and the refresh; queued on the GPU behind the
     groups chain: 3.5 in-season on base features and with team + contract, cohorts 2021-24, read
-    against the trees above (`inseason_gpu_base.log`, `inseason_gpu_team_contract.log`). Still not
-    built: preseason win-total futures (no source in the lake).
+    against the trees above (`inseason_gpu_base.log`, `inseason_gpu_team_contract.log`).
+    **Career model verdicts (2026-10-07 22:21 - 2026-10-08 01:19, on the 3.5 pooled candidate
+    0.622 / 0.474, all-player ordering 0.605, prior-top-12 bias -0.043, share error 0.126):**
+    + team 0.616 / 0.510 (ordering t = -1.0, error t = -12.3, 8 of 8 worse; all-player 0.627,
+    t = +6.2) -> NO; + contract 0.626 / 0.518 (t = +0.4 / -7.0; all-player 0.629, t = +5.9; share
+    error 0.110; top-12 bias -0.090, the stars under-projected more) -> NO; + both 0.604 / 0.516
+    (t = -1.8 / -13.2; all-player 0.633, t = +7.6) -> NO, and NO against team alone. The same
+    shape three times: either group sorts the whole pool better by 0.02-0.03 and sharpens the
+    position shares, and costs the top 150 about 0.04 wins of error with no ordering gain there.
+    Both groups describe status (the cap share is close to a market price, the team rating prices
+    the roster around him), and the pooled model leans on status for the players whose production
+    already says everything, so the top of the pool gets noisier while the tail gets sorted. Not
+    adopted for the career model. Where the gain would be real is the long tail (bench, the
+    players after 150) if that ever becomes a target, and the in-season model if 3.5 says so.
+    Still not built: preseason win-total futures (no source in the lake).
