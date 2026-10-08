@@ -54,6 +54,26 @@ trade-age filter keeps scorecards comparable; one scoring setting for the wins. 
 a mirror trade within ten days are flagged as reversals and left out of the scorecards; the
 2023-04-02 joke trade is excluded by id (`EXCLUDED_TRANSACTIONS`).
 
+## Team value over time (`team_value.py`, `02_team_value_over_time.ipynb`)
+
+Every franchise's roster value week by week, in KTC's own power-ranking terms: each week the held
+players and picks are priced on KTC dynasty (superflex, TE premium once KTC published it; picks at
+the round level), ranked within the roster and depth-weighted with KTC's `prProcessV`
+(`fantasy_lib.team_power_index`), the top team that week = 99. Alongside: the same without picks,
+the raw depth-weighted sum, the share of the league-average team (100 = average), the plain KTC
+sum, and FantasyCalc's sum from 2025-10. The regular seasons (NFL week 1 to the league's
+`fantasy_end`) and the draft days come from the calendar dims; each lineage starts at its first
+week with 95 % of its steady-state asset count, because the first week of a startup is a partial
+roster. `--publish` writes `backtests/team_value/run_date=<today>/summary.json`, which the page
+export folds into the **Team value** tab (chart with season bands and draft guides, owner colors,
+a team highlight, the week's standings on hover, a measure switch, and a standings-now table with
+the moves over 4 / 13 / 52 weeks and since the last draft). The notebook draws the same frames with
+matplotlib.
+
+```
+.venv/Scripts/python analysis/team_value.py --out analysis/_cache/team_value --publish
+```
+
 ## Expected draft slot (`pick_slots.py`, `pick_slots_report.py`)
 
 The market prices a pick by its expected slot, so a 1st from a 2-win team is not a 1st from the

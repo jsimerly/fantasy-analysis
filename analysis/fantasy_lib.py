@@ -1,10 +1,9 @@
 """Shared loaders + the team-value measure for the exploratory analysis notebooks.
 
-The heavy data lives in two places:
-  * GCS (`gs://nfl-data-bronze/...`) — player values + dims, read live.
-  * `analysis/_cache/*.parquet` — the SCD2 ownership ledger and KTC pick values,
-    pre-built locally because the silver versions aren't deployed yet
-    (PR #4 jobs haven't run). Rebuild via the prebuild script if stale.
+Everything is read live from the lake (`gs://nfl-data-bronze/...`): the production silver facts
+(the SCD2 ownership ledger, the KTC / FantasyCalc value facts, the pick-value fact, the dims and
+the calendar). `analysis/_cache/` only holds the local outputs of the scripts in this folder
+(trades, pick slots, team value) and old figures; nothing here reads it as an input.
 
 Value lenses: KTC (deep history, ~2022→ players / ~2020→ picks) and FantasyCalc
 (better market signal, only ~2025-10→). Picks are valued at the ROUND level for both
