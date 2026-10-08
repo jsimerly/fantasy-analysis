@@ -229,6 +229,11 @@ def main() -> None:
         paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
         return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
+    # the season-end value card is only shown when it is at least as fresh as the market backtest: the two
+    # score the same question, and a stale trees-era card next to a newer production one misleads
+    v, mk = performance.get("value"), performance.get("market")
+    if v and mk and str(v.get("run_date", "")) < str((mk.get("meta") or {}).get("run_date", "")):
+        performance["value"] = None
     trades_summary = latest_summary("trades")          # analysis/trade_report.py --publish (the leagues' trading, scored)
     slots_summary = latest_summary("pick_slots")       # analysis/pick_slots_report.py --publish (expected draft slot of every team's next pick)
     team_value_summary = latest_summary("team_value")  # analysis/team_value.py --publish (each franchise's roster value week by week, KTC power-ranking terms)
