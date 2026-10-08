@@ -577,6 +577,25 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     3.5 model, and on the horizon where the per-horizon v2 is weakest (five separate fits, the
     far ones on thin data; the pooled model shares strength across years). Three-year verdict
     pending the re-baseline run `tabpfn35_set_stacked_w_b`.
+    **Three-year re-baseline (2026-10-08 13:29-14:25, `tabpfn35_set_stacked_w_b`, regime-stamped):**
+    3.5 set + pooled (level) 0.620 / 0.513 vs production v2 0.617 / 0.515 -> NO, a tie on both
+    co-primaries (all-player ordering 0.623 vs 0.629, t = -4.5; prior-top-12 bias -0.041 vs +0.058,
+    the stars no longer shrunk; share error 0.119 vs 0.101). So pooling alone buys nothing at three
+    years and a clear win at five. **Every overnight addition and ablation re-paired against the
+    fresh run is a tie** (NO on both co-primaries, |t| < 1.7): team, contract, both, weekly, role,
+    drop injury / trend / situation / rookie; drop college prints ADOPT on error at exactly the
+    line (0.508 vs 0.513, t = +2.43, ordering -0.005) - noise-adjacent, noted, not acted on. The
+    feature groups neither help nor hurt the pooled 3.5 model at three years; the earlier "0.04
+    worse" was the regime. **The residual target is the three-year gain:** 3.5 set + pooled +
+    residual 0.628 / 0.499 ADOPTS over the fresh level run (error t = +3.2, 7 of 8) and over
+    production (t = +2.9); against v2 set + residual (0.621 / 0.505) it is a tie (error t = +1.3)
+    with a worse prior-top-12 bias (+0.140 vs +0.107: the residual target over-projects last
+    year's stars, the level target under-projects them) and worse share error (0.122 vs 0.098).
+    Standing, valid regime, three years: production v2 0.617 / 0.515 < 3.5 set + pooled 0.620 /
+    0.513 (tie) < v2 set + residual 0.621 / 0.505 (ADOPT) ~ 3.5 set + pooled + residual 0.628 /
+    0.499 (ADOPT, best point). Five years: 3.5 set + pooled ADOPTS over v2 (residual variants
+    untested there). Remaining in the chain: 3.5 base + pooled and v2 base + residual re-runs, then
+    the market backtest of 3.5 set + pooled + residual.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
