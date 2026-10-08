@@ -596,6 +596,46 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     0.499 (ADOPT, best point). Five years: 3.5 set + pooled ADOPTS over v2 (residual variants
     untested there). Remaining in the chain: 3.5 base + pooled and v2 base + residual re-runs, then
     the market backtest of 3.5 set + pooled + residual.
+    **3.5 base + pooled re-run (`tabpfn35_stacked_w_b`, 14:26-17:17, the known slow case: the last
+    two cohorts ran in TabPFN's memory-saving mode, 33 and 98 min):** 0.611 / 0.511, a tie with
+    production v2 (t = -0.7 / +0.8) and with set + pooled (0.620 / 0.513: ordering t = +1.1, error
+    t = -0.5); the feature set's measurable effect on the pooled 3.5 model at three years is the
+    prior-top-12 bias (-0.041 vs +0.048, t = 4.5) and the share error (0.119 vs 0.133, t = 2.3),
+    not the co-primaries. So at three years v2, 3.5 base + pooled and 3.5 set + pooled are one
+    cluster at 0.61-0.62 / 0.51, and only the residual target moves the error.
+    **v2 base + residual re-run (`tabpfn_v2_res_w_b`, 17:17-17:44):** 0.620 / 0.511 -> ADOPT over
+    production (error t = +3.4, 7 of 8; a 0.004 gain, consistent not large; prior-top-12 bias +0.102
+    vs +0.058). The three-year ladder, every rung in the valid regime: production v2 0.515 -> v2 +
+    residual 0.511 (t = 3.4) -> v2 set + residual 0.505 (t = 2.5 over the rung below) -> 3.5 set +
+    pooled + residual 0.499 (t = 2.4 over v2 + residual, 8 of 8; t = 1.3 over v2 set + residual;
+    t = 2.9 over production), ordering flat at 0.617-0.628 all the way up, and the prior-top-12 bias
+    climbing with it (+0.058 -> +0.102 -> +0.107 -> +0.140: the residual target over-projects last
+    year's stars where the level target under-projects them). The residual target is the robust
+    ingredient; the feature set and pooling each add a rung of about one t.
+    **Market backtest of 3.5 set + pooled + residual (17:44-18:08, cohorts 2020-22, 364 players,
+    KTC 0.673):** 0.692 overall (v2 0.698, v2 + residual 0.695, 3.5 set + pooled 0.695: all one
+    cluster), the best top 24 (0.437) but the worst 25-60 (0.433 vs 0.492 for the level twin), the
+    highest over-projection (+0.23 wins), and the weakest swap record (60 swaps at +0.40, 70 % won,
+    23.8 wins in total vs 30-31 for the other three). The residual target's three-year error gain
+    does not carry to the market test; what the market test rewards is the level-target pooled
+    3.5 model: best edge correlation (0.368), best top-of-market agreement (0.406 / 0.492 at
+    1-24 / 25-60), top-decile hits 0.56 / 0.36 / 0.50, the smallest bias (+0.14).
+    **Standing at the end of the bake-off (2026-10-08 18:08), all in the valid regime:**
+    | model | 3-yr ordering / error | 5-yr ordering / error | market: all / top 24 / 25-60 / swaps won |
+    | production v2 (per horizon, level) | 0.617 / 0.515 | 0.605 / 0.646 | 0.698 / 0.379 / 0.464 / 73 % |
+    | 3.5 set + pooled (level) | 0.620 / 0.513 (tie) | **0.632 / 0.619 (ADOPT)** | 0.695 / **0.406 / 0.492** / 73 % |
+    | v2 set + residual | 0.621 / 0.505 (ADOPT) | - | - |
+    | 3.5 set + pooled + residual | **0.628 / 0.499 (ADOPT)** | - | 0.692 / 0.437 / 0.433 / 70 % |
+    **Recommendation: production = 3.5 set + pooled, level target**, for the in-season tail; the
+    in-season model itself on 3.5 as well (next season +0.02-0.03 at every checkpoint, item 31).
+    It loses nothing at three years, wins at five (the horizon where v2's per-horizon fits are
+    thinnest), is the strongest against the market where the value is, and ends the under-shrinkage
+    of last year's top 12 (bias -0.04 vs +0.06). The residual variants stay on the shelf as a
+    calibration lead (their three-year error gain is real but they over-project the stars and lose
+    the market slices); a residual-vs-level blend or a bias correction on the residual target is
+    the next cheap experiment. Command: `weekly_refresh.py --device cuda --backend tabpfn --groups
+    base,career,injury,trend,situation,rookie,college --stacked --range --inseason-backend tabpfn`
+    (about 25 min on the 5070 Ti). Owner's call, as every production switch.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
