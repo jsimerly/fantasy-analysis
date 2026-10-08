@@ -569,6 +569,14 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     backtest of 3.5 set + pooled + residual. (6) The harness now stamps every run with its regime
     (the lineup's starters and the season fact's write time) and `--paired` warns when the two
     runs' regimes differ, so this cannot pass silently again.
+    **Five-year harness, valid regime (2026-10-08 10:17-13:27, cohorts 2015-2020, both runs
+    stamped with the same regime):** 3.5 set + pooled (level target) 0.632 / 0.619 vs v2 0.605 /
+    0.646 -> **ADOPT** (ordering t = +2.3, 5 of 6 cohorts; wins error t = +5.3, 6 of 6; top-decile
+    hits 0.687 vs 0.684; all-player ordering 0.633 vs 0.639, t = -2.7; prior-top-12 bias 0.082 vs
+    0.092; position-share error worse, 0.134 vs 0.088, t = -3.8). The first clean win for the pooled
+    3.5 model, and on the horizon where the per-horizon v2 is weakest (five separate fits, the
+    far ones on thin data; the pooled model shares strength across years). Three-year verdict
+    pending the re-baseline run `tabpfn35_set_stacked_w_b`.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
