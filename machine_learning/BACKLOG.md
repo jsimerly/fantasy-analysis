@@ -505,6 +505,22 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     Harness fix (same day): `--paired` matched a run name as a prefix, so `cap30t_w` resolved to
     `cap30t_w_b`'s newest file and the first two same-data pairings compared a run with itself
     (t = inf on every row); `experiments.run_paths` now matches `<name>_<timestamp>` exactly.
+    **Market backtest, same data, 2026-10-07 evening (cohorts 2020-22, 364 KTC-priced players,
+    3-year realized WAR; KTC itself 0.673):** production v2 0.698, v2 + residual 0.695, 3.5 set +
+    pooled 0.695: a three-way tie on whole-pool rank agreement. Where they differ: at KTC's top 24
+    the 3.5 candidate is 0.406 vs v2's 0.379 (KTC 0.345), ranks 25-60 0.492 vs 0.464 (KTC 0.315),
+    121+ 0.363 vs 0.311; v2 keeps 61-120 (0.567 vs 0.544, KTC 0.554). Top-decile hits by cohort
+    0.56 / 0.36 / 0.50 for 3.5 vs 0.44 / 0.27 / 0.50 for v2; edge correlation 0.368 vs 0.342; bias
+    +0.14 vs +0.17 wins. Swaps: v2 63 at +0.50 (73 % won, 31.3 wins), 3.5 66 at +0.46 (73 %, 30.6),
+    v2 + residual 65 at +0.47 (69 %, 30.3). The residual variant is not better than production on
+    any market slice, so it drops out. **Verdict:** 3.5 feature set + pooled horizons matches
+    production on whole-pool ordering against the market, beats it at the top of the market where
+    the value is, and carries the harness's 0.474 vs 0.515 wins error (t = 7.3) with ordering no
+    worse: the production candidate, pending the owner's call and the GPU (the queue holds it until
+    about midday 2026-10-08). Production switch = `weekly_refresh.py --device cuda --backend tabpfn
+    --groups base,career,injury,trend,situation,rookie,college --stacked --range`. The page's
+    performance tab now shows production v2's same-data backtest (2026-10-07) and drops the
+    trees-era season-end card (2026-10-01) that sat above it.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
