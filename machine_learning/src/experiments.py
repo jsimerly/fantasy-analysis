@@ -241,7 +241,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "backend", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "regime", "backend", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players
@@ -320,11 +320,36 @@ def load_run(ref: str) -> pl.DataFrame:
     return gcs_io.read_ml_parquet(*tail)
 
 
-def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS) -> pl.DataFrame:
+def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:
+    """The measurement regime of a run: the lineup behind the replacement levels (starters per
+    position), when the season fact was written, and the matrix height. Same stamp = comparable
+    wins errors; a different lineup or data write changes the WAR scale of every player."""
+    st = ",".join(f"{k}={float(v):g}" for k, v in sorted(starters.items()))
+    return f"starters[{st}]|season_fact={season_fact_written or '?'}|rows={rows}"
+
+
+def regime_of(per_cohort: pl.DataFrame) -> str | None:
+    return str(per_cohort["regime"][0]) if "regime" in per_cohort.columns and per_cohort.height else None
+
+
+def regime_warning(ref_a: str, ref_b: str, a: pl.DataFrame, b: pl.DataFrame) -> str | None:
+    """A line to print when two runs were measured under different regimes (or one is unstamped)."""
+    ra, rb = regime_of(a), regime_of(b)
+    if ra is None or rb is None:
+        return f"WARNING: regime unknown for {ref_a if ra is None else ref_b} (run before the stamp existed): wins errors may not be comparable"
+    if ra != rb:
+        return f"WARNING: regimes differ, the wins error is NOT comparable (A {ra} | B {rb})"
+    return None
+
+
+def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS, warn: bool = True) -> pl.DataFrame:
     """Paired comparison of two runs cohort by cohort: mean difference (B - A), its standard error
     over cohorts, the t statistic and how many cohorts B wins. Eight cohorts is few: |t| above ~2.4
-    is the 5 % two-sided line, below ~1 is noise."""
+    is the 5 % two-sided line, below ~1 is noise. Prints a warning when the runs' regimes differ."""
     a, b = load_run(ref_a), load_run(ref_b)
+    note = regime_warning(ref_a, ref_b, a, b)
+    if note and warn:
+        print(note)
     j = a.join(b, on="cohort", suffix="_b")
     rows = []
     for m in metrics:

@@ -29,6 +29,15 @@ def _client() -> storage.Client:
     return storage.Client()
 
 
+def lake_updated(path: str) -> str:
+    """When a lake blob was last written (ISO, UTC); empty when unreachable. A data fingerprint."""
+    try:
+        b = _client().bucket(LAKE_BUCKET).get_blob(path)
+        return b.updated.strftime("%Y-%m-%dT%H:%M:%SZ") if b is not None and b.updated else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def read_lake(path: str) -> pl.DataFrame:
     """Read a parquet blob from the shared lake bucket."""
     data = _client().bucket(LAKE_BUCKET).blob(path).download_as_bytes()

@@ -128,3 +128,17 @@ def test_run_paths_match_the_name_exactly_not_as_a_prefix():
     assert [x.rsplit("/", 1)[-1] for x in ex.run_paths("cap30t_w", blobs)] == ["cap30t_w_2026-10-01T09-00-00+00-00.parquet", "cap30t_w_2026-10-05T22-10-29+00-00.parquet"]
     assert len(ex.run_paths("cap30t_w_b", blobs)) == 1 and ex.run_paths("cap30t_w@2026-10-05T22:10:29", blobs) == [blobs[0]]
     assert ex.run_paths("cap30t", blobs) == []
+
+
+def test_regime_stamp_and_pairing_warning(monkeypatch, capsys):
+    import experiments as ex
+    s = ex.regime_stamp({"WR": 34.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)
+    assert s == "starters[QB=20,WR=34.5]|season_fact=2026-10-07T10:18:04Z|rows=15245"
+    same = pl.DataFrame({"cohort": [2015, 2016], "spearman_war_top": [0.5, 0.6], "mae_war_top": [1.0, 1.0], "regime": [s, s]})
+    other = same.with_columns(pl.lit(ex.regime_stamp({"WR": 24.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)).alias("regime"))
+    monkeypatch.setattr(ex, "load_run", lambda ref: {"a": same, "b": same, "c": other, "d": same.drop("regime")}[ref])
+    ex.paired("a", "b"); assert "WARNING" not in capsys.readouterr().out
+    ex.paired("a", "c"); assert "regimes differ" in capsys.readouterr().out
+    ex.paired("a", "d"); assert "regime unknown for d" in capsys.readouterr().out
+    row = ex.append_result(None, {"name": "x", "regime": s, "timestamp": "t"})
+    assert row["regime"][0] == s and "regime" in ex.LEDGER_COLS

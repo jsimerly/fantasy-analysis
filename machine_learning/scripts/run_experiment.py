@@ -63,6 +63,8 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
     cohorts = list(range(first_cohort, last_cohort + 1))
     slots, teams = replacement.league_lineup(gcs_io.read_lake(SETTINGS_PATH))
     starters = replacement.starters_per_position(slots, teams)
+    regime = ex.regime_stamp(starters, gcs_io.lake_updated("silver/fantasy/fact_player_season/data.parquet"), matrix.height)
+    print(f"regime: {regime}")
     hist, xw = market.load_ktc_history(), market.load_crosswalk()
     ctx = fg.Context()
     import league as lg
@@ -93,7 +95,7 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
         return market.attach_market(cohort, date(T + 1, 2, 15), hist, xw)
 
     return HarnessContext(matrix=matrix, cohorts=cohorts, ctx=ctx, curve=curve, rep_for=rep_for, market_for=market_for,
-                          realized_rep_for=realized_rep_for, hist=hist, crosswalk=xw)
+                          realized_rep_for=realized_rep_for, hist=hist, crosswalk=xw, regime=regime)
 
 
 def main() -> None:
@@ -190,6 +192,8 @@ def main() -> None:
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
                                   range_quantiles=(0.2, 0.5, 0.8) if args.range else None)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
+        summary["regime"] = bc.regime
+        per_cohort = per_cohort.with_columns(pl.lit(bc.regime).alias("regime"))
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
             print(f"\n== {name}: {summary['groups']} ({summary['n_features']} features) ==")

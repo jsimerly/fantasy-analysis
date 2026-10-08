@@ -532,8 +532,43 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     columns, no information): `tabpfn35_set_noise_stacked_w` (set + noise vs the candidate) and
     `tabpfn35_noise_stacked_w` (base + noise vs 3.5 pooled base). If noise costs the same 0.04,
     every wide-table result above is a width artefact and the fix is in the model's preprocessing
-    (fewer, denser columns; or TabPFN's own feature subsampling), not in the features. Role and
-    the drop-one ablation follow in the queue.
+    (fewer, denser columns; or TabPFN's own feature subsampling), not in the features. Set + role
+    (8 depth-chart columns, 81 in all; 04:10-05:06): 0.622 / 0.510 -> NO, the fifth repeat
+    (all-player 0.626, t = +6.8; error t = -12.3, 8 of 8), from the smallest addition yet, which
+    points harder at width than at content. The drop-one ablation follows in the queue, then the
+    five-year pair, then the noise control.
+    **CORRECTION (2026-10-08 06:30): the 0.474 was a measurement regime, not a model.** Set minus
+    injury (64 columns, narrower than the candidate) scored 0.626 / 0.515 too, which killed the
+    width story and sent me back to the ledger. Every run's all-player ordering tells the regimes
+    apart: the four runs at 0.474-0.484 (`tabpfn35_stacked_w`, `tabpfn35_set_stacked_w`,
+    `tabpfn_v2_posscale_w`, `tabpfn_v2_res_w`; all-player ordering 0.605-0.61) ran between the
+    10:00 UTC fact rebuild and the lineup-selection fix of 12:04 local (commit 228b5e8; the
+    v2-residual process started before the fix and imported the old module), i.e. with the OLD
+    settings-row choice, which handed `replacement.league_lineup` a different lineup, hence other
+    replacement levels, hence another WAR scale for every player; a scale change moves the wins
+    error of every model by the same amount and leaves rank agreement almost alone. Every run
+    before (pre-rebuild data, old lineup) and after (corrected lineup; all-player ordering
+    0.62-0.63) sits at 0.50-0.53. The lake's `fact_player_season` was written once, at 10:18 UTC
+    on 10-07, and has not changed since, so the data is not the confounder; the lineup is.
+    **Consequences.** (1) Every pairing of a 0.474 run against anything else is void: the "3.5
+    set + pooled ADOPTS over production (error t = 7.3)" and the "v2 + residual ADOPTS (t = 13.8)"
+    claims are withdrawn, and so is the production recommendation that rested on them. (2) The
+    five "additions" tonight (team, contract, both, weekly, role) and the drop-injury ablation
+    were all compared against a 0.474 run: their "0.04 worse" is the regime, so none of them is
+    proven worse (or better); they are re-paired against a fresh candidate run below. The width
+    hypothesis and the noise control are withdrawn. (3) The market backtests (all three on the
+    corrected lineup) stand: a three-way tie overall, 3.5 better at the top. (4) **The valid
+    standings (corrected lineup, post-rebuild data), wins error on the top 150:** production v2
+    0.617 / 0.515; trees 0.593 / 0.530; 3.5 base + residual 0.619 / 0.507 (NO); v2 set + residual
+    0.621 / 0.505 (ADOPT, t = +4.3); 3.5 set + weekly + residual 0.622 / 0.506; **3.5 set +
+    pooled + residual 0.628 / 0.499 (ADOPT over production, ordering t = +1.8, error t = +2.9)** -
+    the best valid run, the residual target again the live ingredient; the level-target set +
+    pooled has no valid run yet. (5) Queued behind the main queue (`chain_rebaseline.sh`):
+    `tabpfn35_set_stacked_w_b`, `tabpfn35_stacked_w_b`, `tabpfn_v2_res_w_b` under the current code,
+    the re-pairings of every overnight run against `tabpfn35_set_stacked_w_b`, and the market
+    backtest of 3.5 set + pooled + residual. (6) The harness now stamps every run with its regime
+    (the lineup's starters and the season fact's write time) and `--paired` warns when the two
+    runs' regimes differ, so this cannot pass silently again.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
