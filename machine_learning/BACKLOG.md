@@ -945,4 +945,21 @@ t = 1.45) stays a tie.
     already says everything, so the top of the pool gets noisier while the tail gets sorted. Not
     adopted for the career model. Where the gain would be real is the long tail (bench, the
     players after 150) if that ever becomes a target, and the in-season model if 3.5 says so.
+    **In-season model on TabPFN 3.5 (2026-10-08 01:19-02:00, base snapshot features, the four
+    checkpoint weeks as the in-context set capped at 50k rows, recent seasons first; cohorts
+    2021-24):** next-season rank agreement 0.572 / 0.582 / 0.600 / 0.621 at weeks 3 / 6 / 9 / 13
+    against the trees' 0.545 / 0.559 / 0.581 / 0.599 and KTC's 0.552 / 0.563 / 0.573 / 0.579: up
+    0.02-0.03 at every checkpoint, and the first in-season model that beats the market on next
+    season at every week (the trees only tied it); the in-season value column moves with it
+    (0.568-0.592 vs 0.552-0.575). Rest of season 0.803 / 0.770 / 0.745 / 0.693 vs 0.793 / 0.773 /
+    0.753 / 0.696: a wash (up at week 3, a hair down later; both far above KTC). 41 min a run.
+    No paired t here (the in-season backtest keeps per-cohort rows only in the published summary,
+    not with --no-write); the gain is the same sign at all four checkpoints. Candidate for the
+    production refresh (`--inseason-backend tabpfn`), next to the 3.5 pooled career tail.
+    **+ team + contract on the 3.5 in-season model (02:01-02:43):** next season 0.563 / 0.574 /
+    0.591 / 0.612, 0.009 below the 3.5 base at every checkpoint; rest of season 0.803 / 0.777 /
+    0.749 / 0.695, a hair above. The same answer as on the trees and on the career model: the
+    status groups cost next-season ordering and add nothing that matters. **BACKLOG 31 closes with
+    both groups built, tested four ways and not adopted anywhere**; the tables stay on the lake
+    (the team-value and roster pages can use them) and the groups stay in the registry.
     Still not built: preseason win-total futures (no source in the lake).
