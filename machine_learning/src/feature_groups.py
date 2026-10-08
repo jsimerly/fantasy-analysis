@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
 import polars as pl
 
 import career
@@ -411,6 +412,27 @@ def build_contract(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in CONTRACT_COLS if c not in out.columns])
 
 
+
+# ------------------------------------------------------------------------------ noise
+# a control, not a feature: 15 columns of seeded Gaussian noise keyed by (player_id, season). Four
+# different additions to the 3.5 pooled candidate (team, contract, both, weekly) all cost the top 150
+# the same ~0.04 wins of error while sorting the whole pool better; if noise does the same, that is the
+# width of the table acting on the model, not information in the columns.
+NOISE_COLS = [f"noise_{i:02d}" for i in range(15)]
+
+
+def build_noise(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    import hashlib
+    keys = matrix.select(KEY).unique()
+    rows = []
+    for pid, season in keys.iter_rows():
+        seed = int(hashlib.md5(f"{pid}|{season}".encode()).hexdigest()[:8], 16)
+        rng = np.random.default_rng(seed)
+        rows.append([pid, season] + [float(x) for x in rng.standard_normal(len(NOISE_COLS))])
+    noise = pl.DataFrame(rows, schema=KEY + NOISE_COLS, orient="row").with_columns(pl.col("season").cast(matrix.schema["season"]))
+    return matrix.join(noise, on=KEY, how="left")
+
+
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
     "career": FeatureGroup("career", list(career.CAREER_FEATURES), None, "fact_player_season cumulative"),
@@ -423,6 +445,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
     "team": FeatureGroup("team", TEAM_COLS, build_team, "fact_team_season_strength (schedules closing lines + team_stats EPA)"),
     "contract": FeatureGroup("contract", CONTRACT_COLS, build_contract, "fact_player_contract_season (Over The Cap via nflverse)"),
+    "noise": FeatureGroup("noise", NOISE_COLS, build_noise, "control: seeded Gaussian noise, no information"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 

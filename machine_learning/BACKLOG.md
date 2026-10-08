@@ -521,6 +521,19 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     --groups base,career,injury,trend,situation,rookie,college --stacked --range`. The page's
     performance tab now shows production v2's same-data backtest (2026-10-07) and drops the
     trees-era season-end card (2026-10-01) that sat above it.
+    **Feature push on the 3.5 pooled candidate (2026-10-08, 02:43 on; weekly first):** set + weekly
+    (195 columns) 0.618 / 0.518 vs 0.622 / 0.474 -> NO (error t = -12.6, 8 of 8 worse; all-player
+    ordering 0.624 vs 0.605, t = +5.3; prior-top-12 bias -0.065, the stars pushed further under).
+    That is the fourth addition in a row (team, contract, both, weekly) with the same signature:
+    whole-pool ordering up ~0.02, position shares sharper, top-150 wins error up ~0.04, the top
+    12 under-projected more. The set itself (42 -> 73 columns) did none of that, so the suspect is
+    the width of the table past ~80 columns acting on 3.5's column embedding, not the columns'
+    content. **Control queued behind the queue** (`feature_groups` "noise": 15 seeded Gaussian
+    columns, no information): `tabpfn35_set_noise_stacked_w` (set + noise vs the candidate) and
+    `tabpfn35_noise_stacked_w` (base + noise vs 3.5 pooled base). If noise costs the same 0.04,
+    every wide-table result above is a width artefact and the fix is in the model's preprocessing
+    (fewer, denser columns; or TabPFN's own feature subsampling), not in the features. Role and
+    the drop-one ablation follow in the queue.
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
