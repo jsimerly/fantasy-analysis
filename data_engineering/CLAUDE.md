@@ -12,6 +12,7 @@ own nested `.venv`).
 | [fantasycalc_ingestion/](fantasycalc_ingestion/) | FantasyCalc player + pick values |
 | [nflverse_ingestion/](nflverse_ingestion/) | NFL stats, schedules, rosters, play-by-play |
 | `fantasypros_ingestion/` | pre-game projections (lands with its feature branch) |
+| [adp_ingestion/](src/adp_ingestion/) | average draft position by season (Fantasy Football Calculator 2009+, MyFantasyLeague 2011+): the preseason consensus with no survivorship, the model's `preseason` group (yearly job `adp-yearly`) |
 | [fftoday_ingestion/](src/fftoday_ingestion/) | FFToday's weekly projections 2010 on, served on its own pages: the weekly consensus history before Sleeper's 2018 floor (local backfill, BACKLOG 38) |
 | [silver_fantasy/](silver_fantasy/) | dims & facts modeled from bronze |
 | [data_quality/](src/data_quality/) | checks on the lake itself (freshness, keys, history, invariants, drift), the last step of the daily DAG; **every data bug found gets a check** — see its CLAUDE.md |

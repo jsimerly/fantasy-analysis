@@ -120,6 +120,9 @@ jobs:
             # cfbd-backfill (CFBD_SEASONS=last, key from Secret Manager "cfbd-api-key", set below) then
             # silver-fact-college-player-season (reads bronze/cfbd + silver fact_player_season for the crosswalk)
             ["cfbd-backfill"]="cfbd_ingestion.backfill:1Gi:1:45m"
+            # average draft position by season (FFC 2009+, MFL 2011+): yearly, run by hand after Labor Day
+            # (ADP_SEASONS=current) or once with ADP_SEASONS=2009-2026 for the backfill; the model's preseason group
+            ["adp-yearly"]="adp_ingestion.backfill:512Mi:1:30m"
             ["silver-fact-college-player-season"]="silver_fantasy.fact_college_player_season:2Gi:1:30m"
             # standalone daily job (not in the DAG): in-season FantasyPros projection capture;
             # self-gates to the NFL season, triggered by its own scheduler (below).
