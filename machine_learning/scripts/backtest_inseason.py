@@ -95,6 +95,7 @@ def main() -> None:
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
+    ap.add_argument("--proj-dir", default=None, help="a directory with weekly.parquet (Sleeper weekly projections pulled locally) for the consensus group, instead of the lake")
     ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
     ap.add_argument("--ngs-dir", default=None, help="a directory with receiving.parquet / rushing.parquet (Next Gen Stats pulled locally) for the usage group, instead of the lake")
     ap.add_argument("--inseason-train-weeks", default="", help="snapshot weeks the in-season model trains on, e.g. 3,6,9,13 (default: all for xgb, the checkpoint weeks for tabpfn)")
@@ -164,8 +165,14 @@ def main() -> None:
     ffo = None
     if "opportunity" in is_groups:
         ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
+    proj = xw_ids = None
+    if "consensus" in is_groups:
+        proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
+        ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
+        xw_ids = ids.filter(pl.col("load_date") == ids["load_date"].max()).select("sleeper_id", "gsis_id")
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
-                                                        status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo))
+                                                        status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
+                                                        consensus=proj, consensus_xwalk=xw_ids))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:
@@ -253,6 +260,9 @@ def main() -> None:
                  "next|last_season": value.spearman(priced["bl_prior_ppg"].to_numpy(), nx),
                  "next|to_date": value.spearman(priced["bl_todate_ppg"].to_numpy(), nx),
                  "next|blend": value.spearman(priced["bl_blend_ppg"].to_numpy(), nx)}
+            if "cs_next_ppr" in priced.columns:                                    # the provider's view as rankings: the coming week (a bye or an out week falls back to the mean to date) and the mean to date
+                r["next|consensus"] = value.spearman(priced.select(pl.col("cs_next_ppr").fill_null(pl.col("cs_td_mean")).fill_null(0.0))["cs_next_ppr"].to_numpy(), nx)
+                r["next|consensus_td"] = value.spearman(priced["cs_td_mean"].fill_null(0.0).to_numpy(), nx)
             if "next_fpts_unified" in priced.columns:
                 r["next|unified"] = value.spearman(priced["next_fpts_unified"].fill_null(0.0).to_numpy(), nx)
             played = priced.filter(pl.col("ros_games") > 0)
@@ -262,6 +272,9 @@ def main() -> None:
                       "ros|last_season": value.spearman(played["bl_prior_ppg"].to_numpy(), rp),
                       "ros|to_date": value.spearman(played["bl_todate_ppg"].to_numpy(), rp),
                       "ros|blend": value.spearman(played["bl_blend_ppg"].to_numpy(), rp)})
+            if "cs_next_ppr" in played.columns:
+                r["ros|consensus"] = value.spearman(played.select(pl.col("cs_next_ppr").fill_null(pl.col("cs_td_mean")).fill_null(0.0))["cs_next_ppr"].to_numpy(), rp)
+                r["ros|consensus_td"] = value.spearman(played["cs_td_mean"].fill_null(0.0).to_numpy(), rp)
             rows.append(r)
 
             lag = priced.filter(pl.col("k_end").is_not_null() & (pl.col("ktc_value") >= 1000))
