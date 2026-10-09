@@ -891,6 +891,17 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     have them. Accept if the distributional roster value predicts realized team wins better than
     the point version (item 14's acceptance test).
 
+    **Distribution scoring (2026-10-09, owner: "scoring the distribution is key").** The band's
+    pinball loss, 20-80 coverage and asymmetry (`ppg_skew`: (upside - downside) / width of the
+    20-50-80 band, > 0 = right-skewed) are ledger columns, paired metrics and a third line of the
+    verdict print-out whenever both runs kept a band; the rule stays the two co-primaries until the
+    owner moves it. **Are the distributions normal? No.** On the week-4 projections, RB / WR / TE
+    bands are right-skewed at every horizon (about half clearly so; the mean sits 0.4-0.7 ppg above
+    the median; most extreme for fringe players whose floor is 0), QBs left-skewed (a fat downside:
+    benchings; the mean below the median). The point on the page is the mean; the export now
+    carries the median (`band.md`) and the detail table shows "med" and a skew marker (▲ right, ▼
+    left) next to the band. Next: make the pinball loss a co-primary once the production run
+    carries the band in every harness run (`--range` on by default for TabPFN backends).
 27. **Neural / distributional models for the things trees cannot express (owner, 2026-10-05).**
     The owner's hypothesis: features that failed as inputs to the trees (a team move, a depth-chart
     change, a new quarterback) may matter as *spread* rather than *level* — a player who moved
@@ -980,6 +991,24 @@ t = 1.45) stays a tie.
     (opt-in) -> harness rookie slice -> 3.5 run with the feature set -> replace the tail in the
     refresh if it wins. CPU work except the run; after the pooled-horizon queue.
 
+    **Built (2026-10-09, owner: "I don't like the hand-made tail... lets do this one first"):**
+    `src/draft_rows.py`. One row per drafted QB / RB / WR / TE in the college crosswalk (2010-2026,
+    1,352 rows, 1,316 keyed by gsis id, the rest `cfbd:<id>` for players without NFL rows), at
+    season = draft year - 1: position, round, pick, age (the rookie-season age from the season fact
+    minus one, else the class median), `is_rookie` = 1, `exp_at_season` = 0 (the `rookie` group's
+    interactions apply), `is_draft_row` = 1 (a base flag now), production columns null, `cfbd_id`
+    for the `college` group, which now joins draft rows by athlete id (college filled on 87 % of
+    draft rows vs 63 % of played rookie rows). Horizon targets attach like any row: a never-played
+    pick's observable seasons are 0 games (7-15 per class; the attrition the model learns), the
+    2026 class is censored. Played-season rows alone feed replacement levels, survival, the
+    snapshots and the rookie tables (`draft_rows.drop_draft_rows`; `fit_survival` drops them
+    itself). `--draft-rows` on `run_experiment`, `backtest_inseason` (the career tail then projects
+    a drafted rookie from his own row and `fill_missing_tail` finds a tail already there),
+    `build_intrinsic_value`, `market_backtest`, `weekly_refresh`. Gaps: the crosswalk has no birth
+    dates, so `col_breakout_age` is null everywhere (use the class year instead: a small follow-up);
+    undrafted rookies keep the extrapolated tail. Queued on the GPU behind the production switch:
+    `tabpfn35_set_stacked_draft_w` vs a same-day baseline, and the market backtest with draft rows
+    (the rookie slice is the test: 0.48 vs the market's 0.51 before).
 31. **Team strength and contracts as feature groups (owner, 2026-10-07).** Two inputs the model has
     never seen: how good the player's team is (offense environment, game script, QB) and what the
     NFL itself pays the player (its own valuation, and the tie to the team that projects forward).
@@ -1078,3 +1107,26 @@ t = 1.45) stays a tie.
     both groups built, tested four ways and not adopted anywhere**; the tables stay on the lake
     (the team-value and roster pages can use them) and the groups stay in the registry.
     Still not built: preseason win-total futures (no source in the lake).
+
+32. **One model for the in-season and the career horizons (owner, 2026-10-09: "Yes! Absolutely do
+    this").** Today two models answer "what will he score next season": the in-season model from
+    a mid-season snapshot (to-date stats + last season; trees, now TabPFN 3.5) and the career
+    model from the season-end row (h1). The career model learnt the horizon curve when horizons
+    were pooled; the same move can pool the as-of point. **Design.** One row schema for both
+    kinds of row: the player's state at an as-of point (season, `week` = weeks played so far, 18
+    for a complete season; to-date rate, games, usage; last season and the career to date; age,
+    draft capital, the groups) and a target season `years_ahead` away (1 = next season from a
+    snapshot or h1 from a season-end row; 2, 3.. the later seasons), ppg and games as targets.
+    Snapshot rows come from `inseason.build_snapshots` (td_* / prev_* columns mapped onto the
+    career columns, `week` set), season-end rows from the career matrix (`week` = 18), draft rows
+    (item 30) are the `week` = 0 case with college columns. One pooled TabPFN 3.5 model over all
+    of it, within the 50k-row in-context cap: every season-end row for horizons 1-3 (~37k) plus
+    snapshot rows at two checkpoint weeks of recent seasons, or a sample. **Two steps.** (1)
+    Augmentation: the career harness unchanged (season-end test rows), the training table carrying
+    snapshot rows too; scored on the three-year co-primaries against the production run. (2) The
+    in-season use: the in-season backtest's next-season projection from the unified model instead
+    of the in-season model (ROS stays with the in-season model until a `years_ahead` = 0 target
+    is added), scored on next-season rank agreement at weeks 3 / 6 / 9 / 13 against the 3.5
+    in-season model (0.572-0.621). If (2) wins, the page's seasons two and on, next season and
+    the rookie tail all come from one model, and the hand-made bridges between them go away.
+    Build after the draft-row and blend verdicts; it needs the GPU for every test.
