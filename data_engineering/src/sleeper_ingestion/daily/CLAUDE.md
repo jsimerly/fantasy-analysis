@@ -11,6 +11,7 @@ frames, then union and write. Run in the daily DAG ([orchestration/](../../../or
 | `incremental_users.py` | `sleeper-incremental-users` | `rosters/users` (weekly) |
 | `incremental_players.py` | `sleeper-incremental-players` | `league/players/incremental` (global Sleeper player list, not league-specific) |
 | `incremental_transactions.py` | `sleeper-incremental-transactions` | `transactions/{transactions,transaction_players,draft_picks}/daily` |
+| `incremental_projections.py` | `sleeper-incremental-projections` | `projections/season=<Y>` (the provider's weekly projections, the full slate, 2018 on; the current season rebuilt daily so a Monday run captures the pre-game view; `PROJ_SEASONS=2018-2025` for the one-time backfill). Not league-specific; feeds the model's consensus group (BACKLOG 38) |
 
 Weekly entities overwrite within the week; the week starts **Tuesday** (`_get_week_start_from_str`).
 
