@@ -1204,3 +1204,39 @@ t = 1.45) stays a tie.
     blank for picks). **Next:** the age-discount read on the production model's own backtest
     once it runs; `col_breakout_age` needs a class year (the crosswalk has no birth dates); a DE
     item for the master's gsis_id coverage.
+
+34. **Data-quality checks on the lake (owner, 2026-10-09: "when we find bugs are we building data
+    quality checks ... to ensure our lake doesn't ever regain these issues?").** We were not: the
+    spec suite tests the ETL code on synthetic payloads and two facts quarantine violations, but
+    nothing re-checked the lake, so a regression (the KTC parser break, the frozen rollover, the
+    sparse gsis_id) only surfaced when a downstream read looked wrong. Built
+    `data_engineering/src/data_quality/`: pure expectations (`expectations.py`), a `Check` /
+    `Context` / `run_checks` framework (`core.py`, tests seed frames instead of GCS), a catalogue of
+    59 checks (`suite.py`) where **every check names the bug it guards**, and the runner
+    (`run.py` = Cloud Run job `silver-data-quality`, the last step of the daily DAG; exit 1 on an
+    error-severity failure; results to `silver/_quality/run_date=<d>/results.parquet` +
+    `latest.parquet` for the drift checks). Layers: bronze feeds landed and look like themselves
+    (KTC / FantasyCalc / roster partitions fresh and the right shape, FantasyCalc rows tagged,
+    every current league in the snapshot, transactions moving in season, the season's draft
+    present); dims (unique keys, statuses, lineage assigned, the NFL season's league per lineage,
+    SCD2 on settings, franchises per league); facts (asset values fresh for both sources, unique,
+    named, no future dates, no missing day in 30, the player history continuous since 2020-06,
+    the priced pool stable, pick tiers present, the ledger SCD2 + current holdings equal to the
+    roster snapshot + pick conservation, player-week / season keys, ppg == fpts/games, one scoring
+    regime, the current week present, the derived facts keeping up, 32 teams, contracts, college);
+    drift (the current leagues' lineup regime unchanged run to run — the BACKLOG 22 trap; the
+    league dim not flapping; the big facts never shrinking). 24 spec tests replay the bugs on a
+    seeded lake. Rule, in the root and DE CLAUDE.md: a data bug fixed without a check is half
+    fixed. **The first dry run (2026-10-09) found three open defects**, recorded as `known_open`
+    (reported as warnings with the note until fixed, then enforced):
+    - `dim_league_settings`: the three current (2026) leagues' rows have `league_lineage_id`
+      null (the settings dim never got the lineage chaining dim_leagues_meta got in PR #12).
+    - `dim_players_master`: 7 gsis_ids shared by two players — six are Sleeper's inactive
+      "Duplicate Player" placeholders the dim should drop, one is a real conflict (Isaiah Searight
+      / Quinnen Williams on 00-0035718); and gsis_id is present for 18 % of the KTC-priced pool
+      (item 33).
+    - `fact_roster_membership`: 88 overlapping holding intervals (two franchises holding the same
+      player or pick at once; most a day or two at a transaction boundary, a few for months, e.g.
+      player 11370 in lineage ...304 held by two franchises 2026-06-30 to 08-24).
+    **Next:** fix the three (each fix removes its `known_open`); the Cloud Run job + DAG step
+    deploy with the merge; add a check with every future data bug.

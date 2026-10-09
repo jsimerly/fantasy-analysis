@@ -51,6 +51,14 @@ per-job schedulers did (renamed jobs left orphan triggers firing the wrong thing
   fact-roster-membership keys the pick lifecycle off draft `status`/`rounds` — it must
   stay current so a completed draft rolls the pick window.
 
+### Data quality (the last step)
+After the silver tiers, `silver-data-quality` ([data_engineering/src/data_quality/](../data_engineering/src/data_quality/))
+runs the checks on the lake itself: feeds landed and look like themselves, silver keys /
+freshness / history / invariants hold, nothing regime-like changed since yesterday. Each check
+names the bug it guards. An error-severity failure exits 1 and is recorded like a failed job;
+results land in `silver/_quality/run_date=<d>/results.parquet` (+ `latest.parquet` for the
+drift checks). Locally: `python -m data_quality.run --no-write` from `data_engineering/`.
+
 ### Execution semantics
 Each job runs **best-effort**: a single failure is recorded but does not abort the run,
 so independent jobs still complete and silver still builds on the latest *available*

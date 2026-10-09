@@ -37,6 +37,9 @@ per-dataset inventory with quirks lives in the data inventory note; mirror chang
 - **Python via the repo-root venv:** `.venv/Scripts/python.exe` (polars-based; pandas where needed).
 - **Tests:** `.venv/Scripts/python.exe -m pytest` from the root. Spec-style suite — see
   [tests/README.md](tests/README.md). Keep it green before pushing.
+- **Data quality:** the code is tested by pytest, the *lake* by
+  [data_engineering/src/data_quality/](data_engineering/src/data_quality/) (the daily DAG's last step).
+  A data bug fixed without a check there is only half fixed.
 - **PRs:** the owner merges their own PRs — open the PR, don't merge it.
 
 ## Repo map
