@@ -1445,6 +1445,11 @@ t = 1.45) stays a tie.
     0.577 / 0.606 / 0.607** (+0.015 at week 6, +0.010 at week 9). Stage 2e (ClaudeStage2e, after
     2d): all five with the option on 3.5. The unified model's snapshot rows (item 32) have the
     same shape (every horizon label repeated per snapshot week) and get the same option next.
+    **Stage 2 trimmed (15:35, owner: "our scheduled test runs are going to be way off"):** the
+    eight 3.5 runs queued through the afternoon (usage; usage + role; + opportunity; consensus;
+    all four; all five; all five deduped) would have been ~14 h; the trees had answered the
+    single-group questions, so one chain of three remains -- base, all five, all five with the
+    dedupe (~4.5 h, after the unified chain). Every queued run uses the one-pass sigma.
     Fuzzing (1 % noise) is not the remedy: it regularises gradient-trained nets, blurs tree
     splits a little, and only degrades an in-context model's signal; what matters is that a
     repeated outcome counts once, and the harness's train-test gap (`gap_h1`) is the detector.
