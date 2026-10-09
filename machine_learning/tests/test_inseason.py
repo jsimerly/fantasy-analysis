@@ -290,14 +290,19 @@ class TestUsageRoleScheduleGroups:
 
     def test_consensus_is_the_coming_weeks_projection_and_the_record_against_it(self):
         proj = pl.DataFrame({"season": [2025] * 6, "week": [1, 2, 3, 4, 4, 4], "player_id": ["s1"] * 4 + ["s2", "s3"], "position": ["WR"] * 5 + ["RB"],
-                             "pts_ppr": [10.0, 12.0, 14.0, 20.0, 25.0, 9.0]})
+                             "pts_ppr": [10.0, 12.0, 14.0, 20.0, 25.0, 9.0], "rec_tgt": [6.0, 8.0, 10.0, 11.0, 9.0, 2.0], "rec_td": [0.4, 0.5, 0.6, 0.9, 0.7, 0.1],
+                             "rush_td": [0.0] * 6, "pass_td": [0.0] * 6, "rec_yd": [60.0, 70.0, 80.0, 90.0, 95.0, 10.0]})
         xwalk = pl.DataFrame({"sleeper_id": ["s1", "s2", "s3", "s9"], "gsis_id": ["g1", "g2", "g3", None]})
-        wk = pl.DataFrame({"player_id": ["g1"] * 4, "season": [2025] * 4, "week": [1, 2, 3, 4], "fpts_ppr_nflverse": [15.0, 15.0, 15.0, 99.0]})
+        wk = pl.DataFrame({"player_id": ["g1"] * 4, "season": [2025] * 4, "week": [1, 2, 3, 4], "fpts_ppr_nflverse": [15.0, 15.0, 15.0, 99.0],
+                           "rec_tds": [1, 1, 1, 9], "rush_tds": [0, 0, 0, 0], "pass_tds": [0, 0, 0, 0]})
         c = {r["player_id"]: r for r in inseason.consensus_features(proj, xwalk, wk, week=3).to_dicts()}
         g1 = c["g1"]
         assert g1["cs_next_ppr"] == 20.0 and g1["cs_next_rank_pos"] == 2.0                       # week 4: s2 (25) ranks first among WRs
         assert abs(g1["cs_td_mean"] - 12.0) < 1e-9 and abs(g1["cs_beat_td"] - 3.0) < 1e-9       # weeks 1-3 only; beat the consensus by 3
         assert abs(g1["cs_next_vs_td"] - 5.0) < 1e-9 and g1["cs_has"] == 1.0
+        assert g1["cs_next_tgt"] == 11.0 and g1["cs_next_rec_yd"] == 90.0 and abs(g1["cs_td_tgt"] - 8.0) < 1e-9      # the coming week's line; targets to date
+        assert abs(g1["cs_td_xtd"] - 0.5) < 1e-9 and abs(g1["cs_td_luck"] - 0.5) < 1e-9                              # a touchdown a game against 0.5 expected
         assert c["g3"]["cs_next_rank_pos"] == 1.0 and c["g3"]["cs_td_mean"] is None             # the only RB; no projections before week 4
         assert "g9" not in c and inseason.extra_columns(["consensus"]) == inseason.CONSENSUS_COLS
+        assert inseason.extra_columns(["consensus_line"]) == inseason.CONSENSUS_LINE_COLS and "cs_next_tgt" not in inseason.CONSENSUS_COLS
 
