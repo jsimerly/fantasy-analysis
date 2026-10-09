@@ -131,6 +131,15 @@ DATASETS_CONFIG = {
         'seasonal': False,
         'schedule': SCHEDULE_TUESDAY
     },
+    # the FantasyPros expert-consensus rankings HISTORY nflverse keeps (every weekly scrape since 2019-12:
+    # consensus rank, the experts' spread (sd), best and worst, by page type / position): a consensus with a
+    # disagreement measure for the model's consensus group; one refreshed blob a week (~1.9M rows)
+    'ff_rankings_history': {
+        'loader': partial(nfl.load_ff_rankings, 'all'),
+        'folder': 'fantasy_rankings_history',
+        'seasonal': False,
+        'schedule': SCHEDULE_TUESDAY
+    },
     # nflverse's expected fantasy points (ff_opportunity): per player-week, every pass / rush / reception
     # with its expected completions, yards, touchdowns and fantasy points from play-level models, 2006 on,
     # keyed by gsis player_id; actual minus expected to date is the luck / regression signal (the
