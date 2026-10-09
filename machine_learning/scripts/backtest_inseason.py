@@ -95,6 +95,7 @@ def main() -> None:
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
+    ap.add_argument("--adp-dir", default=None, help="a directory with mfl.parquet / ffc.parquet (average draft position pulled locally) for the preseason group, instead of the lake")
     ap.add_argument("--proj-dir", default=None, help="a directory with weekly.parquet (Sleeper weekly projections pulled locally) for the consensus group, instead of the lake")
     ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
     ap.add_argument("--ngs-dir", default=None, help="a directory with receiving.parquet / rushing.parquet (Next Gen Stats pulled locally) for the usage group, instead of the lake")
@@ -165,14 +166,23 @@ def main() -> None:
     ffo = None
     if "opportunity" in is_groups:
         ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
-    proj = xw_ids = None
+    proj = xw_ids = ids = preseason = None
+    if "consensus" in is_groups or "consensus_line" in is_groups or "preseason" in is_groups:
+        ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
+        ids = ids.filter(pl.col("load_date") == ids["load_date"].max())
     if "consensus" in is_groups or "consensus_line" in is_groups:
         proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
-        ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
-        xw_ids = ids.filter(pl.col("load_date") == ids["load_date"].max()).select("sleeper_id", "gsis_id")
+        xw_ids = ids.select("sleeper_id", "gsis_id")
+    if "preseason" in is_groups:
+        if args.adp_dir:
+            mfl, ffc = pl.read_parquet(f"{args.adp_dir}/mfl.parquet"), pl.read_parquet(f"{args.adp_dir}/ffc.parquet")
+        else:
+            mfl, ffc = gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/mfl"), gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/ffc")
+        preseason = inseason.preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
+        print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
                                                         status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
-                                                        consensus=proj, consensus_xwalk=xw_ids))
+                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:

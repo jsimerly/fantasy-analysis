@@ -93,8 +93,14 @@ CONSENSUS_LINE_COLS = [f"cs_next_{v}" for v in CS_LINE.values()] + ["cs_td_tgt",
 CONSENSUS_FIRST_SEASON = 2018
 PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
 FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
+# preseason - the preseason consensus with no survivorship: average draft position (MyFantasyLeague 2011 on
+#             by MFL id, Fantasy Football Calculator 2009 on by name, 12-team drafts): the pick, the rank within
+#             the position that year, and a drafted flag (0 = not taken that year, null before 2009)
+PRESEASON_COLS = ["ps_adp", "ps_adp_pos_rank", "ps_drafted"]
+PRESEASON_FIRST_SEASON = 2009
+ADP_PATH = "bronze/adp"                                   # season partitions per source (ingestion to follow); --adp-dir until then
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
-                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS}
+                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS}
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
@@ -226,6 +232,31 @@ def consensus_features(proj: pl.DataFrame, xwalk: pl.DataFrame, wk: pl.DataFrame
     return out.drop("_td_ppr", "_td_atd").unique(["player_id", "season"], keep="first", maintain_order=True)
 
 
+def preseason_features(mfl: pl.DataFrame | None, ffc: pl.DataFrame | None, xwalk: pl.DataFrame) -> pl.DataFrame:
+    """(player_id, season) -> the preseason average draft position: MFL rows by MFL id where a season has
+    them, Fantasy Football Calculator rows by normalised name + position otherwise; the rank within the
+    position that season. ``xwalk``: the id bridge (mfl_id, gsis_id, name, position)."""
+    xw = xwalk.with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id")).filter(pl.col("player_id").is_not_null() & (pl.col("player_id") != ""))
+    parts = []
+    if mfl is not None and mfl.height:
+        by_id = xw.select(pl.col("mfl_id").cast(pl.Utf8).alias("ext_id"), "player_id", pl.col("position").cast(pl.Utf8)).drop_nulls("ext_id").unique("ext_id")
+        parts.append(mfl.with_columns(pl.col("ext_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64), pl.col("adp").cast(pl.Float64))
+                        .join(by_id, on="ext_id", how="inner").select("player_id", "season", "position", "adp"))
+    if ffc is not None and ffc.height:
+        norm = lambda c: pl.col(c).cast(pl.Utf8).str.to_lowercase().str.replace_all(r"[^a-z ]", "").str.replace_all(r"\b(jr|sr|ii|iii|iv)\b", "").str.strip_chars().str.replace_all(r"\s+", " ")  # noqa: E731
+        by_name = xw.with_columns(norm("name").alias("_n"), pl.col("position").cast(pl.Utf8)).select("_n", "position", "player_id").unique(["_n", "position"], keep="first")
+        have = {int(s) for s in (parts[0]["season"].unique().to_list() if parts else [])}
+        f = (ffc.with_columns(norm("name").alias("_n"), pl.col("season").cast(pl.Int64), pl.col("adp").cast(pl.Float64), pl.col("position").cast(pl.Utf8))
+                .filter(~pl.col("season").is_in(sorted(have)) if have else pl.lit(True))
+                .join(by_name, on=["_n", "position"], how="inner").select("player_id", "season", "position", "adp"))
+        parts.append(f)
+    if not parts:
+        return pl.DataFrame(schema={"player_id": pl.Utf8, "season": pl.Int64, "ps_adp": pl.Float64, "ps_adp_pos_rank": pl.Float64, "ps_drafted": pl.Float64})
+    adp = pl.concat(parts, how="vertical").filter(pl.col("adp").is_not_null()).sort("adp").unique(["player_id", "season"], keep="first", maintain_order=True)
+    return (adp.with_columns(pl.col("adp").rank(method="min").over("season", "position").cast(pl.Float64).alias("ps_adp_pos_rank"))
+               .select("player_id", "season", pl.col("adp").alias("ps_adp"), "ps_adp_pos_rank", pl.lit(1.0).alias("ps_drafted")))
+
+
 def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> pl.DataFrame:
     """(player_id, season) -> recency windows from the played weeks <= ``week`` (last game, last five, the
     last three games' targets and touches per game against the season rate) and, from the status
@@ -327,7 +358,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                     contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
                     schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None,
-                    consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None) -> pl.DataFrame:
+                    consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None,
+                    preseason: pl.DataFrame | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -358,6 +390,9 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
             snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
         if opportunity is not None:
             snap = snap.join(opportunity_features(opportunity, w), on=["player_id", "season"], how="left")
+        if preseason is not None:                                   # season-level: the same row for every week's snapshot
+            snap = snap.join(preseason, on=["player_id", "season"], how="left").with_columns(
+                pl.when(pl.col("season") >= PRESEASON_FIRST_SEASON).then(pl.col("ps_drafted").fill_null(0.0)).otherwise(None).alias("ps_drafted"))
         if consensus is not None and consensus_xwalk is not None:
             snap = snap.join(consensus_features(consensus, consensus_xwalk, wk, w), on=["player_id", "season"], how="left").with_columns(
                 pl.when(pl.col("season") >= CONSENSUS_FIRST_SEASON).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
