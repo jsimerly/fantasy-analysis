@@ -306,3 +306,13 @@ class TestUsageRoleScheduleGroups:
         assert "g9" not in c and inseason.extra_columns(["consensus"]) == inseason.CONSENSUS_COLS
         assert inseason.extra_columns(["consensus_line"]) == inseason.CONSENSUS_LINE_COLS and "cs_next_tgt" not in inseason.CONSENSUS_COLS
 
+    def test_preseason_adp_prefers_mfl_by_id_and_falls_back_to_ffc_by_name(self):
+        xwalk = pl.DataFrame({"mfl_id": ["m1", "m2", None], "gsis_id": ["g1", "g2", "g3"], "name": ["Josh Allen", "Bijan Robinson", "Ja'Marr Chase Jr."], "position": ["QB", "RB", "WR"]})
+        mfl = pl.DataFrame({"season": [2024, 2024], "ext_id": ["m1", "m2"], "adp": [12.5, 2.0]})
+        ffc = pl.DataFrame({"season": [2024, 2010, 2010], "name": ["Josh Allen", "Ja'Marr Chase", "Bijan Robinson"], "position": ["QB", "WR", "RB"], "adp": [99.0, 30.0, 1.0]})
+        ps = {(r["player_id"], r["season"]): r for r in inseason.preseason_features(mfl, ffc, xwalk).to_dicts()}
+        assert ps[("g1", 2024)]["ps_adp"] == 12.5                     # 2024 has MFL: the FFC 99.0 for Allen is ignored
+        assert ps[("g2", 2024)]["ps_adp_pos_rank"] == 1.0 and ps[("g1", 2024)]["ps_adp_pos_rank"] == 1.0   # ranks within position
+        assert ps[("g3", 2010)]["ps_adp"] == 30.0 and ps[("g2", 2010)]["ps_adp"] == 1.0                   # 2010: FFC by name (suffix dropped)
+        assert all(r["ps_drafted"] == 1.0 for r in ps.values()) and inseason.extra_columns(["preseason"]) == inseason.PRESEASON_COLS
+

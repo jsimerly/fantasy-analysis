@@ -1413,8 +1413,15 @@ t = 1.45) stays a tie.
     the future; usable only where coverage is complete (2022 on). (3) *Wayback captures* of
     weekly projection pages (ESPN's old tool 2016-2019 confirmed; others untested, the CDX index
     is slow): point-in-time and unbiased but a scraping project per site. (4) Paid vendors
-    (FantasyData, Sportradar) sell projection history to 2009; not pursued. **Next:** the ADP
-    group through the funnel; the bronze ingestion for ADP (yearly, both sources); the provider's
+    (FantasyData, Sportradar) sell projection history to 2009; not pursued. **The ADP group on the
+    trees** (`preseason`: the pick, the rank within the position, a drafted flag; 5,993
+    player-seasons 2009-2026, MFL by id where a season has it, FFC by name otherwise): alone ROS
+    0.809 / 0.780 / 0.758 / 0.702 (base 0.793 / 0.773 / 0.750 / 0.696; the preseason view
+    matters most at week 3, +0.016), next-season flat; all five groups ROS **0.811 / 0.797 /
+    0.761 / 0.708**, next 0.555 / 0.562 / 0.596 / 0.605 -- the best rest-of-season model at every
+    week but the last. Stage 2d (ClaudeStage2d, after 2c): all five on 3.5. **Next:** the bronze
+    ingestion for ADP (yearly, both sources) and ADP as a career feature (every season since
+    2009, for the career model's own harness); the provider's
     ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
     consensus for the live week once its backfill runs (owner's call).
 
