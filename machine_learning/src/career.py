@@ -92,6 +92,9 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
     Not observable (censored) -> every target null.
     """
     done = df.filter(pl.col("season_complete")) if "season_complete" in df.columns else df
+    if "is_draft_row" in done.columns or "is_snapshot_row" in done.columns:   # an auxiliary row is never another row's future season
+        import draft_rows as dr
+        done = dr.drop_draft_rows(done)
     last = last_complete_season(df)
     out = df
     opp_cols = [c for c in OPPORTUNITY_COLS if c in done.columns]
@@ -237,12 +240,15 @@ class HorizonModels:
         # "opportunity": ppg = (opportunities per game) x (points per opportunity), each its own model —
         # volume persists, efficiency regresses, and the product does not shrink a high-volume player's
         # rate the way one model of the level does.
-        if target not in ("level", "residual", "opportunity"):
-            raise ValueError(f"target must be level, residual or opportunity, got {target!r}")
+        # "blend": the level and the residual models both fitted, their predictions averaged (the residual
+        # target lowers the error and over-projects the stars; the level target under-projects them).
+        if target not in ("level", "residual", "opportunity", "blend"):
+            raise ValueError(f"target must be level, residual, opportunity or blend, got {target!r}")
         if weight not in (None, "ppg", "ppg2"):
             raise ValueError(f"weight must be None, ppg or ppg2, got {weight!r}")
         self.target, self.weight = target, weight
         self.ppg_models: dict[int, XGBRegressor] = {}
+        self.ppg_models_res: dict[int, object] = {}      # the residual half of the blend target
         self.games_models: dict[int, XGBRegressor] = {}
         self.opp_models: dict[int, XGBRegressor] = {}
         self.eff_models: dict[int, XGBRegressor] = {}
@@ -289,7 +295,7 @@ class HorizonModels:
         return np.column_stack([X, np.full(df.height, float(k)), age + k])
 
     def _fit_stacked(self, train: pl.DataFrame, as_of_season: int | None) -> None:
-        Xg, yg, wg, Xp, yp, wp = [], [], [], [], [], []
+        Xg, yg, wg, Xp, yp, wp, yr = [], [], [], [], [], [], []
         for k in self.horizons:
             rows = train.filter(pl.col(f"h{k}_observable"))
             if as_of_season is not None:
@@ -304,9 +310,13 @@ class HorizonModels:
                 y = y - played["ppg"].fill_null(0.0).to_numpy().astype(float)
             Xp.append(self._stack_X(played, k)); yp.append(y)
             w = self._weights(played); wp.append(w if w is not None else np.ones(played.height))
+            if self.target == "blend":
+                yr.append(y - played["ppg"].fill_null(0.0).to_numpy().astype(float))
         g = self._new().fit(np.vstack(Xg), np.concatenate(yg), sample_weight=np.concatenate(wg) if self.weight else None)
         p = self._new().fit(np.vstack(Xp), np.concatenate(yp), sample_weight=np.concatenate(wp) if self.weight else None)
         self.stacked_models = {"games": g, "ppg": p}
+        if self.target == "blend":
+            self.stacked_models["ppg_res"] = self._new().fit(np.vstack(Xp), np.concatenate(yr), sample_weight=np.concatenate(wp) if self.weight else None)
         for k in self.horizons:                      # the per-horizon slots point at the shared models
             self.games_models[k], self.ppg_models[k] = g, p
 
@@ -334,6 +344,9 @@ class HorizonModels:
             y = played[f"h{k}_ppg"].to_numpy().astype(float)
             if self.target == "residual":
                 y = y - played["ppg"].fill_null(0.0).to_numpy().astype(float)
+            if self.target == "blend":
+                self.ppg_models_res[k] = self._new().fit(self.feature_frame(played).to_numpy(),
+                                                         y - played["ppg"].fill_null(0.0).to_numpy().astype(float), sample_weight=self._weights(played))
             if self.target == "opportunity":
                 if f"h{k}_opp" not in played.columns or played[f"h{k}_opp"].null_count() == played.height:
                     raise ValueError("opportunity target needs h{k}_opp (targets / rush_att / pass_att in the season table)")
@@ -409,16 +422,22 @@ class HorizonModels:
         return w * w if self.weight == "ppg2" else w
 
     def _ppg_hat(self, k: int, X: np.ndarray, df: pl.DataFrame) -> np.ndarray:
+        base = df["ppg"].fill_null(0.0).to_numpy().astype(float)
         if self.stacked:
-            raw = self.stacked_models["ppg"].predict(self._stack_X(df, k))
+            Xs = self._stack_X(df, k)
+            raw = self.stacked_models["ppg"].predict(Xs)
             if self.target == "residual":
-                raw = raw + df["ppg"].fill_null(0.0).to_numpy().astype(float)
+                raw = raw + base
+            if self.target == "blend":
+                raw = 0.5 * raw + 0.5 * (self.stacked_models["ppg_res"].predict(Xs) + base)
             return np.clip(raw, 0.0, None)
         if self.target == "opportunity" and k in self.opp_models:
             return np.clip(self.opp_models[k].predict(X), 0.0, None) * np.clip(self.eff_models[k].predict(X), 0.0, None)
         raw = self.ppg_models[k].predict(X)
         if self.target == "residual":
-            raw = raw + df["ppg"].fill_null(0.0).to_numpy().astype(float)
+            raw = raw + base
+        if self.target == "blend":
+            raw = 0.5 * raw + 0.5 * (self.ppg_models_res[k].predict(X) + base)
         return np.clip(raw, 0.0, None)
 
     @staticmethod
@@ -570,16 +589,19 @@ def _range_columns_of(self, k: int, X: np.ndarray, df: pl.DataFrame) -> list[pl.
     if not self.range_quantiles or self.target == "opportunity":
         return []
     if self.stacked:                                  # pooled models: the same estimator for every horizon, horizon in the inputs
-        pm, gm = self.stacked_models.get("ppg"), self.stacked_models.get("games")
+        pm, gm, rm = self.stacked_models.get("ppg"), self.stacked_models.get("games"), self.stacked_models.get("ppg_res")
         X = self._stack_X(df, k)
     else:
-        pm, gm = self.ppg_models.get(k), self.games_models.get(k)
+        pm, gm, rm = self.ppg_models.get(k), self.games_models.get(k), self.ppg_models_res.get(k)
     if pm is None or not hasattr(pm, "predict_quantiles") or not hasattr(gm, "predict_quantiles"):
         return []
     qs = self.range_quantiles
     qp = pm.predict_quantiles(X, qs)
+    base = df["ppg"].fill_null(0.0).to_numpy().astype(float)[:, None]
     if self.target == "residual":
-        qp = qp + df["ppg"].fill_null(0.0).to_numpy().astype(float)[:, None]
+        qp = qp + base
+    if self.target == "blend" and rm is not None and hasattr(rm, "predict_quantiles"):
+        qp = 0.5 * qp + 0.5 * (rm.predict_quantiles(X, qs) + base)
     qp = np.clip(qp, 0.0, None)
     qg = np.clip(gm.predict_quantiles(X, qs), 0.0, MAX_GAMES)
     cols = []
@@ -708,8 +730,10 @@ class AgeSurvival:
 
 
 def fit_survival(season_df: pl.DataFrame, cap: str = DEFAULT_CAP) -> AgeSurvival:
-    """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs."""
-    return AgeSurvival(tiered="+t" in str(cap)).fit(season_df)
+    """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs. Draft rows (no
+    played season behind them) are left out: the prior is about players who were on a roster."""
+    import draft_rows as dr
+    return AgeSurvival(tiered="+t" in str(cap)).fit(dr.drop_draft_rows(season_df))
 
 
 def apply_cap(survival: AgeSurvival, df: pl.DataFrame, horizons: Iterable[int], cap: str = DEFAULT_CAP, **kw) -> pl.DataFrame:
@@ -754,15 +778,31 @@ def decay_baseline(train: pl.DataFrame, test: pl.DataFrame, horizons: Iterable[i
 
 
 # ------------------------------------------------------------------------- assembly
-def build_career_matrix(horizons: Iterable[int]) -> pl.DataFrame:
+XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
+
+
+def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False, snapshot_weeks: Iterable[int] | None = None,
+                        snapshot_from: int = 2010) -> pl.DataFrame:
     """fact_player_season (lake) -> one-year lags -> career features -> horizon targets.
     Rows from the in-progress season are kept (they have no outcomes yet) so the latest
-    complete season can be projected and the partial one inspected."""
+    complete season can be projected and the partial one inspected. With ``draft_rows`` every
+    drafted skill player also gets a pre-NFL row at the season before his rookie year
+    (``draft_rows.build_draft_rows``), flagged ``is_draft_row``."""
     import features
 
+    import gcs_io
+
     season = features.load_fact_player_season()
-    df = features.attach_lags_and_target(season, drop_no_target=False)
-    return attach_horizon_targets(career_features(df), list(horizons))
+    df = career_features(features.attach_lags_and_target(season, drop_no_target=False))
+    df = df.with_columns(pl.lit(18, pl.Int64).alias("row_week"))      # a complete season
+    if draft_rows:
+        import draft_rows as dr
+        df = dr.with_draft_rows(df, dr.build_draft_rows(gcs_io.read_lake(XWALK_PATH), season))
+    if snapshot_weeks:
+        import unified
+        wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
+        df = unified.with_snapshot_rows(df, unified.snapshot_rows(wk, df.filter(~__import__("draft_rows").is_aux(df)), snapshot_weeks, snapshot_from))
+    return attach_horizon_targets(df, list(horizons))
 
 
 # -------------------------------------------------------------------------- evaluation

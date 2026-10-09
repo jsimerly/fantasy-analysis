@@ -54,6 +54,45 @@ trade-age filter keeps scorecards comparable; one scoring setting for the wins. 
 a mirror trade within ten days are flagged as reversals and left out of the scorecards; the
 2023-04-02 joke trade is excluded by id (`EXCLUDED_TRANSACTIONS`).
 
+## Team value over time (`team_value.py`, `02_team_value_over_time.ipynb`)
+
+Every franchise's roster value week by week, in KTC's own power-ranking terms: each week the held
+players and picks are priced on KTC dynasty (superflex, TE premium once KTC published it; picks at
+the round level), ranked within the roster and depth-weighted with KTC's `prProcessV`
+(`fantasy_lib.team_power_index`), the top team that week = 99. Alongside: the same without picks,
+the raw depth-weighted sum, the share of the league-average team (100 = average), the plain KTC
+sum, and FantasyCalc's sum from 2025-10. The regular seasons (NFL week 1 to the league's
+`fantasy_end`) and the draft days come from the calendar dims; each lineage starts at its first
+week with 95 % of its steady-state asset count, because the first week of a startup is a partial
+roster. `--publish` writes `backtests/team_value/run_date=<today>/summary.json`, which the page
+export folds into the **Team value** tab (chart with season bands and draft guides, owner colors,
+a team highlight, the week's standings on hover, a measure switch, and a standings-now table with
+the moves over 4 / 13 / 52 weeks and since the last draft). The notebook draws the same frames with
+matplotlib.
+
+```
+.venv/Scripts/python analysis/team_value.py --out analysis/_cache/team_value --publish
+```
+
+## How the market prices over time (`market_trends.py`)
+
+The KTC dynasty market's own regularities, measured on its daily history since 2020 (SF values,
+players priced at 1,000 or more; every relative move is market-adjusted, i.e. minus the median
+priced player's move, because KTC rescales and the whole pool drifts with the calendar):
+seasonality of prices by position, career stage and age (mean 30-day change by month), momentum
+versus reversion (the past 28-day move against the next 56 days, by decile and for 15 %+ moves),
+the market's age discount against realized three-year WAR on the market-backtest cohorts (realized
+rank minus market rank, wins per 1,000 KTC), the rookie-pick price cycle by months before the draft,
+the reaction to one big game (2+ sd above the season rate) over the next week and eight weeks, and
+the price path around an injury absence (by injury class and age). `--publish` writes
+`backtests/market_trends/run_date=<today>/summary.json`; the export carries the newest one as
+`market_trends` for the page's **Market** tab and the Players table's **Season** column (the
+player's seasonal tailwind this month, from his position's and age band's cells).
+
+```
+machine_learning/.venv/Scripts/python analysis/market_trends.py --out analysis/_cache/market_trends --players <market backtest>/players.parquet --publish
+```
+
 ## Expected draft slot (`pick_slots.py`, `pick_slots_report.py`)
 
 The market prices a pick by its expected slot, so a 1st from a 2-win team is not a 1st from the

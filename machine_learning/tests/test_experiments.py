@@ -107,6 +107,21 @@ def test_paired_comparison_is_cohort_by_cohort(monkeypatch):
 
 
 
+def test_range_scores_record_the_bands_asymmetry_and_the_verdict_prints_the_distribution():
+    import experiments as ex
+    y = np.array([10.0, 12.0, 14.0, 30.0] * 6)
+    cohort = pl.DataFrame({"h1_observable": [True] * 24, "h1_played": [True] * 24, "h1_ppg": y,
+                           "h1_ppg_q20": [9.0] * 24, "h1_ppg_q50": [11.0] * 24, "h1_ppg_q80": [16.0] * 24})
+    s = ex.range_scores(cohort, [1])
+    assert abs(s["ppg_skew"] - (5.0 - 2.0) / 7.0) < 1e-9 and "ppg_pinball" in s and "ppg_skew" in ex.PAIRED_METRICS and "ppg_skew" in ex.LEDGER_COLS
+    t = _paired_table(-0.5, 3.0)
+    t = pl.concat([t, pl.DataFrame({"metric": ["ppg_pinball", "ppg_cover_2080"], "a": [0.90, 0.58], "b": [0.95, 0.52], "diff_b_minus_a": [0.05, -0.06],
+                                    "se": [0.01, 0.02], "t": [5.0, -3.0], "b_wins": [8, 1], "cohorts": [8, 8]})])
+    v = ex.verdict(t)
+    assert "distribution (pinball" in v and "A 0.900 vs B 0.950, t = +5.00" in v and "coverage A 0.58 vs B 0.52" in v and v.startswith("co-primary verdict")
+    assert "distribution" not in ex.verdict(_paired_table(-0.5, 3.0))
+
+
 def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
     return pl.DataFrame({"metric": ["spearman_war_top", "mae_war_top"], "a": [0.61, 0.50], "b": [0.60, 0.52],
                          "diff_b_minus_a": [-0.01, 0.02], "se": [0.004, 0.008], "t": [t_order_b_minus_a, t_err_b_minus_a], "b_wins": [2, 7], "cohorts": [8, 8]})
@@ -128,3 +143,36 @@ def test_run_paths_match_the_name_exactly_not_as_a_prefix():
     assert [x.rsplit("/", 1)[-1] for x in ex.run_paths("cap30t_w", blobs)] == ["cap30t_w_2026-10-01T09-00-00+00-00.parquet", "cap30t_w_2026-10-05T22-10-29+00-00.parquet"]
     assert len(ex.run_paths("cap30t_w_b", blobs)) == 1 and ex.run_paths("cap30t_w@2026-10-05T22:10:29", blobs) == [blobs[0]]
     assert ex.run_paths("cap30t", blobs) == []
+
+
+def test_regime_stamp_and_pairing_warning(monkeypatch, capsys):
+    import experiments as ex
+    s = ex.regime_stamp({"WR": 34.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)
+    assert s == "starters[QB=20,WR=34.5]|season_fact=2026-10-07T10:18:04Z|rows=15245"
+    same = pl.DataFrame({"cohort": [2015, 2016], "spearman_war_top": [0.5, 0.6], "mae_war_top": [1.0, 1.0], "regime": [s, s]})
+    other = same.with_columns(pl.lit(ex.regime_stamp({"WR": 24.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)).alias("regime"))
+    monkeypatch.setattr(ex, "load_run", lambda ref: {"a": same, "b": same, "c": other, "d": same.drop("regime")}[ref])
+    ex.paired("a", "b"); assert "WARNING" not in capsys.readouterr().out
+    ex.paired("a", "c"); assert "regimes differ" in capsys.readouterr().out
+    ex.paired("a", "d"); assert "regime unknown for d" in capsys.readouterr().out
+    row = ex.append_result(None, {"name": "x", "regime": s, "timestamp": "t"})
+    assert row["regime"][0] == s and "regime" in ex.LEDGER_COLS
+
+
+def test_in_sample_scores_and_the_gap_use_the_training_rows_only():
+    import experiments as ex
+
+    class _M:
+        def predict(self, df):
+            return df.with_columns((pl.col("h1_fpts") + 10.0).alias("h1_fpts_hat"))     # 10 points off on every row
+
+    n = 120
+    df = pl.DataFrame({"season": [2015] * 60 + [2019] * 60, "h1_observable": [True] * n, "h1_fpts": [100.0] * n,
+                       "is_snapshot_row": [False] * 110 + [True] * 10})
+    s = ex.in_sample_scores(_M(), df, T=2016, horizons=[1])
+    assert abs(s["mae_h1_train"] - 10.0) < 1e-9                                           # only the 2015 rows (known by 2016) are in sample
+    assert ex.in_sample_scores(_M(), df.head(20), T=2016, horizons=[1]) == {}             # too few rows: nothing
+    assert "gap_h1" in ex.PAIRED_METRICS and "mae_h1_train" in ex.LEDGER_COLS and "spearman_war_top_sd" in ex.LEDGER_COLS
+    t = _paired_table(-0.5, 3.0)
+    t = pl.concat([t, pl.DataFrame({"metric": ["gap_h1", "mae_h1_train"], "a": [12.0, 20.0], "b": [25.0, 8.0], "diff_b_minus_a": [13.0, -12.0], "se": [1.0, 1.0], "t": [13.0, -12.0], "b_wins": [8, 0], "cohorts": [8, 8]})])
+    assert "train-test gap h1 A 12.0 vs B 25.0" in ex.verdict(t)

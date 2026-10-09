@@ -48,7 +48,9 @@ def main() -> None:
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all | none")
     ap.add_argument("--groups", default="base,career", help="feature groups (feature_groups.GROUPS)")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons: one games and one ppg model over every horizon")
-    ap.add_argument("--target", choices=["level", "residual"], default="level")
+    ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (draft_rows.py)")
+    ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py)")
+    ap.add_argument("--target", choices=["level", "residual", "blend"], default="level")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")
@@ -57,14 +59,15 @@ def main() -> None:
     H = list(range(1, args.horizon + 1))
     today = datetime.now(timezone.utc).date()
 
-    df = career.build_career_matrix(H)
+    df = career.build_career_matrix(H, draft_rows=args.draft_rows, snapshot_weeks=[int(w) for w in args.snapshot_weeks.split(",") if w] or None)
     groups = fg.resolve(args.groups.split(","))
     if args.groups != "base,career":
         df = fg.assemble(df, groups, fg.Context())
     last = career.last_complete_season(df)
     slots, teams = replacement.league_lineup(gcs_io.read_lake(SETTINGS_PATH))
     starters = replacement.starters_per_position(slots, teams)
-    rep = replacement.replacement_levels(df, starters)
+    import draft_rows as dr
+    rep = replacement.replacement_levels(dr.drop_draft_rows(df), starters)
     print(f"lineup {slots} x {teams} teams")
     print("starters per position:", {k: round(v, 1) for k, v in starters.items()})
     print("replacement ppg:", {k: round(v, 2) for k, v in rep.items()})

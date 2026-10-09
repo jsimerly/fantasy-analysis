@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
 import polars as pl
 
 import career
@@ -69,18 +70,30 @@ class Context:
         return self._weeks
 
     _college: pl.DataFrame | None = None
+    _college_cfbd: pl.DataFrame | None = None
+
+    def _load_college(self) -> None:
+        try:
+            fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
+        except Exception:  # noqa: BLE001 - not ingested yet
+            self._college, self._college_cfbd = pl.DataFrame(), pl.DataFrame()
+        else:
+            self._college_cfbd = college_per_cfbd(fact, xw)
+            self._college = college_per_player(fact, xw)
 
     @property
     def college(self) -> pl.DataFrame | None:
         """College production per player keyed by gsis id (None until the CFBD lake tables exist)."""
         if self._college is None:
-            try:
-                fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
-            except Exception:  # noqa: BLE001 - not ingested yet
-                self._college = pl.DataFrame()
-            else:
-                self._college = college_per_player(fact, xw)
-        return self._college if self._college.height else None
+            self._load_college()
+        return self._college if self._college is not None and self._college.height else None
+
+    @property
+    def college_cfbd(self) -> pl.DataFrame | None:
+        """The same per CFBD athlete id, for draft rows of players without NFL rows."""
+        if self._college_cfbd is None:
+            self._load_college()
+        return self._college_cfbd if self._college_cfbd is not None and self._college_cfbd.height else None
 
     _week_status: pl.DataFrame | None = None
 
@@ -260,10 +273,10 @@ COLLEGE_COLS = ["col_dominator_last", "col_dominator_best", "col_yptp_last", "co
                 "col_seasons", "col_team_sp_last", "col_early_declare", "col_touch_share_last"]
 
 
-def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
-    """One row per gsis id: the final college season's shares and usage, the best dominator, the
-    breakout age (age in the first season with dominator >= 0.20), seasons played, the final team's
-    SP+ rating, and early declaration (final class year <= 3)."""
+def college_per_cfbd(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
+    """One row per CFBD athlete id: the final college season's shares and usage, the best dominator,
+    the breakout age (age in the first season with dominator >= 0.20; needs the crosswalk's birth
+    date), seasons played, the final team's SP+ rating, and early declaration (final class year <= 3)."""
     f = fact.sort(["cfbd_id", "season"])
     last = f.group_by("cfbd_id").agg(
         pl.col("dominator").last().alias("col_dominator_last"), pl.col("dominator").max().alias("col_dominator_best"),
@@ -273,13 +286,20 @@ def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
         pl.len().alias("col_seasons"), pl.col("team_sp").last().alias("col_team_sp_last"),
         (pl.col("class_year").last() if "class_year" in f.columns else pl.lit(None, pl.Int64)).alias("_class_last"),
         pl.col("breakout_season_dom").first().alias("_breakout"))
-    x = xw.filter(pl.col("gsis_id").is_not_null()).select("cfbd_id", "gsis_id", "birth_date", "draft_year").unique("cfbd_id")
-    out = last.join(x, on="cfbd_id", how="inner")
+    x = xw.select("cfbd_id", pl.col("birth_date") if "birth_date" in xw.columns else pl.lit(None, pl.Utf8).alias("birth_date")).unique("cfbd_id")
+    out = last.join(x, on="cfbd_id", how="left")
     by = pl.col("birth_date").cast(pl.Utf8).str.slice(0, 4).cast(pl.Int64, strict=False)
     return out.with_columns(
         (pl.col("_breakout") - by).cast(pl.Float64).alias("col_breakout_age"),
         (pl.col("_class_last") <= 3).cast(pl.Float64).alias("col_early_declare"),
-        pl.col("col_seasons").cast(pl.Float64)).select(["gsis_id"] + COLLEGE_COLS).unique("gsis_id")
+        pl.col("col_seasons").cast(pl.Float64)).select(["cfbd_id"] + COLLEGE_COLS).unique("cfbd_id")
+
+
+def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
+    """The per-athlete college row keyed by gsis id (players the crosswalk ties to the NFL side)."""
+    per = college_per_cfbd(fact, xw)
+    x = xw.filter(pl.col("gsis_id").is_not_null()).select("cfbd_id", "gsis_id").unique("cfbd_id")
+    return per.join(x, on="cfbd_id", how="inner").select(["gsis_id"] + COLLEGE_COLS).unique("gsis_id")
 
 
 def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
@@ -288,7 +308,14 @@ def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     col = ctx.college
     if col is None:
         return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in COLLEGE_COLS if c not in matrix.columns])
-    return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
+    out = matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
+    cf = ctx.college_cfbd
+    if cf is not None and "cfbd_id" in out.columns:            # draft rows: by the athlete id, filling what the gsis join left null
+        cf = cf.with_columns(pl.col("cfbd_id").cast(pl.Int64)).rename({c: f"{c}_cf" for c in COLLEGE_COLS})
+        out = (out.with_columns(pl.col("cfbd_id").cast(pl.Int64, strict=False)).join(cf, on="cfbd_id", how="left")
+                  .with_columns([pl.coalesce([pl.col(c), pl.col(f"{c}_cf")]).alias(c) for c in COLLEGE_COLS])
+                  .drop([f"{c}_cf" for c in COLLEGE_COLS]))
+    return out
 
 
 # ------------------------------------------------------------------------------ weekly
@@ -411,6 +438,27 @@ def build_contract(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in CONTRACT_COLS if c not in out.columns])
 
 
+
+# ------------------------------------------------------------------------------ noise
+# a control, not a feature: 15 columns of seeded Gaussian noise keyed by (player_id, season). Four
+# different additions to the 3.5 pooled candidate (team, contract, both, weekly) all cost the top 150
+# the same ~0.04 wins of error while sorting the whole pool better; if noise does the same, that is the
+# width of the table acting on the model, not information in the columns.
+NOISE_COLS = [f"noise_{i:02d}" for i in range(15)]
+
+
+def build_noise(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    import hashlib
+    keys = matrix.select(KEY).unique()
+    rows = []
+    for pid, season in keys.iter_rows():
+        seed = int(hashlib.md5(f"{pid}|{season}".encode()).hexdigest()[:8], 16)
+        rng = np.random.default_rng(seed)
+        rows.append([pid, season] + [float(x) for x in rng.standard_normal(len(NOISE_COLS))])
+    noise = pl.DataFrame(rows, schema=KEY + NOISE_COLS, orient="row").with_columns(pl.col("season").cast(matrix.schema["season"]))
+    return matrix.join(noise, on=KEY, how="left")
+
+
 GROUPS: dict[str, FeatureGroup] = {
     "base": FeatureGroup("base", list(one_year.FEATURE_COLS), None, "fact_player_season (+ lags)"),
     "career": FeatureGroup("career", list(career.CAREER_FEATURES), None, "fact_player_season cumulative"),
@@ -423,6 +471,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
     "team": FeatureGroup("team", TEAM_COLS, build_team, "fact_team_season_strength (schedules closing lines + team_stats EPA)"),
     "contract": FeatureGroup("contract", CONTRACT_COLS, build_contract, "fact_player_contract_season (Over The Cap via nflverse)"),
+    "noise": FeatureGroup("noise", NOISE_COLS, build_noise, "control: seeded Gaussian noise, no information"),
 }
 DEFAULT = ["base", "career"]            # the production model today
 

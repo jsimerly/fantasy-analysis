@@ -199,3 +199,12 @@ class TestContract:
         assert set(fg.TEAM_COLS) <= set(cols) and set(fg.CONTRACT_COLS) <= set(cols)
         out = fg.assemble(_matrix([{}]), groups, fg.Context(team=pl.DataFrame(), contracts=pl.DataFrame()))
         assert all(c in out.columns for c in fg.TEAM_COLS + fg.CONTRACT_COLS)
+
+
+class TestNoise:
+    def test_noise_is_seeded_per_row_and_carries_no_information(self):
+        mx = _matrix([{"season": 2022}, {"season": 2023}, {"player_id": "p2", "season": 2023}])
+        a, b = fg.build_noise(mx, fg.Context()), fg.build_noise(mx, fg.Context())
+        assert a.select(fg.NOISE_COLS).equals(b.select(fg.NOISE_COLS)) and a.select(fg.NOISE_COLS).n_unique() == 3
+        assert "noise" in fg.GROUPS and len(fg.feature_columns(fg.resolve("base,career,noise"))) == len(fg.feature_columns(fg.resolve("base,career"))) + 15
+        assert a.filter(pl.col("player_id") == "p2")[fg.NOISE_COLS[0]][0] != a.filter((pl.col("player_id") == "p1") & (pl.col("season") == 2023))[fg.NOISE_COLS[0]][0]

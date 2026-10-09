@@ -52,17 +52,26 @@ class HarnessContext:
 
 
 def build_context(H: list[int], first_cohort: int, last_cohort: int | None, replacement_kind: str,
-                  realized_replacement: str | None = None) -> HarnessContext:
+                  realized_replacement: str | None = None, draft_rows: bool = False, snapshot_weeks: list[int] | None = None,
+                  snapshot_from: int = 2010) -> HarnessContext:
     """The harness setup shared by every script that scores projections walk-forward: cohorts
     ``first_cohort``..``last_cohort`` (default: last complete season minus the horizon), replacement
     as of each cohort (``share`` / ``fill`` / ``weekly``) and KTC the following February."""
-    matrix = career.build_career_matrix(H)
+    import draft_rows as dr
+    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from)
+    base = dr.drop_draft_rows(matrix)                 # played seasons: replacement levels and the regime stamp
+    if snapshot_weeks:
+        print(f"snapshot rows: {int(matrix.filter(pl.col('is_snapshot_row'))['player_id'].len())} at weeks {list(snapshot_weeks)} from {snapshot_from}")
     last = career.last_complete_season(matrix)
     horizon = max(H)
     last_cohort = last_cohort if last_cohort is not None else last - horizon
     cohorts = list(range(first_cohort, last_cohort + 1))
     slots, teams = replacement.league_lineup(gcs_io.read_lake(SETTINGS_PATH))
     starters = replacement.starters_per_position(slots, teams)
+    regime = ex.regime_stamp(starters, gcs_io.lake_updated("silver/fantasy/fact_player_season/data.parquet"), base.height)
+    if draft_rows:
+        print(f"draft rows: {matrix.height - base.height} (drafted skill players {int(matrix.filter(pl.col('is_draft_row'))['draft_year'].min())}-{int(matrix.filter(pl.col('is_draft_row'))['draft_year'].max())})")
+    print(f"regime: {regime}")
     hist, xw = market.load_ktc_history(), market.load_crosswalk()
     ctx = fg.Context()
     import league as lg
@@ -73,7 +82,7 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
     if "share" != replacement_kind or (realized_replacement and realized_replacement != "share"):
         import lineup
         spec = lg.LeagueSpec.from_settings(gcs_io.read_lake(SETTINGS_PATH))
-        pool = matrix.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
+        pool = base.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
 
     def rep_by(kind: str, T: int) -> dict:
         if kind == "fill":
@@ -82,7 +91,7 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
         if kind == "weekly":
             import lineup
             return lineup.replacement_weekly(pool, ctx.weeks, spec, list(range(T - 4, T + 1)))
-        return replacement.replacement_levels(matrix, starters, seasons=list(range(T - 4, T + 1)))
+        return replacement.replacement_levels(base, starters, seasons=list(range(T - 4, T + 1)))
 
     def rep_for(T: int) -> dict:
         return rep_by(replacement_kind, T)
@@ -93,7 +102,7 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
         return market.attach_market(cohort, date(T + 1, 2, 15), hist, xw)
 
     return HarnessContext(matrix=matrix, cohorts=cohorts, ctx=ctx, curve=curve, rep_for=rep_for, market_for=market_for,
-                          realized_rep_for=realized_rep_for, hist=hist, crosswalk=xw)
+                          realized_rep_for=realized_rep_for, hist=hist, crosswalk=xw, regime=regime)
 
 
 def main() -> None:
@@ -112,13 +121,16 @@ def main() -> None:
     ap.add_argument("--realized-replacement", choices=["share", "fill", "weekly"], default=None,
                     help="score realized value on a different replacement level (ledger shows projected/realized)")
     ap.add_argument("--fixed-scale", default="", help="fixed value scale per position, e.g. QB=0.8,TE=1.1 (applied to iv / war / par)")
-    ap.add_argument("--target", choices=["level", "residual", "opportunity"], default="level",
+    ap.add_argument("--target", choices=["level", "residual", "opportunity", "blend"], default="level",
                     help="ppg target: the level, the change from this season's rate, or opportunities per game x points per opportunity")
     ap.add_argument("--weight", choices=["ppg", "ppg2"], default=None, help="relevance sample weights for the career models")
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb",
                     help="estimator: xgb (production trees), tabpfn (TabPFN foundation model, use --device cuda) or blend (mean of both)")
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. n_estimators=4")
     ap.add_argument("--stacked", action="store_true", help="one games / ppg model over all horizons, years-ahead as a feature (instead of one pair per horizon)")
+    ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (college + draft capital; draft_rows.py) to the matrix")
+    ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py), e.g. 9 or 6,13")
+    ap.add_argument("--snapshot-from", type=int, default=2010, help="first season of the snapshot rows")
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the predictive distribution (TabPFN) and score the band: coverage, pinball")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default, as production: tier-aware from 30) | 30+ | 30+t34 | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
@@ -155,7 +167,9 @@ def main() -> None:
 
     variants = parse_variants(args.variants) if args.variants else [(args.name or (args.groups or ",".join(fg.DEFAULT)), (args.groups or ",".join(fg.DEFAULT)).split(","))]
     H = list(range(1, args.horizon + 1))
-    bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement, args.realized_replacement)
+    snap_weeks = [int(w) for w in args.snapshot_weeks.split(",") if w]
+    bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement, args.realized_replacement, draft_rows=args.draft_rows,
+                       snapshot_weeks=snap_weeks or None, snapshot_from=args.snapshot_from)
     matrix, cohorts, ctx, curve = bc.matrix, bc.cohorts, bc.ctx, bc.curve
     rep_for, market_for, realized_rep_for = bc.rep_for, bc.market_for, bc.realized_rep_for
 
@@ -188,8 +202,10 @@ def main() -> None:
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
-                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None)
+                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
+        summary["regime"] = bc.regime
+        per_cohort = per_cohort.with_columns(pl.lit(bc.regime).alias("regime"))
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
             print(f"\n== {name}: {summary['groups']} ({summary['n_features']} features) ==")

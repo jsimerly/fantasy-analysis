@@ -148,6 +148,22 @@ main:
                           assign:
                             - failures: ${list.concat(failures, job)}
 
+    # --- DATA QUALITY: after every silver tier, the checks on the lake itself (data_engineering/src/data_quality).
+    # The job exits 1 when an error-severity check fails, so a bad lake is recorded like a failed job.
+    - data_quality:
+        try:
+          call: run_job
+          args:
+            project: ${project}
+            location: ${location}
+            job: "silver-data-quality"
+        except:
+          as: e
+          steps:
+            - record_quality_failure:
+                assign:
+                  - failures: ${list.concat(failures, "silver-data-quality")}
+
     - finalize:
         switch:
           - condition: ${len(failures) > 0}

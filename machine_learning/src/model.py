@@ -25,9 +25,11 @@ NUMERIC_FEATURES = [
     "lag1_fpts", "lag1_ppg", "lag1_games", "lag1_pass_yds", "lag1_rush_yds", "lag1_rec_yds",
     "lag1_targets", "lag1_rec", "lag1_total_touches", "lag2_fpts", "lag2_ppg", "lag2_games",
     "d_fpts_1", "d_ppg_1",
+    "row_week",            # weeks of the season behind the row: 18 for a complete season, W for a mid-season snapshot (unified.py), 0 for a draft row
 ]
 POSITIONS = ["QB", "RB", "WR", "TE"]
-FEATURE_COLS = NUMERIC_FEATURES + ["is_undrafted", "is_rookie"] + [f"pos_{p}" for p in POSITIONS]
+FLAG_COLS = ["is_undrafted", "is_rookie", "is_draft_row", "is_snapshot_row"]   # draft_rows.py / unified.py mark their rows
+FEATURE_COLS = NUMERIC_FEATURES + FLAG_COLS + [f"pos_{p}" for p in POSITIONS]
 
 DEFAULT_PARAMS = dict(
     n_estimators=400, max_depth=5, learning_rate=0.05, subsample=0.8,
@@ -42,8 +44,8 @@ def make_feature_frame(df: pl.DataFrame) -> pl.DataFrame:
     for c in NUMERIC_FEATURES:
         out.append(pl.col(c).cast(pl.Float64, strict=False) if c in df.columns
                    else pl.lit(None, pl.Float64).alias(c))
-    for b in ["is_undrafted", "is_rookie"]:
-        out.append((pl.col(b).cast(pl.Int8) if b in df.columns else pl.lit(0, pl.Int8)).alias(b))
+    for b in FLAG_COLS:
+        out.append((pl.col(b).cast(pl.Int8, strict=False).fill_null(0) if b in df.columns else pl.lit(0, pl.Int8)).alias(b))
     for p in POSITIONS:
         out.append((pl.col("position") == p).cast(pl.Int8).alias(f"pos_{p}") if "position" in df.columns
                    else pl.lit(0, pl.Int8).alias(f"pos_{p}"))

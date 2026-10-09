@@ -13,6 +13,7 @@ own nested `.venv`).
 | [nflverse_ingestion/](nflverse_ingestion/) | NFL stats, schedules, rosters, play-by-play |
 | `fantasypros_ingestion/` | pre-game projections (lands with its feature branch) |
 | [silver_fantasy/](silver_fantasy/) | dims & facts modeled from bronze |
+| [data_quality/](src/data_quality/) | checks on the lake itself (freshness, keys, history, invariants, drift), the last step of the daily DAG; **every data bug found gets a check** — see its CLAUDE.md |
 
 ## Conventions shared across the ingestion scripts
 - **Scripts are NOT importable packages.** They run as flat scripts and resolve siblings via a

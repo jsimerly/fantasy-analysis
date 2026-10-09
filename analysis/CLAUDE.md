@@ -8,7 +8,9 @@ notebooks import from it.
 | File | What |
 | --- | --- |
 | `fantasy_lib.py` | shared GCS/cache loaders + the team-value measure (the heart of the folder) |
-| `02_team_value_over_time.ipynb` | per-league team value/power timelines with league-event overlays |
+| `market_trends.py` | how the KTC market prices over time: seasonality, momentum, the age discount vs realized WAR, the pick cycle, big-game and injury reactions (`--publish` for a page tab); tests in `tests/test_market_trends.py` |
+| `team_value.py` | the team-value data prep (weekly grid, startup-ramp trim, power / value series, calendar, owner colors) + the summary the page's **Team value** tab reads (`--publish`); tests in `tests/test_team_value.py` |
+| `02_team_value_over_time.ipynb` | per-league team value/power timelines with league-event overlays (a thin matplotlib client of `team_value.py`) |
 | `01_player_pick_trends.ipynb` | player/pick value trends |
 | `ad_hoc_exp.ipynb` | scratch experiments |
 | `_cache/*.parquet` | locally pre-built data (see caching note) |
@@ -23,6 +25,20 @@ notebooks import from it.
   `league_diagnostics`, `team_bags` (current roster dump). Default lens is **SF / Standard / DYNASTY**
   (these leagues are superflex).
 
+## `team_value.py`
+`build()` loads the ledger, dims, the SF/TEP-blend player values and KTC round-level pick values,
+lays a weekly grid from the later of the ledger's and the values' start to the latest valuation
+date, computes `team_power_index` with and without picks (`power_index`, `power_players`,
+`adj_total`), `rel_mean` (share of the league-average team, 100 = average), the plain KTC sum
+(`value`) and the FantasyCalc sum from 2025-10 (`fc`), trims each lineage's startup ramp
+(`startup_cutoffs`: first week with >= 95 % of the median asset count), and attaches the calendar
+(`season_bands`: NFL week 1 -> fantasy_end; `draft_days`). `summary()` turns it into the page block
+(per league: dates, teams with owner colors, one array per measure, bands, drafts, a standings-now
+table with the moves over 4 / 13 / 52 weeks and since the last draft). Run
+`.venv/Scripts/python analysis/team_value.py --out analysis/_cache/team_value --publish`; the
+export (`machine_learning/scripts/export_projections.py`) picks up the newest
+`backtests/team_value/run_date=*/summary.json`.
+
 ## Key concepts (folded from memory)
 - **`team_power_index` reproduces KTC's `/power-rankings/teams` algo** (`prProcessV`, recovered verbatim
   from KTC's JS) to ±1 — a depth-adjusted, non-linear combine, **not** a plain value sum. Picks are
@@ -35,13 +51,19 @@ notebooks import from it.
   (`silver_fantasy/_pick_projection`), not baked in. `load_pick_values_round(..., carry_forward_seasons=)`
   maturity-shifts the furthest-priced class forward to value picks beyond KTC's pricing floor.
 - **Value lenses:** KTC = deep history; FantasyCalc = better market signal but only ~2025-10→.
+  `load_player_values_blend` = TEP where KTC published it that day, Standard otherwise, per (day,
+  player) (`blend_values`): the TEP series has holes (2026-09-08→09-30) the Standard one does not, and
+  an era cut-over left the team-value grid with no values for four weeks (BACKLOG 35).
   **TEP** values only exist ~2025-10+ (Standard fallback before that).
 
 ## Gotchas
-- **`_cache/` is a local prebuild** of the SCD2 ledger + KTC pick values, used because those silver
-  tables weren't deployed when the notebooks were written. Rebuild it when the silver jobs redeploy, and
-  re-point the loaders at production silver — otherwise the notebooks read stale local data.
+- **The loaders read production silver** (ledger, value facts, pick values, dims, calendar); `_cache/`
+  is only where the scripts here write their outputs (`trades/`, `pick_slots/`, `team_value/`) plus
+  old figures. Nothing reads `_cache/` as an input any more.
 - 2026 roster reconstruction depends on the REST-event backfill (offseason rollover), not GraphQL.
+- **`dim_players_master` has a gsis_id for a third of players**, so `market.load_crosswalk()` alone
+  reaches a third of KTC's priced pool; `market_trends.ktc_crosswalk` adds a name + position fallback
+  (most recent namesake). Use it for any KTC-wide read.
 
 See [../data_engineering/silver_fantasy/CLAUDE.md](../data_engineering/silver_fantasy/CLAUDE.md) for the
 facts these loaders read, and [../data_engineering/ktc_ingestion/CLAUDE.md](../data_engineering/ktc_ingestion/CLAUDE.md)

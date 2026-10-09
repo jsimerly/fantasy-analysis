@@ -5,7 +5,7 @@ import os
 import polars as pl
 from dotenv import load_dotenv
 
-from silver_fantasy.utils import get_latest_bronze_path, merge_full_and_incremental, read_latest_incremental_by_key
+from silver_fantasy.utils import chain_lineage, get_latest_bronze_path, merge_full_and_incremental, read_latest_incremental_by_key
 
 load_dotenv()
 
@@ -24,6 +24,26 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
     daily_settings_raw = read_latest_incremental_by_key(bucket_name, "league/settings/incremental", join_key='league_id')
     
     existing_silver_path = f"gs://{bucket_name}/silver/fantasy/dim_league_settings/data.parquet"
+
+    # Lineage: the bronze league rows chained through previous_league_id (the settings feeds carry a
+    # lineage only for the full_load leagues; an incremental-only season is null without this).
+    _lineage_cols = ['league_id', 'previous_league_id', 'league_lineage_id']
+
+    def _typed(df: pl.DataFrame) -> pl.DataFrame:   # a null-only previous_league_id is the Null dtype in some partitions
+        return df.select([pl.col(c).cast(pl.Utf8) if c in df.columns else pl.lit(None, dtype=pl.Utf8).alias(c) for c in _lineage_cols])
+
+    leagues_df = merge_full_and_incremental(
+        _typed(pl.read_parquet(get_latest_bronze_path(bucket_name, "league/leagues/full_load"))),
+        _typed(read_latest_incremental_by_key(bucket_name, "league/leagues/incremental", join_key='league_id')),
+        join_key='league_id',
+        preserve_columns=['league_lineage_id'],
+    )
+    lineage_map = chain_lineage(leagues_df.select('league_id', 'previous_league_id', 'league_lineage_id'))         .select('league_id', pl.col('league_lineage_id').alias('_chained_lineage'))
+
+    def fill_lineage(df: pl.DataFrame) -> pl.DataFrame:
+        return (df.join(lineage_map, on='league_id', how='left')
+                  .with_columns(pl.coalesce(['league_lineage_id', '_chained_lineage']).alias('league_lineage_id'))
+                  .drop('_chained_lineage'))
 
     # --- 2. Process Scoring (The Base) ---
     scoring_df = merge_full_and_incremental(
@@ -74,7 +94,7 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
     )
 
     # --- 5. Join into One "Constitution" DataFrame ---
-    new_rules_df = (
+    new_rules_df = fill_lineage(
         scoring_df
         .join(rosters_df.drop('league_lineage_id'), on='league_id', how='left')
         .join(settings_df.drop('league_lineage_id'), on='league_id', how='left')
@@ -197,8 +217,10 @@ def transform_dim_league_settings_scd2() -> pl.DataFrame:
         ]
         
         result_df = pl.concat(dfs_to_concat, how='diagonal')
-    
-    return result_df
+
+    # lineage is metadata, not a rule: an unchanged current row keeps its stored (possibly null)
+    # lineage, so fill it on the way out as well
+    return fill_lineage(result_df)
 
 def save_df_to_gcs(df: pl.DataFrame, bucket_name: str):
     file_path = f"gs://{bucket_name}/silver/fantasy/dim_league_settings/data.parquet"

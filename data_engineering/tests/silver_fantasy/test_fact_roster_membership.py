@@ -416,3 +416,24 @@ class TestReconcile:
         assert "unmapped_player" in quarantine["quarantine_reason"].to_list()
         # franchise is known, so the row stays in the fact (not dropped silently)
         assert fact.filter(pl.col("asset_id") == "999").height == 1
+
+
+class TestStaleLeagueSnapshots:
+    """A completed league re-ingested beside its successor must not book a second holding."""
+
+    def test_only_the_newest_season_of_a_lineage_counts_on_each_snapshot_day(self):
+        present = pl.DataFrame({
+            "league_id": ["L25", "L25", "L26", "L26", "L25", "L26", "X"],
+            "roster_id": [1, 1, 1, 1, 1, 1, 1],
+            "player_id": ["a", "b", "a", "c", "b", "c", "z"],
+            "snapshot_date": ["2026-09-16", "2026-09-16", "2026-09-16", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-16"],
+        })
+        seasons = pl.DataFrame({"league_id": ["L25", "L26"], "league_lineage_id": ["ROOT", "ROOT"], "season": ["2025", "2026"]})
+        out = mod.drop_stale_league_snapshots(present, seasons)
+        rows = set(out.select("league_id", "player_id", "snapshot_date").iter_rows())
+        assert ("L25", "b", "2026-09-16") not in rows and ("L25", "a", "2026-09-16") not in rows   # the frozen 2025 roster, dropped
+        assert ("L26", "a", "2026-09-16") in rows and ("L26", "c", "2026-09-16") in rows
+        assert ("L25", "b", "2026-09-17") in rows                                                 # alone that day: it stays (the rollover repair handles it)
+        assert ("X", "z", "2026-09-16") in rows                                                   # a league with no season row is untouched
+        assert out.columns == present.columns
+

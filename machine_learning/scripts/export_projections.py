@@ -105,7 +105,8 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
         g = [_r(r["ros_games_hat"], 2), _r(r["next_games_hat"], 2)] + [_r(r.get(f"h{k}_games_hat") or 0.0, 2) for k in tail]
         band = None
         if any(r.get(f"h{k}_ppg_q20") is not None for k in tail):      # the range of outcomes: 20th / 80th percentile ppg per tail span
-            band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail]}
+            band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail],
+                    "md": [None, None] + [_r(r.get(f"h{k}_ppg_q50"), 1) for k in tail]}    # the median: the point is the mean, and the distribution is skewed
         out.append({**_common(r),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
@@ -124,6 +125,7 @@ def main() -> None:
     ap.add_argument("--as-of-season", type=int, default=2025, help="career run (replacement level; the data for --source career)")
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--market-run-date", default=None, help="which backtests/market/run_date=<d> summary the performance tab shows (default: the newest)")
     args = ap.parse_args()
 
     # the run's metrics: an in-season refresh writes its own (since 2026-10-05); otherwise the career
@@ -229,8 +231,17 @@ def main() -> None:
         paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
         return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
+    if args.market_run_date:                      # the production model's own backtest, not whichever experiment ran last
+        performance["market"] = gcs_io.read_ml_json("backtests", "market", f"run_date={args.market_run_date}", "summary.json")
+    # the season-end value card is only shown when it is at least as fresh as the market backtest: the two
+    # score the same question, and a stale trees-era card next to a newer production one misleads
+    v, mk = performance.get("value"), performance.get("market")
+    if v and mk and str(v.get("run_date", "")) < str((mk.get("meta") or {}).get("run_date", "")):
+        performance["value"] = None
     trades_summary = latest_summary("trades")          # analysis/trade_report.py --publish (the leagues' trading, scored)
     slots_summary = latest_summary("pick_slots")       # analysis/pick_slots_report.py --publish (expected draft slot of every team's next pick)
+    team_value_summary = latest_summary("team_value")  # analysis/team_value.py --publish (each franchise's roster value week by week, KTC power-ranking terms)
+    market_trends_summary = latest_summary("market_trends")   # analysis/market_trends.py --publish (how the KTC market prices over time: seasonality, momentum, age, picks, injuries)
     try:
         import experiments
         led = experiments.load_ledger()
@@ -283,7 +294,7 @@ def main() -> None:
             print("owned picks: skipped:", str(e)[:200])
     career_backend = proj["career_backend"][0] if "career_backend" in proj.columns and proj.height else "xgb"
     out = {
-        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary, "career_backend": career_backend,
+        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary, "team_value": team_value_summary, "market_trends": market_trends_summary, "career_backend": career_backend,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,

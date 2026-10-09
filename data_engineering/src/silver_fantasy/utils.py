@@ -150,3 +150,28 @@ def read_bronze_prefix(bucket_name: str, prefix: str, dedupe_on: list[str] | Non
         if df.height != before:
             print(f"  de-duplicated {before - df.height} rows under {prefix} on {keys} (newest file wins)")
     return df
+
+
+def chain_lineage(leagues_df: pl.DataFrame) -> pl.DataFrame:
+    """Fill a null ``league_lineage_id`` by chaining ``previous_league_id`` back to a league that has
+    one; a league with no predecessor in the data is its own lineage root.
+
+    ``league_lineage_id`` only comes from the one-time full_load, so every later season (which
+    arrives through the incremental feed alone) would otherwise orphan itself from its dynasty.
+    Shared by ``dim_leagues_meta`` and ``dim_league_settings_scd2`` (the settings dim lacked it:
+    the 2026 leagues' rows carried a null lineage until the data-quality suite caught it, 2026-10-09).
+    """
+    out = leagues_df
+    for _ in range(25):
+        if out.filter(pl.col('league_lineage_id').is_null()).height == 0:
+            break
+        prev = out.select(pl.col('league_id').alias('previous_league_id'), pl.col('league_lineage_id').alias('_prev_lineage'))
+        filled = (out.join(prev, on='previous_league_id', how='left')
+                     .with_columns(pl.coalesce(['league_lineage_id', '_prev_lineage']).alias('league_lineage_id'))
+                     .drop('_prev_lineage'))
+        if filled.filter(pl.col('league_lineage_id').is_null()).height == out.filter(pl.col('league_lineage_id').is_null()).height:
+            out = filled
+            break
+        out = filled
+    return out.with_columns(pl.coalesce(['league_lineage_id', 'league_id']).alias('league_lineage_id'))
+

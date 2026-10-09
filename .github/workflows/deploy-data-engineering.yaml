@@ -110,6 +110,9 @@ jobs:
             # contract in force per player-season (Over The Cap via the weekly nflverse contracts snapshot); T1, bronze only
             ["silver-fact-team-season-strength"]="silver_fantasy.fact_team_season_strength:1Gi:1:30m"
             ["silver-fact-player-contract-season"]="silver_fantasy.fact_player_contract_season:2Gi:1:30m"
+            # data quality: the last step of the daily DAG; reads every silver table + the bronze partition
+            # listings, writes silver/_quality/run_date=<d>/results.parquet, exits 1 on a failed error-check
+            ["silver-data-quality"]="data_quality.run:2Gi:1:30m"
             # college (CFBD): once a year via the fantasy-college-yearly workflow (orchestration/college.yaml):
             # cfbd-backfill (CFBD_SEASONS=last, key from Secret Manager "cfbd-api-key", set below) then
             # silver-fact-college-player-season (reads bronze/cfbd + silver fact_player_season for the crosswalk)

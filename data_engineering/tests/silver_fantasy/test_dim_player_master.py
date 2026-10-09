@@ -75,6 +75,32 @@ class TestDimPlayerMaster:
         assert row["college_name"] == "Texas Tech"
         assert row["nfl_draft_pick"] == 10
 
+    def test_bridge_gsis_wins_over_sleepers_sparse_gsis_column(self, seeded):
+        # Sleeper's own feed carries a gsis_id column, mostly null; the bridge's must not be lost to a
+        # same-named join column (the master mapped a fifth of the KTC-priced pool until 2026-10-09)
+        seeded["path::sleeper::league/players/incremental"] = seeded["path::sleeper::league/players/incremental"].with_columns(
+            pl.Series("gsis_id", [None, " G200 "]))
+        seeded["path::nflverse::fantasy_player_ids"] = seeded["path::nflverse::fantasy_player_ids"].with_columns(pl.Series("gsis_id", ["G100", None]))
+        by_key = {r["player_key"]: r for r in transform_dim_players_master().to_dicts()}
+        assert by_key["100"]["gsis_id"] == "G100"      # the bridge
+        assert by_key["200"]["gsis_id"] == "G200"      # Sleeper's, stripped, when the bridge has none
+
+    def test_one_player_per_gsis_placeholders_and_inactive_namesakes_lose_it(self, seeded):
+        sl = seeded["path::sleeper::league/players/incremental"]
+        extra = pl.concat([
+            sl.filter(pl.col("player_id") == "100").with_columns(pl.lit("300").alias("player_id"), pl.lit("Duplicate Player").alias("full_name"), pl.lit("Inactive").alias("status")),
+            sl.filter(pl.col("player_id") == "100").with_columns(pl.lit("400").alias("player_id"), pl.lit("Pat Mahomes").alias("full_name"), pl.lit("Inactive").alias("status")),
+        ])
+        seeded["path::sleeper::league/players/incremental"] = pl.concat([sl, extra])
+        ff = seeded["path::nflverse::fantasy_player_ids"]
+        seeded["path::nflverse::fantasy_player_ids"] = pl.concat([ff, ff.filter(pl.col("sleeper_id") == "100").with_columns(pl.lit("300").alias("sleeper_id")),
+                                                                  ff.filter(pl.col("sleeper_id") == "100").with_columns(pl.lit("400").alias("sleeper_id"))])
+        df = transform_dim_players_master()
+        by_key = {r["player_key"]: r for r in df.to_dicts()}
+        assert by_key["100"]["gsis_id"] == "G100" and by_key["300"]["gsis_id"] is None and by_key["400"]["gsis_id"] is None
+        assert df.height == 4                                                  # the rows stay: the ledger keys on player_key
+        assert df.filter(pl.col("gsis_id").is_not_null()).select("gsis_id").n_unique() == df.filter(pl.col("gsis_id").is_not_null()).height
+
     def test_avatar_url_is_a_url_not_a_raw_id(self, seeded):
         # SPEC: when only a swish_id is available, avatar_url should be a usable
         # Sleeper CDN URL, not the bare id. Currently it coalesces the raw

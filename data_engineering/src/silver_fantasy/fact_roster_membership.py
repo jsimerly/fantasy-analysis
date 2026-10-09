@@ -751,8 +751,30 @@ def _lineage_franchise(df: pl.DataFrame, lineage_map: pl.DataFrame) -> pl.DataFr
     )
 
 
-def _read_player_presence(bucket_name: str, lineage_map: pl.DataFrame) -> pl.DataFrame:
-    """All daily roster_players snapshots -> (franchise_id, player_id, snapshot_date)."""
+def drop_stale_league_snapshots(present: pl.DataFrame, league_seasons: pl.DataFrame) -> pl.DataFrame:
+    """Per snapshot day and lineage, keep only the rows of the newest season's league in that
+    snapshot.
+
+    The daily roster job re-ingested the completed 2025 leagues on alternate days through
+    2026-09 (the dim_leagues_meta oscillation, fixed 2026-09-30), so a snapshot held BOTH a
+    lineage's 2025 roster and its 2026 roster. Both map to the same franchise_id (the key is
+    lineage + roster_id), so the frozen 2025 roster was booked as a second, overlapping holding
+    and the ledger churned by hundreds of interval boundaries a day: 88 overlapping stints and a
+    team-value series that jumped 7-10 % a week (data-quality suite + BACKLOG 35, 2026-10-09).
+    ``present``: (league_id, roster_id, player_id, snapshot_date); ``league_seasons``: (league_id,
+    league_lineage_id, season)."""
+    ls = league_seasons.select(pl.col("league_id").cast(pl.Utf8), pl.col("league_lineage_id").cast(pl.Utf8),
+                               pl.col("season").cast(pl.Int64, strict=False).alias("_season"))
+    p = present.with_columns(pl.col("league_id").cast(pl.Utf8)).join(ls, on="league_id", how="left")
+    newest = (p.group_by("snapshot_date", "league_lineage_id").agg(pl.col("_season").max().alias("_newest")))
+    return (p.join(newest, on=["snapshot_date", "league_lineage_id"], how="left")
+             .filter(pl.col("_season").is_null() | (pl.col("_season") == pl.col("_newest")))
+             .drop("league_lineage_id", "_season", "_newest"))
+
+
+def _read_player_presence(bucket_name: str, lineage_map: pl.DataFrame, league_seasons: pl.DataFrame | None = None) -> pl.DataFrame:
+    """All daily roster_players snapshots -> (franchise_id, player_id, snapshot_date); a completed
+    league that is re-snapshotted beside its successor is dropped (``drop_stale_league_snapshots``)."""
     from google.cloud import storage
     client = storage.Client()
     names = sorted(
@@ -769,6 +791,8 @@ def _read_player_presence(bucket_name: str, lineage_map: pl.DataFrame) -> pl.Dat
         ).with_columns(pl.lit(d).alias("snapshot_date"))
         frames.append(df)
     present = pl.concat(frames, how="vertical")
+    if league_seasons is not None:
+        present = drop_stale_league_snapshots(present, league_seasons)
     return _lineage_franchise(present, lineage_map).select("franchise_id", "player_id", "snapshot_date")
 
 
@@ -833,7 +857,8 @@ def _drafts_completed_by(drafts_df, day: str):
 
 
 def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df: pl.DataFrame,
-                        overrides_df: pl.DataFrame, drafts_df) -> pl.DataFrame:
+                        overrides_df: pl.DataFrame, drafts_df,
+                        league_seasons: pl.DataFrame | None = None) -> pl.DataFrame:
     """Per-day pick ownership over the daily traded_picks snapshots ->
     (franchise_id, pick_id, snapshot_date).
 
@@ -853,6 +878,8 @@ def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df:
     for n in names:
         d = n.split("load_date=")[1].split("/")[0]
         traded = pl.read_parquet(f"gs://{bucket_name}/{n}")
+        if league_seasons is not None:   # a completed league re-snapshotted beside its successor (see drop_stale_league_snapshots)
+            traded = drop_stale_league_snapshots(traded.with_columns(pl.lit(d).alias("snapshot_date")), league_seasons).drop("snapshot_date")
         # date-aware cutoff: only count drafts that had actually run by day `d`, so a
         # now-complete FUTURE draft can't retroactively roll earlier days' picks forward
         # a year (e.g. the 2026 class vanishing months before the 2026 draft).
@@ -1178,7 +1205,7 @@ def main():
     ).unique()
 
     print("Reading daily roster snapshots...")
-    present = _read_player_presence(bucket_name, lineage_map)
+    present = _read_player_presence(bucket_name, lineage_map, leagues_df.select("league_id", "league_lineage_id", "season"))
     print(f"  {present.height:,} player-days (raw)")
     print("Reconstructing season-rollover gaps from events (offseason draft + trades)...")
     present, rollover_windows = reconstruct_rollover_presence(present, leagues_df, bucket_name)
@@ -1205,7 +1232,8 @@ def main():
         drafts_df = None
 
     print("Resolving per-day pick ownership over traded_picks snapshots...")
-    pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df)
+    pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df,
+                                       leagues_df.select("league_id", "league_lineage_id", "season"))
 
     print("Reconstructing pre-snapshot pick ownership (mint/consume + trades)...")
     rounds_df = (

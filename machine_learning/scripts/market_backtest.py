@@ -174,7 +174,8 @@ def main() -> None:
     ap.add_argument("--first-cohort", type=int, default=2020)
     ap.add_argument("--last-cohort", type=int, default=None)
     ap.add_argument("--replacement", choices=["share", "fill", "weekly"], default="weekly")
-    ap.add_argument("--target", choices=["level", "residual", "opportunity"], default="level")
+    ap.add_argument("--target", choices=["level", "residual", "opportunity", "blend"], default="level")
+    ap.add_argument("--draft-rows", action="store_true", help="a pre-NFL row per drafted skill player (draft_rows.py)")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--tabpfn-params", nargs="*", default=[])
     ap.add_argument("--calibrate", default=False, help="career.HorizonModels calibrate option, e.g. games_table:tiers:0.5")
@@ -206,7 +207,7 @@ def main() -> None:
         args.horizons = sorted({int(h) for f in frames for h in f["horizon"].unique().to_list()})
     for h in (args.horizons if not args.from_dirs else []):
         H = list(range(1, h + 1))
-        bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement)
+        bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement, draft_rows=args.draft_rows)
         print(f"horizon {h}: cohorts {bc.cohorts[0]}-{bc.cohorts[-1]}")
         for backend in args.backends:
             cfg = ex.ExperimentConfig(name=f"{backend}{args.suffix}_h{h}", groups=args.groups.split(","), horizons=H, cohorts=bc.cohorts, device=args.device,
