@@ -1425,3 +1425,20 @@ t = 1.45) stays a tie.
     ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
     consensus for the live week once its backfill runs (owner's call).
 
+39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
+    by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
+    number 32.8?").** Not the exact-number memorisation -- neither the trees nor an in-context
+    model treats 32.8 as special -- but the replication is real: the four checkpoint snapshots of
+    one player-season carry the SAME next-season label, so one outcome gets four votes, and a
+    rich feature set lets the model over-trust those near-identical rows. `InSeasonModels(
+    next_one_per_season=True)` (`--inseason-next-one-per-season`) keeps one random snapshot week
+    per player-season for the next-season models (ROS labels differ by week and keep every
+    snapshot). Trees: base 0.546 / 0.559 / 0.582 / 0.596 -> 0.549 / 0.558 / 0.580 / 0.597 (a
+    wash on a quarter of the rows); all five groups 0.555 / 0.562 / 0.596 / 0.605 -> **0.554 /
+    0.577 / 0.606 / 0.607** (+0.015 at week 6, +0.010 at week 9). Stage 2e (ClaudeStage2e, after
+    2d): all five with the option on 3.5. The unified model's snapshot rows (item 32) have the
+    same shape (every horizon label repeated per snapshot week) and get the same option next.
+    Fuzzing (1 % noise) is not the remedy: it regularises gradient-trained nets, blurs tree
+    splits a little, and only degrades an in-context model's signal; what matters is that a
+    repeated outcome counts once, and the harness's train-test gap (`gap_h1`) is the detector.
+
