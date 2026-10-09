@@ -1295,7 +1295,19 @@ t = 1.45) stays a tie.
     5. *Full-precision inference* (`inference_precision=float32`): doubles the cost, sometimes
        tightens the tails; low expected gain, in the chain.
     Not worth the hours: more checkpoint weeks (the week is a feature), speed-only changes
-    (caching the career tail, a 20k cap) -- unless the budget is exceeded.
+    (caching the career tail, a 20k cap) -- unless the budget is exceeded. **Where the first
+    production run's hours went (py-spy on the live process, 2026-10-09 14:00, 4.5 h in):**
+    still in the career tail's `estimate_sigma`, which fits a SECOND complete pooled 3.5 model
+    (as of 2022) and predicts the 2023-25 holdout rows for all ten horizons, each predict a full
+    8-member pass over the context -- then the production predictions with the quantile bands,
+    then the in-season stage. Pooled 10 horizons x stacked x range x the sigma refit is roughly
+    three model builds; GPU-bound (cuda synchronize, the v3.5 forward), not stuck. Two
+    accuracy-neutral cuts for the weekly run: (a) sigma and the career tail depend only on the
+    completed seasons, so cache both per season and config (identical every week until the
+    season completes) -- the weekly run becomes the in-season stage alone (~1.5 h); (b) sigma
+    from the fitted model's own quantile spread instead of a holdout refit (TabPFN gives the
+    predictive distribution; the refit exists for the trees' sake) -- test that the WAR
+    pricing is unchanged before switching.
     **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
     (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
     (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**
