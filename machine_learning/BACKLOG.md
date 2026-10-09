@@ -1264,6 +1264,12 @@ t = 1.45) stays a tie.
       only the newest season's league; check `bronze.sleeper_rosters.one_league_per_lineage`.
       The ledger repairs itself on the next silver run after the merge (the overlap check's
       known_open note comes off then).
+    **Verified on the ledger rebuilt in memory with the fix** (not written to the lake; the DAG
+    does that after the merge): intervals 7,542 -> 6,372, overlapping stints 88 -> 5, interval
+    boundaries in September at most 57 a day (was 250+); the 2026 season's mean weekly move
+    0.94 % (was 1.72 %; 2025 = 0.99 %), the September weeks 1.3 / 1.9 / 2.6 % (were 7.5 / 10.5 /
+    9.3 %), 06-30 0.2 % (was 4.1 %), 08-11 3.0 % (was 4.5 %: a real trade week, partly). The Team
+    value summary on the page was republished from that rebuilt ledger (run_date 2026-10-09).
     Also closed from BACKLOG 34: the settings dim's lineage (`utils.chain_lineage`, shared with
     dim_leagues_meta) and the players master's gsis_id (the bridge's id was lost to a same-named
     Sleeper column -- the real cause of the 18 % coverage in item 33 -- and the "Duplicate
