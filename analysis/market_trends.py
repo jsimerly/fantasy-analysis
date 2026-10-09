@@ -220,7 +220,7 @@ def big_weeks(prices: pl.DataFrame, weeks: pl.DataFrame, fwd_short: int = 7, fwd
     w = w.join(sd, on=["player_id", "season"]).filter((pl.col("_n") >= 5) & (pl.col("_sd") > 0))
     w = w.with_columns(((pl.col("fpts") - pl.col("_prev_mean")) / pl.col("_sd")).alias("z"))
     big = w.filter(pl.col("z") >= 2.0).select("player_id", "season", "week", pl.col("game_date").cast(pl.Date).alias("game_date"), "position", "z", "fpts")
-    xw = market.load_crosswalk().select("gsis_id", "player_key").unique("gsis_id")
+    xw = prices.select("gsis_id", "player_key").drop_nulls().unique("gsis_id")      # the full crosswalk the prices carry (id, else name + position)
     big = big.join(xw, left_on="player_id", right_on="gsis_id", how="inner")
     p_short = forward_change(prices, fwd_short, "s"); p_long = forward_change(p_short, fwd_long, "l")
     px = p_long.select("player_key", "valuation_date", "ktc_value", "s_rel", "l_rel").sort("valuation_date")
@@ -238,7 +238,7 @@ def injuries(prices: pl.DataFrame, status: pl.DataFrame) -> dict:
     s = status.sort(["gsis_id", "season", "week"])
     s = s.with_columns(pl.col("status").shift(1).over(["gsis_id", "season"]).alias("_prev"))
     onset = s.filter(pl.col("status").is_in(["injured_out", "injured_reserve"]) & (pl.col("_prev") == "played"))
-    xw = market.load_crosswalk().select("gsis_id", "player_key").unique("gsis_id")
+    xw = prices.select("gsis_id", "player_key").drop_nulls().unique("gsis_id")
     onset = onset.join(xw, on="gsis_id", how="inner")
     # the status table has no dates: the week's first game date comes from the weekly points fact
     wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet").select("season", "week", pl.col("game_date").cast(pl.Date)).drop_nulls()
