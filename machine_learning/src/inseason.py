@@ -78,8 +78,17 @@ SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahe
 #               yards, targets and air yards per game
 OPP_COLS = ["op_xfp_pg", "op_pass_xfp_pg", "op_rush_xfp_pg", "op_rec_xfp_pg", "op_xfp_last3", "op_xfp_trend", "op_fp_oe_pg",
             "op_x_td_pg", "op_td_oe_pg", "op_x_yards_pg", "op_targets_pg", "op_air_yards_pg"]
+# consensus - a projection provider's point-in-time view (Sleeper's weekly projections, the full slate,
+#             2018 on): the projected PPR points for the coming week and their rank within the position,
+#             the mean projection over the weeks so far and how far the player has beaten it, the coming
+#             week's projection against his own rate to date, and a has-projection flag. The model learns
+#             from past seasons when the consensus was right and when rows that looked like this one beat it.
+CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has"]
+CONSENSUS_FIRST_SEASON = 2018
+PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
+FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
-                "opportunity": OPP_COLS}
+                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS}
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
@@ -177,6 +186,28 @@ def opportunity_features(ffo: pl.DataFrame, week: int) -> pl.DataFrame:
         (pl.col("_tdoe") / pl.col("_n")).alias("op_td_oe_pg"), (pl.col("_xyd") / pl.col("_n")).alias("op_x_yards_pg"),
         (pl.col("_tg") / pl.col("_n")).alias("op_targets_pg"), (pl.col("_air") / pl.col("_n")).alias("op_air_yards_pg"),
     ).with_columns((pl.col("op_xfp_last3") - pl.col("op_xfp_pg")).alias("op_xfp_trend")).drop("_n", "_xfp", "_pass", "_rush", "_rec", "_oe", "_xtd", "_tdoe", "_xyd", "_tg", "_air")
+
+
+def consensus_features(proj: pl.DataFrame, xwalk: pl.DataFrame, wk: pl.DataFrame, week: int) -> pl.DataFrame:
+    """(player_id, season) -> the provider's projection for week ``week + 1`` (PPR points and the rank
+    within the position that week), the mean projection over weeks 1..``week``, the player's PPR rate to
+    date minus that mean (beating the consensus), and the coming projection minus his rate to date.
+    ``proj``: (season, week, player_id = Sleeper id, position, pts_ppr); ``xwalk``: (sleeper_id, gsis_id);
+    ``wk``: the player-week fact, for the PPR actuals (``fpts_ppr_nflverse``)."""
+    x = (xwalk.select(pl.col("sleeper_id").cast(pl.Utf8).alias("sid"), pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"))
+              .drop_nulls().filter(pl.col("player_id") != "").unique("sid"))
+    pr = (proj.with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8).alias("sid"),
+                            pl.col("pts_ppr").cast(pl.Float64, strict=False))
+              .drop("player_id").join(x, on="sid", how="inner").filter(pl.col("pts_ppr").is_not_null()))
+    nxt = (pr.filter(pl.col("week") == week + 1)
+             .with_columns(pl.col("pts_ppr").rank(method="min", descending=True).over("season", "position").alias("cs_next_rank_pos"))
+             .select("player_id", "season", pl.col("pts_ppr").alias("cs_next_ppr"), pl.col("cs_next_rank_pos").cast(pl.Float64)))
+    td = pr.filter((pl.col("week") >= 1) & (pl.col("week") <= week)).group_by("player_id", "season").agg(pl.col("pts_ppr").mean().alias("cs_td_mean"))
+    act = wk.filter(pl.col("week") <= week).group_by("player_id", "season").agg(pl.col("fpts_ppr_nflverse").cast(pl.Float64).mean().alias("_td_ppr"))
+    out = (nxt.join(td, on=["player_id", "season"], how="full", coalesce=True).join(act, on=["player_id", "season"], how="left")
+              .with_columns((pl.col("_td_ppr") - pl.col("cs_td_mean")).alias("cs_beat_td"), (pl.col("cs_next_ppr") - pl.col("_td_ppr")).alias("cs_next_vs_td"),
+                            pl.lit(1.0).alias("cs_has")))
+    return out.drop("_td_ppr").unique(["player_id", "season"], keep="first", maintain_order=True)
 
 
 def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> pl.DataFrame:
@@ -279,7 +310,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                     depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
                     contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
-                    schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None) -> pl.DataFrame:
+                    schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None,
+                    consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -310,6 +342,9 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
             snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
         if opportunity is not None:
             snap = snap.join(opportunity_features(opportunity, w), on=["player_id", "season"], how="left")
+        if consensus is not None and consensus_xwalk is not None:
+            snap = snap.join(consensus_features(consensus, consensus_xwalk, wk, w), on=["player_id", "season"], how="left").with_columns(
+                pl.when(pl.col("season") >= CONSENSUS_FIRST_SEASON).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
         if schedules is not None:
             snap = (snap.with_columns(_norm_team().alias("_tm")).join(schedule_features(schedules, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
                         .drop("_tm"))

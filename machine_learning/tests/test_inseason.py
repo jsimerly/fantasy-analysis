@@ -288,3 +288,16 @@ class TestUsageRoleScheduleGroups:
         assert abs(o["op_targets_pg"] - 8.0) < 1e-9 and abs(o["op_x_yards_pg"] - 70.0) < 1e-9 and o["op_xfp_trend"] == 0.0
         assert "opportunity" in inseason.EXTRA_GROUPS and inseason.extra_columns(["opportunity"]) == inseason.OPP_COLS
 
+    def test_consensus_is_the_coming_weeks_projection_and_the_record_against_it(self):
+        proj = pl.DataFrame({"season": [2025] * 6, "week": [1, 2, 3, 4, 4, 4], "player_id": ["s1"] * 4 + ["s2", "s3"], "position": ["WR"] * 5 + ["RB"],
+                             "pts_ppr": [10.0, 12.0, 14.0, 20.0, 25.0, 9.0]})
+        xwalk = pl.DataFrame({"sleeper_id": ["s1", "s2", "s3", "s9"], "gsis_id": ["g1", "g2", "g3", None]})
+        wk = pl.DataFrame({"player_id": ["g1"] * 4, "season": [2025] * 4, "week": [1, 2, 3, 4], "fpts_ppr_nflverse": [15.0, 15.0, 15.0, 99.0]})
+        c = {r["player_id"]: r for r in inseason.consensus_features(proj, xwalk, wk, week=3).to_dicts()}
+        g1 = c["g1"]
+        assert g1["cs_next_ppr"] == 20.0 and g1["cs_next_rank_pos"] == 2.0                       # week 4: s2 (25) ranks first among WRs
+        assert abs(g1["cs_td_mean"] - 12.0) < 1e-9 and abs(g1["cs_beat_td"] - 3.0) < 1e-9       # weeks 1-3 only; beat the consensus by 3
+        assert abs(g1["cs_next_vs_td"] - 5.0) < 1e-9 and g1["cs_has"] == 1.0
+        assert c["g3"]["cs_next_rank_pos"] == 1.0 and c["g3"]["cs_td_mean"] is None             # the only RB; no projections before week 4
+        assert "g9" not in c and inseason.extra_columns(["consensus"]) == inseason.CONSENSUS_COLS
+

@@ -1357,3 +1357,40 @@ t = 1.45) stays a tie.
     beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
     *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
 
+38. **Consensus as an input the model learns to trust or beat (owner, 2026-10-09: "a model that
+    learns to trust consensus vs when our signal beats it is actually BRILLIANT ... we may even be
+    able to beat ROS projections too").** The idea: hand the model a projection provider's
+    point-in-time view as columns next to our usage, role, opportunity and career columns, and let
+    the in-context model learn from past seasons when the consensus was right and when rows that
+    looked like this one beat it -- stacking, learned in context, no hand-tuned blend.
+    **Data.** Sleeper's projections endpoint (`api.sleeper.app/projections/nfl/<season>/<week>`,
+    Rotowire-sourced, the full slate of ~3,100 players a week, 2018 on, keyed by Sleeper
+    player_id = our player_key; a season-level endpoint too, no as-of for past seasons). Pulled
+    2018-2026 locally for the prototype (505k rows; `--proj-dir`); the bronze ingestion
+    (`bronze/sleeper/projections/season=<Y>`, rebuilt daily for the current season so every
+    Monday's view is captured, backfilled once) is next. FantasyPros stays the consensus of
+    record for the live week but its history is survivorship-biased before 2020 (its CLAUDE.md).
+    **The group** (`consensus`, `inseason.consensus_features`): the coming week's projected PPR
+    points and rank within the position, the mean projection over the weeks so far, the player's
+    PPR rate to date minus that mean (beating the consensus), the coming projection minus his
+    rate, a has-projection flag (null before 2018). Sleeper id -> gsis through
+    `fantasy_player_ids`.
+    **Stage 1 (trees, 2026-10-09 14:40; ROS / next-season rank correlation, weeks 3 / 6 / 9 /
+    13):** base ROS 0.793 / 0.773 / 0.750 / 0.696, next 0.546 / 0.559 / 0.582 / 0.596.
+    *consensus*: ROS **0.806 / 0.787 / 0.760 / 0.708**, next 0.550 / 0.558 / 0.588 / 0.597 --
+    the largest single-group gain of the day, with 2018+ = a third of the training rows. The
+    provider's own coming-week projection as a ranking: ROS 0.774 / 0.766 / 0.728 / 0.671, next
+    0.547 / 0.566 / 0.576 / 0.564; its mean to date: ROS 0.783 / 0.758 / 0.703 / 0.640. So the
+    model with the consensus inside it out-ranks the consensus by 0.02-0.04 on rest of season
+    and by 0.03-0.04 on next season from week 9 (the week-3 and week-6 next-season reads are a
+    wash). Caveat: the provider's weekly number targets one game, not the rest of season; a true
+    ROS projection history does not exist in our data, so "beats ROS projections" is not yet the
+    claim -- "beats the provider's point-in-time view" is. *All four groups* (usage, role,
+    opportunity, consensus): ROS 0.807 / 0.793 / 0.758 / 0.715, next 0.552 / 0.565 / 0.595 /
+    0.607 -- the best model at every week on both reads. **Stage 2c queued** (ClaudeStage2c,
+    after 2b): consensus alone and all four on 3.5 at the stage-2 scope. **Next:** the bronze
+    ingestion + a quality check (freshness, the full slate, the current week present); the
+    season-level projection as a preseason career feature (2026 only has an as-of); FantasyPros
+    consensus for the live week once its backfill runs (owner's call); the provider's ROS number
+    captured weekly from now on so the ROS claim can be tested in a year.
+
