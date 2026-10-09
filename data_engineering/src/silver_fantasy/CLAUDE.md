@@ -67,6 +67,19 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
   and **reconstructed** (2021→2025-10-15, backward replay from the first snapshot using the deduped
   event log). Picks have no creation txn, so the universe is synthesized at each draft completion.
 
+- **A completed league can be re-snapshotted beside its successor.** The roster job's active-league
+  filter re-ingested the 2025 leagues on alternate days through 2026-09; both seasons of a lineage
+  share `franchise_id`, so the frozen old roster became a second, overlapping holding and the ledger
+  churned (BACKLOG 35). `fact_roster_membership.drop_stale_league_snapshots` keeps only the newest
+  season's league per snapshot day and lineage; `data_quality` checks the snapshot has one league per
+  lineage.
+- **Lineage on every dim.** `league_lineage_id` only comes from the full_load; incremental-only seasons
+  get it from `utils.chain_lineage` (previous_league_id chained to the root) in both `dim_leagues_meta`
+  and `dim_league_settings_scd2`.
+- **`dim_players_master.gsis_id`** is the bridge's (`fantasy_player_ids`) coalesced over Sleeper's own
+  sparse column (a same-named join column had silently dropped the bridge's); `dedupe_gsis` nulls the
+  id on "Duplicate Player" placeholders and inactive namesakes so one Sleeper player holds a gsis_id.
+
 ## Watch-outs when editing
 - Dedup on read: the bronze `transactions/full_load` and `drafts/drafts` carry duplicate dumps.
 - The historical `transactions/draft_picks/full_load` had a **from/to swap** (now corrected on read);

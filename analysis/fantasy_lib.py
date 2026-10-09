@@ -132,19 +132,31 @@ def load_player_values(qb_format: str = DEFAULT_QB_FORMAT,
     )
 
 
-def load_player_values_blend(qb_format: str = "SF") -> pl.DataFrame:
-    """SF + TE-Premium player values with a Standard fallback for the pre-TEP era.
+def blend_values(std: pl.DataFrame, tep: pl.DataFrame) -> pl.DataFrame:
+    """One continuous SF series: the TE-premium value wherever KTC published one that day, the
+    Standard value otherwise, per (valuation_date, player_id).
 
-    KTC only began publishing TE-premium (TEP) values ~2025-10; before that only SF Standard
-    exists. This returns one continuous series: SF/TEP from the TEP era onward, SF/Standard
-    before it — the lens KTC's power rankings use, extended back over the full history. Shape
-    matches load_player_values (valuation_date, player_id, name, position, ktc_value, fc_value)."""
-    std = load_player_values(qb_format, "Standard")
-    tep = load_player_values(qb_format, "TEP")
+    Per row, not per era: the TEP series has holes the Standard series does not (the 2026-09 KTC
+    outage was backfilled from per-player history pages, which carry Standard only, so TEP has no
+    rows 2026-09-08 -> 09-30). An era cut-over left those weeks with no values at all and the
+    team-value series jumped by 7-10 % a week; see BACKLOG 35."""
     if tep.is_empty():
         return std
-    tstart = tep["valuation_date"].min()
-    return pl.concat([std.filter(pl.col("valuation_date") < tstart), tep], how="vertical_relaxed")
+    t = tep.select("valuation_date", "player_id", pl.col("ktc_value").alias("_tep"))
+    return (std.join(t, on=["valuation_date", "player_id"], how="full", coalesce=True)
+               .with_columns(pl.coalesce(["_tep", "ktc_value"]).alias("ktc_value"))
+               .drop("_tep")
+               .sort(["valuation_date", "player_id"]))
+
+
+def load_player_values_blend(qb_format: str = "SF") -> pl.DataFrame:
+    """SF + TE-Premium player values with a Standard fallback wherever TEP is missing.
+
+    KTC only began publishing TE-premium (TEP) values ~2025-10 and its TEP series has holes since;
+    this returns one continuous series: SF/TEP where it exists, SF/Standard otherwise, per day and
+    player (``blend_values``) — the lens KTC's power rankings use, extended over the full history.
+    Shape matches load_player_values (valuation_date, player_id, name, position, ktc_value, fc_value)."""
+    return blend_values(load_player_values(qb_format, "Standard"), load_player_values(qb_format, "TEP"))
 
 
 def load_pick_values_round(source: str, qb_format: str = DEFAULT_QB_FORMAT,

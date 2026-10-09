@@ -7,6 +7,31 @@ from silver_fantasy.utils import get_latest_bronze_path
 
 load_dotenv()
 
+PLACEHOLDER_NAME = 'Duplicate Player'   # Sleeper's inactive stand-in rows, which carry a real player's gsis_id
+
+
+def dedupe_gsis(dim_players: pl.DataFrame) -> pl.DataFrame:
+    """One Sleeper player per gsis_id: a placeholder row ("Duplicate Player") never keeps a gsis_id,
+    and when two real rows share one the active row keeps it and the other is nulled (the row stays,
+    the player universe is the ledger's key). Found by the data-quality suite 2026-10-09: 7 shared
+    gsis_ids, six of them placeholders."""
+    name = pl.coalesce([pl.col('full_name'), pl.col('first_name') + ' ' + pl.col('last_name')]) if 'full_name' in dim_players.columns         else pl.col('first_name') + ' ' + pl.col('last_name')
+    status = pl.col('status') if 'status' in dim_players.columns else pl.lit(None, dtype=pl.Utf8)
+    ranked = dim_players.with_columns([
+        (name == PLACEHOLDER_NAME).fill_null(False).alias('_placeholder'),
+        (status == 'Active').fill_null(False).alias('_active'),
+    ])
+    # order within a gsis_id: real before placeholder, active before inactive, then the Sleeper id
+    ranked = ranked.with_columns(
+        pl.when(pl.col('gsis_id').is_null()).then(1)
+          .otherwise(pl.col('_placeholder').cast(pl.Int8).mul(2).add(pl.col('_active').not_().cast(pl.Int8)).rank('ordinal').over('gsis_id'))
+          .alias('_gsis_rank')
+    )
+    return ranked.with_columns(
+        pl.when(pl.col('_placeholder') | (pl.col('_gsis_rank') > 1)).then(None).otherwise(pl.col('gsis_id')).alias('gsis_id')
+    ).drop(['_placeholder', '_active', '_gsis_rank'])
+
+
 def transform_dim_players_master() -> pl.DataFrame:
     bucket_name = os.environ.get('GCS_BUCKET_NAME')
 
@@ -33,9 +58,13 @@ def transform_dim_players_master() -> pl.DataFrame:
 
     # ID Map: Select relevant ID columns and dedupe
     # We rename columns to avoid collisions before the join
+    # The bridge's gsis_id is renamed: Sleeper's own feed carries a sparse ``gsis_id`` too, and a
+    # same-named join column lands as ``gsis_id_right`` and is silently ignored -- which left the
+    # master with Sleeper's 3,900 ids instead of the bridge's 6,200 (a fifth of the KTC-priced pool
+    # mapped; found by the data-quality suite 2026-10-09). The two are coalesced below, bridge first.
     ids_clean = ff_ids_df.select([
         pl.col('sleeper_id').cast(pl.Utf8),
-        pl.col('gsis_id'),
+        pl.col('gsis_id').alias('ff_gsis_id'),
         pl.col('ktc_id').cast(pl.Int64),
         pl.col('fantasy_data_id').cast(pl.Int64).alias('fantasydata_id'),
         pl.col('rotoworld_id').cast(pl.Int64),
@@ -61,6 +90,14 @@ def transform_dim_players_master() -> pl.DataFrame:
         right_on='sleeper_id',
         how='left'
     )
+
+    dim_players = dim_players.with_columns(
+        pl.coalesce([
+            pl.col('ff_gsis_id').cast(pl.Utf8).str.strip_chars(),
+            pl.col('gsis_id').cast(pl.Utf8).str.strip_chars() if 'gsis_id' in dim_players.columns else pl.lit(None, dtype=pl.Utf8),
+        ]).replace({'': None}).alias('gsis_id')
+    ).drop('ff_gsis_id')
+    dim_players = dedupe_gsis(dim_players)
 
     # Step 2: Attach NFL Metadata using the newly acquired GSIS ID
     dim_players = dim_players.join(

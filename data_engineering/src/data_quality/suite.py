@@ -99,6 +99,20 @@ def rosters_cover(ctx):
     return x.ok(f"all {ctx.current_leagues().height} current leagues in the snapshot ({snap.height:,} roster rows)", snap.height)
 
 
+@check("bronze.sleeper_rosters.one_league_per_lineage", "bronze/sleeper/rosters/roster_players/daily", "error",
+       "the roster job re-ingested the completed 2025 leagues beside the 2026 ones on alternate days through 2026-09, booking a frozen second roster per franchise in the ledger (BACKLOG 35)")
+def rosters_one_per_lineage(ctx):
+    _, snap = ctx.latest_partition("bronze/sleeper/rosters/roster_players/daily/")
+    if snap is None:
+        return x.fail("no snapshot")
+    lm = ctx.table("dim_leagues_meta").select(pl.col("league_id").cast(pl.Utf8), "league_lineage_id")
+    per = snap.select(pl.col("league_id").cast(pl.Utf8)).unique().join(lm, on="league_id", how="left").group_by("league_lineage_id").agg(pl.col("league_id").n_unique().alias("n"), pl.col("league_id").alias("ids"))
+    multi = per.filter(pl.col("n") > 1)
+    if multi.height:
+        return x.fail(f"{multi.height} lineages with several leagues in the snapshot", multi.height, "; ".join(f"{r['league_lineage_id']}: {r['ids']}" for r in multi.to_dicts()))
+    return x.ok(f"one league per lineage in the snapshot ({per.height} lineages)", 0)
+
+
 @check("bronze.sleeper_transactions.in_season_activity", "bronze/sleeper/transactions/transactions/daily", "warn",
        "transactions silently stopped at leg 14 of 2025 (incremental fetched weeks=[1] once complete); trades missing = picks and players mis-owned")
 def txn_activity(ctx):
@@ -289,6 +303,16 @@ def fav_future(ctx):
 @check("fact.asset_values.no_gaps_30d", "fact_asset_values", "error", "a missed day is a hole in every as-of market join; the 2026-09 outage left weeks of them")
 def fav_gaps(ctx):
     return x.no_date_gaps(_ktc_sf(ctx), "valuation_date", ctx.today, 30, 1)
+
+
+@check("fact.asset_values.tep_lens_no_gaps_30d", "fact_asset_values", "warn",
+       "the TE-premium series (the power-ranking lens) has holes the Standard series does not: the 2026-09 outage was backfilled from history pages that carry Standard only, and the team-value blend had no values for four weeks (BACKLOG 35)",
+       known_open="2026-09-08 -> 09-30 has no TEP rows and cannot be recovered; the analysis blend now falls back to Standard per day; this note comes off after 2026-10-31")
+def fav_tep_gaps(ctx):
+    tep = ctx.table("fact_asset_values").filter((pl.col("market_type") == "DYNASTY") & (pl.col("qb_format") == "SF") & (pl.col("te_premium") == "TEP") & pl.col("ktc_value").is_not_null())
+    if tep.height == 0:
+        return x.ok("no TEP series yet")
+    return x.no_date_gaps(tep, "valuation_date", ctx.today, 30, 1)
 
 
 @check("fact.asset_values.history_continuous", "fact_asset_values", "error",

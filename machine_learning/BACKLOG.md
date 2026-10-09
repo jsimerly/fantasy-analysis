@@ -1240,3 +1240,33 @@ t = 1.45) stays a tie.
       player 11370 in lineage ...304 held by two franchises 2026-06-30 to 08-24).
     **Next:** fix the three (each fix removes its `known_open`); the Cloud Run job + DAG step
     deploy with the merge; add a check with every future data bug.
+
+35. **The jagged 2026 team-value series (owner, 2026-10-09: "seems to not be nearly as smooth
+    as other seasons").** Measured: the league-wide mean week-over-week move of a franchise's
+    adjusted value was 1.0 % in the 2025 season and 1.8 % in 2026, with 7.5 / 10.5 / 9.3 % on
+    the weeks of 2026-09-22 / 09-29 / 10-06 and 4-4.5 % on 2026-06-30 and 08-11. Two causes,
+    both now fixed and both now watched by the data-quality suite:
+    - *The value lens had a hole.* `fact_asset_values` has no TE-premium rows 2026-09-08 ->
+      09-30: the KTC outage was backfilled from per-player history pages, which carry Standard
+      only. `fantasy_lib.load_player_values_blend` cut over from Standard to TEP by era, so the
+      four September grid dates had no player values at all and the as-of join fell off its
+      tolerance. Fix: `blend_values` falls back to Standard per (day, player) (TEP only differs
+      for TEs anyway); check `fact.asset_values.tep_lens_no_gaps_30d` (known_open until the
+      September window leaves the 30-day lookback).
+    - *The ledger booked a frozen second roster per franchise.* The daily roster job
+      re-ingested the completed 2025 leagues beside the 2026 ones on alternate days through
+      2026-09 (the dim_leagues_meta oscillation, fixed 2026-09-30: from 10-01 the snapshot holds
+      the 3 current leagues only). The 2025 and 2026 leagues of a lineage share franchise_id
+      (lineage + roster_id), so the stale 2025 roster became a second, overlapping holding that
+      opened and closed every other day: 250 interval boundaries a day in late September, the 88
+      overlapping stints the quality suite found, and offseason jumps on 06-30 / 08-11. Fix:
+      `fact_roster_membership.drop_stale_league_snapshots` keeps, per snapshot day and lineage,
+      only the newest season's league; check `bronze.sleeper_rosters.one_league_per_lineage`.
+      The ledger repairs itself on the next silver run after the merge (the overlap check's
+      known_open note comes off then).
+    Also closed from BACKLOG 34: the settings dim's lineage (`utils.chain_lineage`, shared with
+    dim_leagues_meta) and the players master's gsis_id (the bridge's id was lost to a same-named
+    Sleeper column -- the real cause of the 18 % coverage in item 33 -- and the "Duplicate
+    Player" placeholders / shared ids are nulled, `dedupe_gsis`). The three dims rebuild on the
+    next DAG run; their known_open notes come off once the suite passes on the rebuilt lake.
+

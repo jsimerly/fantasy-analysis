@@ -189,6 +189,25 @@ def test_the_ledger_catches_an_empty_fact_and_the_pick_double_count():
     assert "2027 R1=11/10" in f["fact.roster_membership.picks_conserved"]["detail"]
 
 
+def test_a_completed_league_re_snapshotted_beside_its_successor():
+    frames, parts = healthy()
+    lg, lin, _ = LEAGUES[0]
+    stale = frames["rosters/today"].filter(pl.col("league_id") == lg).with_columns(pl.lit(lin).alias("league_id"))   # the 2025 league of the same lineage
+    frames["rosters/today"] = pl.concat([frames["rosters/today"], stale])
+    r = failed(run(frames, parts, only="one_league_per_lineage"))["bronze.sleeper_rosters.one_league_per_lineage"]
+    assert "1 lineages" in r["observed"] and lin in r["detail"] and r["effective_severity"] == "error"
+
+
+def test_the_tep_lens_hole_is_reported_but_known_open():
+    frames, parts = healthy()
+    fav = frames["fact_asset_values"]
+    tep = fav.filter(pl.col("valuation_date") >= date(2026, 9, 1)).with_columns(pl.lit("TEP").alias("te_premium")).filter(pl.col("valuation_date") != date(2026, 10, 1))
+    frames["fact_asset_values"] = pl.concat([fav, tep])
+    r = failed(run(frames, parts, only="tep_lens"))["fact.asset_values.tep_lens_no_gaps_30d"]
+    assert "2026-10-01" in r["observed"] and r["effective_severity"] == "warn" and r["known_open"]
+    assert run(frames, parts, only="asset_values.no_gaps_30d")["passed"].all()      # the Standard series is whole
+
+
 def test_transactions_freeze_and_a_missing_draft():
     frames, parts = healthy()
     lg = LEAGUES[0][0]

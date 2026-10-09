@@ -51,6 +51,9 @@ export (`machine_learning/scripts/export_projections.py`) picks up the newest
   (`silver_fantasy/_pick_projection`), not baked in. `load_pick_values_round(..., carry_forward_seasons=)`
   maturity-shifts the furthest-priced class forward to value picks beyond KTC's pricing floor.
 - **Value lenses:** KTC = deep history; FantasyCalc = better market signal but only ~2025-10→.
+  `load_player_values_blend` = TEP where KTC published it that day, Standard otherwise, per (day,
+  player) (`blend_values`): the TEP series has holes (2026-09-08→09-30) the Standard one does not, and
+  an era cut-over left the team-value grid with no values for four weeks (BACKLOG 35).
   **TEP** values only exist ~2025-10+ (Standard fallback before that).
 
 ## Gotchas
