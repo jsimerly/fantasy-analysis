@@ -1466,6 +1466,18 @@ t = 1.45) stays a tie.
     by title odds with their curve, each rostered player's d_title / d_playoffs beside his ROS
     wins, the trade targets by what they add in title odds, and a top-heaviness read (the gap
     between the first and second title favourites). The export carries it as `title_odds`; the
-    Rosters tab shows it beside WAR. WAR stays the dynasty currency: for seasons two through ten
-    the standings are unknown and a win's title value is the same for everyone.
+    Rosters tab shows it beside WAR (the standings table's playoffs / bye / title columns, the
+    selected team's title curve, a title-odds column per rostered player and per trade target,
+    the record and odds in the team head). WAR stays the dynasty currency: for seasons two
+    through ten the standings are unknown and a win's title value is the same for everyone.
+    **First run (2026-10-09, week-4 roster views, 20k seasons):** Stuck in High School is the
+    top-heavy one -- Timmy Becker (4-0, 687 pf) 45.6 % title, the owner (2-2) 14.9 %, Piroozi
+    13.0 %; Football Guys of Indianapolis -- the owner (4-0) 35.8 %, Ack 20.1 %, Canales 15.0 %;
+    Sigma Chi -- Hagen (4-0) 32.6 %, the owner (4-0) 25.1 %, Woody 10.8 %. In Stuck a point a
+    week on the owner's lineup is worth about 0.7 points of title odds; Jaxon Smith-Njigba would
+    add 7.0 points of title odds to that roster against 0.88 rest-of-season wins. **Next:** rerun
+    after each production refresh (the week-5 views land with tonight's export); a title
+    objective in the trade builder; the bye and the seed tiebreak by division where a league
+    uses one; dynasty-horizon title equity (next season's odds from projected standings) as a
+    second lens.
 
