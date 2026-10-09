@@ -1276,3 +1276,29 @@ t = 1.45) stays a tie.
     Player" placeholders / shared ids are nulled, `dedupe_gsis`). The three dims rebuild on the
     next DAG run; their known_open notes come off once the suite passes on the rebuilt lake.
 
+36. **Accuracy programme for the Monday-night refresh (owner, 2026-10-09: "I'm okay with long runs
+    ... as long as we aren't exceeding 8 hours ... #1 prio is model perf").** The weekly refresh
+    runs after Monday Night Football so the career projections move weekly; speed is not a goal,
+    an 8-hour budget is. The binding constraint for TabPFN is context, not time: the in-season
+    model has 199k snapshot rows but holds 50k in 16 GB (also the model's pretraining limit).
+    Levers, each through the harness under the co-primary rule, in order:
+    1. *Ensemble size* (`--tabpfn-params n_estimators=32`; production = the library default) on
+       the career and the in-season model. Zero code; `chain_accuracy.sh` (scratchpad) is
+       written, queued only on the owner's word.
+    2. *Context bagging*: K models on different 50k-row draws of the snapshots, averaged; uses
+       all the data despite the VRAM cap at K x the cost. Needs `InSeasonModels(bags=K)`.
+    3. *Relevance-first context*: for a week-w projection fill the context with weeks w +- 1
+       across seasons first, then recent seasons, instead of the four checkpoint weeks recent
+       seasons first. Needs `training_subset(around_week=)`.
+    4. *The unified model* (item 32, queued): what makes the career projection itself move
+       week to week. Draft rows and the blend target (items 30 / 26) are queued ahead of it.
+    5. *Full-precision inference* (`inference_precision=float32`): doubles the cost, sometimes
+       tightens the tails; low expected gain, in the chain.
+    Not worth the hours: more checkpoint weeks (the week is a feature), speed-only changes
+    (caching the career tail, a 20k cap) -- unless the budget is exceeded.
+    **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
+    (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
+    (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**
+    more VRAM would be an accuracy lever (context), a faster GPU only a time one; a Vertex H100
+    per run is the cheap way to a bigger context if bagging (2) does not close the gap.
+
