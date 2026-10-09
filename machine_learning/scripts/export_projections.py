@@ -125,6 +125,7 @@ def main() -> None:
     ap.add_argument("--as-of-season", type=int, default=2025, help="career run (replacement level; the data for --source career)")
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--market-run-date", default=None, help="which backtests/market/run_date=<d> summary the performance tab shows (default: the newest)")
     args = ap.parse_args()
 
     # the run's metrics: an in-season refresh writes its own (since 2026-10-05); otherwise the career
@@ -230,6 +231,8 @@ def main() -> None:
         paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
         return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
+    if args.market_run_date:                      # the production model's own backtest, not whichever experiment ran last
+        performance["market"] = gcs_io.read_ml_json("backtests", "market", f"run_date={args.market_run_date}", "summary.json")
     # the season-end value card is only shown when it is at least as fresh as the market backtest: the two
     # score the same question, and a stale trees-era card next to a newer production one misleads
     v, mk = performance.get("value"), performance.get("market")
