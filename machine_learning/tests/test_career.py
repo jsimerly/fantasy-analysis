@@ -333,3 +333,25 @@ class TestBlendTarget:
             assert np.allclose(out["h1_ppg_hat"].to_numpy(), expect, atol=1e-6), stacked
         with pytest.raises(ValueError):
             career.HorizonModels([1], target="halfway")
+
+
+class TestSigmaOnePass:
+    def test_estimate_sigma_predicts_the_holdout_once_and_matches_the_per_horizon_residuals(self, monkeypatch):
+        df = career.attach_horizon_targets(career.career_features(_big_table()), [1, 2])
+        m = career.HorizonModels([1, 2], n_estimators=5, max_depth=2).fit(df)
+        calls = []
+        real = career.HorizonModels.predict
+        def spy(self, frame):
+            calls.append(frame.height); return real(self, frame)
+        monkeypatch.setattr(career.HorizonModels, "predict", spy)
+        sigma = m.estimate_sigma(df, holdout=3)
+        assert len(calls) == 1                                           # one prediction over the union, not one per horizon
+        assert set(sigma) == {1, 2} and all("__all__" in s for s in sigma.values())
+        monkeypatch.setattr(career.HorizonModels, "predict", real)
+        # the same numbers as predicting each horizon's rows separately
+        as_of = career.last_complete_season(df); cut = as_of - 3
+        tmp = career.HorizonModels([1, 2], n_estimators=5, max_depth=2).fit(df, as_of_season=cut)
+        for k in (1, 2):
+            rows = df.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
+            pred = tmp.predict(rows).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
+            assert abs(sigma[k]["__all__"] - float(pred["_r"].std())) < 1e-6

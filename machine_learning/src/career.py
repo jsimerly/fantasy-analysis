@@ -526,15 +526,20 @@ class HorizonModels:
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - holdout
         tmp = HorizonModels(self.horizons, self.device, self.seed, **self._kw()).fit(train, as_of_season=cut)
-        sigma: dict[int, dict[str, float]] = {}
-        for k in self.horizons:
-            rows = train.filter(
-                pl.col(f"h{k}_observable") & pl.col(f"h{k}_played")
-                & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of)
-            )
-            if rows.height == 0:
+        # ONE prediction over the union of the holdout rows, then the per-horizon residuals from it. A
+        # prediction is row-wise (the context is the training set), so this equals predicting each
+        # horizon's rows separately -- which, with pooled horizons, cost H predictions of an H-fold
+        # expanded frame: the sigma stage was most of a six-hour production run (BACKLOG 36).
+        conds = {k: (pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
+                 for k in self.horizons}
+        union = train.filter(pl.any_horizontal([c for c in conds.values()]))
+        for k, c in conds.items():
+            if union.filter(c).height == 0:
                 raise ValueError(f"horizon {k}: no holdout outcomes between {cut} and {as_of}")
-            pred = tmp.predict(rows).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
+        pred_all = tmp.predict(union)
+        sigma: dict[int, dict[str, float]] = {}
+        for k, c in conds.items():
+            pred = pred_all.filter(c).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
             per_pos = {pos: float(s) for pos, s in pred.group_by("position").agg(pl.col("_r").std()).iter_rows()
                        if s is not None}
             per_pos["__all__"] = float(pred["_r"].std())
