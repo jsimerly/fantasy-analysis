@@ -83,12 +83,18 @@ OPP_COLS = ["op_xfp_pg", "op_pass_xfp_pg", "op_rush_xfp_pg", "op_rec_xfp_pg", "o
 #             the mean projection over the weeks so far and how far the player has beaten it, the coming
 #             week's projection against his own rate to date, and a has-projection flag. The model learns
 #             from past seasons when the consensus was right and when rows that looked like this one beat it.
+CS_LINE = {"pass_att": "pass_att", "pass_yd": "pass_yd", "pass_td": "pass_td", "rush_att": "rush_att", "rush_yd": "rush_yd", "rush_td": "rush_td",
+           "rec_tgt": "tgt", "rec": "rec", "rec_yd": "rec_yd", "rec_td": "rec_td"}     # the provider's projected stat line, coming week
 CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has"]
+# consensus_line - the provider's projected stat line for the coming week (volume and scoring by phase) and the
+#                  expected touchdown rate to date against the player's actual one (touchdown luck through the
+#                  provider's eyes); its own group so the funnel can judge it apart from the points
+CONSENSUS_LINE_COLS = [f"cs_next_{v}" for v in CS_LINE.values()] + ["cs_td_tgt", "cs_td_rush_att", "cs_td_xtd", "cs_td_luck"]
 CONSENSUS_FIRST_SEASON = 2018
 PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
 FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
-                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS}
+                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS}
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
@@ -199,15 +205,25 @@ def consensus_features(proj: pl.DataFrame, xwalk: pl.DataFrame, wk: pl.DataFrame
     pr = (proj.with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8).alias("sid"),
                             pl.col("pts_ppr").cast(pl.Float64, strict=False))
               .drop("player_id").join(x, on="sid", how="inner").filter(pl.col("pts_ppr").is_not_null()))
+    line = [c for c in CS_LINE if c in pr.columns]
+    num = lambda c: pl.col(c).cast(pl.Float64, strict=False)  # noqa: E731
     nxt = (pr.filter(pl.col("week") == week + 1)
              .with_columns(pl.col("pts_ppr").rank(method="min", descending=True).over("season", "position").alias("cs_next_rank_pos"))
-             .select("player_id", "season", pl.col("pts_ppr").alias("cs_next_ppr"), pl.col("cs_next_rank_pos").cast(pl.Float64)))
-    td = pr.filter((pl.col("week") >= 1) & (pl.col("week") <= week)).group_by("player_id", "season").agg(pl.col("pts_ppr").mean().alias("cs_td_mean"))
-    act = wk.filter(pl.col("week") <= week).group_by("player_id", "season").agg(pl.col("fpts_ppr_nflverse").cast(pl.Float64).mean().alias("_td_ppr"))
+             .select("player_id", "season", pl.col("pts_ppr").alias("cs_next_ppr"), pl.col("cs_next_rank_pos").cast(pl.Float64),
+                     *[num(c).alias(f"cs_next_{CS_LINE[c]}") for c in line]))
+    xtd = sum((num(c).fill_null(0.0) for c in ("pass_td", "rush_td", "rec_td") if c in pr.columns), pl.lit(0.0))   # a phase the provider leaves blank is zero, not unknown
+    td = (pr.filter((pl.col("week") >= 1) & (pl.col("week") <= week)).group_by("player_id", "season")
+            .agg(pl.col("pts_ppr").mean().alias("cs_td_mean"),
+                 *([num("rec_tgt").mean().alias("cs_td_tgt")] if "rec_tgt" in pr.columns else []),
+                 *([num("rush_att").mean().alias("cs_td_rush_att")] if "rush_att" in pr.columns else []),
+                 xtd.mean().alias("cs_td_xtd")))
+    atd = sum((pl.col(c).cast(pl.Float64, strict=False).fill_null(0.0) for c in ("pass_tds", "rush_tds", "rec_tds") if c in wk.columns), pl.lit(0.0))
+    act = wk.filter(pl.col("week") <= week).group_by("player_id", "season").agg(pl.col("fpts_ppr_nflverse").cast(pl.Float64).mean().alias("_td_ppr"), atd.mean().alias("_td_atd"))
     out = (nxt.join(td, on=["player_id", "season"], how="full", coalesce=True).join(act, on=["player_id", "season"], how="left")
               .with_columns((pl.col("_td_ppr") - pl.col("cs_td_mean")).alias("cs_beat_td"), (pl.col("cs_next_ppr") - pl.col("_td_ppr")).alias("cs_next_vs_td"),
+                            (pl.col("_td_atd") - pl.col("cs_td_xtd")).alias("cs_td_luck"),      # touchdowns per game above what the provider expected
                             pl.lit(1.0).alias("cs_has")))
-    return out.drop("_td_ppr").unique(["player_id", "season"], keep="first", maintain_order=True)
+    return out.drop("_td_ppr", "_td_atd").unique(["player_id", "season"], keep="first", maintain_order=True)
 
 
 def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> pl.DataFrame:

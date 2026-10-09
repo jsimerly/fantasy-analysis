@@ -166,7 +166,7 @@ def main() -> None:
     if "opportunity" in is_groups:
         ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
     proj = xw_ids = None
-    if "consensus" in is_groups:
+    if "consensus" in is_groups or "consensus_line" in is_groups:
         proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
         ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
         xw_ids = ids.filter(pl.col("load_date") == ids["load_date"].max()).select("sleeper_id", "gsis_id")
