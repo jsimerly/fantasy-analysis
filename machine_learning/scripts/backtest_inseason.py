@@ -106,6 +106,7 @@ def main() -> None:
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies get a pre-NFL row (college + draft capital) the career tail projects, instead of the rookie tail table")
     ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the career tail's training table (unified.py), e.g. 9")
     ap.add_argument("--snapshot-from", type=int, default=2010)
+    ap.add_argument("--max-horizon", type=int, default=10, help="career tail horizons 1..N (10 = production; fewer for a cheaper unified-model test)")
     ap.add_argument("--target", choices=["level", "residual", "blend"], default="level", help="career ppg target: the level, the change from this season's rate, or the mean of both")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
@@ -119,6 +120,10 @@ def main() -> None:
             tabpfn_params[k] = v
 
     weeks = [int(w) for w in args.weeks.split(",")]
+    global H
+    if args.max_horizon != len(H):
+        H = list(range(1, args.max_horizon + 1))
+        print(f"career tail horizons 1..{args.max_horizon}", flush=True)
 
     import draft_rows as dr
     snap_weeks = [int(w) for w in args.snapshot_weeks.split(",") if w]
