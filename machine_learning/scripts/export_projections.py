@@ -241,6 +241,7 @@ def main() -> None:
     trades_summary = latest_summary("trades")          # analysis/trade_report.py --publish (the leagues' trading, scored)
     slots_summary = latest_summary("pick_slots")       # analysis/pick_slots_report.py --publish (expected draft slot of every team's next pick)
     team_value_summary = latest_summary("team_value")  # analysis/team_value.py --publish (each franchise's roster value week by week, KTC power-ranking terms)
+    market_trends_summary = latest_summary("market_trends")   # analysis/market_trends.py --publish (how the KTC market prices over time: seasonality, momentum, age, picks, injuries)
     try:
         import experiments
         led = experiments.load_ledger()
@@ -293,7 +294,7 @@ def main() -> None:
             print("owned picks: skipped:", str(e)[:200])
     career_backend = proj["career_backend"][0] if "career_backend" in proj.columns and proj.height else "xgb"
     out = {
-        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary, "team_value": team_value_summary, "career_backend": career_backend,
+        "picks": picks_out, "trades": trades_summary, "pick_slots": slots_summary, "team_value": team_value_summary, "market_trends": market_trends_summary, "career_backend": career_backend,
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
