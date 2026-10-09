@@ -1486,3 +1486,14 @@ t = 1.45) stays a tie.
     uses one; dynasty-horizon title equity (next season's odds from projected standings) as a
     second lens.
 
+41. **Production switched to TabPFN 3.5 (2026-10-09, week 5).** `weekly_refresh.py --preset
+    production` (3.5, the full feature set, stacked, pooled horizons 1-10, quantile bands,
+    in-season on 3.5) ran 09:29 -> 19:16 (9 h 47 m: the sigma loop's H-squared predictions,
+    since fixed, plus the quantile pass over the ten-horizon frame, next to fix) and wrote
+    `inseason/season=2026/week=5/run_date=2026-10-09` (474 players, 345 priced, rank agreement
+    with KTC 0.927), the three league roster views, the trade and draft-slot reports; the export
+    carries the Market tab, the Season column, the week-5 title odds, team value and the
+    performance tab pinned to the 2026-10-07 3.5 market backtest (the production backtest was cut
+    for time). Page v46 published 19:20. The Monday-night job is this preset, after the Tuesday
+    DAG, with the career tail and sigma cached per season once item 36 lands.
+
