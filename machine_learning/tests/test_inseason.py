@@ -228,3 +228,51 @@ class TestModels:
         wk, ss = _big()
         snaps = inseason.baselines(inseason.build_snapshots(wk, ss, weeks=[3]))
         assert snaps["bl_blend_ppg"].null_count() == 0
+
+
+class TestUsageRoleScheduleGroups:
+    """BACKLOG 37: the usage (Next Gen + snaps), role (recency + status) and schedule groups."""
+
+    def test_usage_weights_next_gen_by_targets_and_attempts_and_skips_the_season_row(self):
+        rec = pl.DataFrame({"season": [2025] * 3, "season_type": ["REG"] * 3, "week": [0, 1, 2], "player_gsis_id": ["g1"] * 3,
+                            "targets": [20, 5, 15], "avg_separation": [9.9, 2.0, 4.0], "avg_cushion": [9.9, 6.0, 6.0], "percent_share_of_intended_air_yards": [50.0, 30.0, 40.0],
+                            "avg_intended_air_yards": [9.9, 10.0, 12.0], "avg_yac_above_expectation": [9.9, 1.0, -1.0], "catch_percentage": [99.0, 80.0, 60.0]})
+        rush = pl.DataFrame({"season": [2025] * 2, "season_type": ["REG"] * 2, "week": [1, 2], "player_gsis_id": ["g2"] * 2, "rush_attempts": [10, 30],
+                             "efficiency": [4.0, 3.0], "rush_yards_over_expected_per_att": [1.0, 0.0], "percent_attempts_gte_eight_defenders": [20.0, 40.0], "avg_time_to_los": [2.8, 2.6]})
+        status = pl.DataFrame({"season": [2025] * 4, "week": [1, 2, 3, 4], "gsis_id": ["g1"] * 4, "status": ["played"] * 4, "offense_pct": [0.5, 0.6, 0.8, 0.9]})
+        u = inseason.usage_features(rec, rush, status, week=3)
+        g1 = u.filter(pl.col("player_id") == "g1").to_dicts()[0]
+        assert abs(g1["ng_sep"] - (5 * 2.0 + 15 * 4.0) / 20) < 1e-9 and abs(g1["ng_air_share"] - 35.0) < 1e-9     # week 0 skipped
+        assert abs(g1["sn_pct_td"] - (0.5 + 0.6 + 0.8) / 3) < 1e-9 and g1["sn_trend"] == 0.0                     # week 4 excluded
+        g2 = u.filter(pl.col("player_id") == "g2").to_dicts()[0]
+        assert abs(g2["ng_rush_eff"] - (10 * 4.0 + 30 * 3.0) / 40) < 1e-9 and g2["ng_sep"] is None
+
+    def test_role_windows_and_the_trailing_run_of_played_weeks(self):
+        wk = pl.DataFrame({"player_id": ["p"] * 6, "season": [2025] * 6, "week": [1, 2, 3, 4, 5, 6], "fpts": [10.0, 12.0, 8.0, 20.0, 30.0, 99.0],
+                           "targets": [5, 5, 5, 10, 10, 99], "rush_att": [0] * 6, "rec": [3, 3, 3, 7, 7, 99]})
+        status = pl.DataFrame({"season": [2025] * 7, "week": [1, 2, 3, 4, 5, 6, 7], "gsis_id": ["p"] * 7,
+                               "status": ["played", "injured_out", "bye", "played", "played", "played", "played"], "offense_pct": [None] * 7})
+        r = inseason.role_features(wk, status, week=5).to_dicts()[0]
+        assert r["last1_fpts"] == 30.0 and abs(r["last5_ppg"] - 16.0) < 1e-9 and abs(r["last3_targets_pg"] - 25 / 3) < 1e-9
+        assert abs(r["tgt_trend"] - (25 / 3 - 7.0)) < 1e-9
+        assert r["games_since_return"] == 2 and r["missed_last3"] == 0 and r["td_injured_weeks"] == 1    # byes neutral, week 6+ unseen
+        r3 = inseason.role_features(wk, status, week=3).to_dicts()[0]
+        assert r3["games_since_return"] == 0 and r3["missed_last3"] == 1
+
+    def test_schedule_uses_only_played_games_for_opponent_strength(self):
+        sch = pl.DataFrame({"season": [2025] * 5, "game_type": ["REG"] * 5, "week": [1, 2, 3, 4, 5],
+                            "home_team": ["A", "B", "A", "C", "A"], "away_team": ["B", "C", "C", "A", "B"],
+                            "home_score": [30, 20, None, None, None], "away_score": [10, 20, None, None, None]})
+        s = inseason.schedule_features(sch, week=2, last_week=5)
+        a = s.filter(pl.col("team") == "A").to_dicts()[0]
+        assert a["sch_games_left"] == 3                        # weeks 3, 4, 5
+        assert abs(a["sch_opp_pd_next"] - 0.0) < 1e-9          # next: C, who drew in week 2
+        assert abs(a["sch_opp_pd"] - ((0.0 + 0.0 + -10.0) / 3)) < 1e-9    # C, C, B (B: lost by 20 in week 1, drew week 2 -> -10 per game)
+        assert a["sch_bye_ahead"] == 0
+        c = s.filter(pl.col("team") == "C").to_dicts()[0]
+        assert c["sch_games_left"] == 2 and c["sch_bye_ahead"] == 1       # no week-5 game
+
+    def test_groups_are_registered_and_build_snapshots_joins_them(self):
+        assert set(inseason.EXTRA_GROUPS) >= {"usage", "role", "schedule"}
+        assert inseason.extra_columns(["role"]) == inseason.ROLE_COLS
+

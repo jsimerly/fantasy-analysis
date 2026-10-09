@@ -56,7 +56,29 @@ TEAM_WEEK_SRC = ["mkt_margin_td", "mkt_total_td", "mkt_win_prob_td", "point_diff
 TEAM_WEEK_COLS = [f"tm_{c}" for c in TEAM_WEEK_SRC]
 CONTRACT_SRC = ["apy_cap_pct", "guaranteed_cap_pct", "years_left", "contract_year", "is_rookie_deal", "contract_age", "apy_cap_pct_pos_pctl"]
 CONTRACT_SNAP_COLS = [f"ct_{c}" for c in CONTRACT_SRC] + ["ct_has_contract"]
-EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS}
+# usage    - Next Gen Stats to date (receiving: separation, cushion, share of intended air yards, depth of
+#            target, YAC over expected, catch rate; rushing: efficiency, yards over expected per attempt,
+#            stacked-box rate, time to the line) and snap share to date + its three-week trend
+# role     - recency windows beyond the three-game form (last game, last five, targets and touches over the
+#            last three vs the season rate) and the status table (games since returning from a missed
+#            week, misses in the last three, injured and dnp weeks to date)
+# schedule - the remaining regular-season schedule: games left, the remaining opponents' point
+#            differential to date (mean, and the next opponent's), a bye still ahead
+NGS_REC_SRC = {"avg_separation": "sep", "avg_cushion": "cushion", "percent_share_of_intended_air_yards": "air_share",
+               "avg_intended_air_yards": "adot", "avg_yac_above_expectation": "yac_oe", "catch_percentage": "catch_pct"}
+NGS_RUSH_SRC = {"efficiency": "rush_eff", "rush_yards_over_expected_per_att": "ryoe_att",
+                "percent_attempts_gte_eight_defenders": "box8", "avg_time_to_los": "time_los"}
+USAGE_COLS = [f"ng_{v}" for v in NGS_REC_SRC.values()] + [f"ng_{v}" for v in NGS_RUSH_SRC.values()] + ["sn_pct_td", "sn_pct_last3", "sn_trend"]
+ROLE_COLS = ["last1_fpts", "last5_ppg", "last3_targets_pg", "last3_touches_pg", "tgt_trend", "touch_trend",
+             "games_since_return", "missed_last3", "td_injured_weeks", "td_dnp_weeks"]
+SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahead"]
+EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS}
+NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
+NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
+STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
+SCHEDULES_PATH = "bronze/nflverse/schedules"
+MISSED_STATUSES = ["injured_out", "injured_reserve", "inactive", "dnp", "suspended"]
+INJURED_STATUSES = ["injured_out", "injured_reserve"]
 TEAM_CODE = {"OAK": "LV", "SD": "LAC", "STL": "LA", "JAC": "JAX", "LAR": "LA"}
 CONTRACT_FIRST_SEASON = 1994
 
@@ -88,6 +110,85 @@ def contract_features(contracts: pl.DataFrame) -> pl.DataFrame:
     return (c.select(["player_id", "season"] + [pl.col(x).cast(pl.Float64, strict=False).alias(f"ct_{x}") for x in CONTRACT_SRC if x in c.columns]
                      + [pl.lit(1.0).alias("ct_has_contract")])
              .unique(["player_id", "season"], keep="first", maintain_order=True))
+
+
+def _wmean(x: str, w: str) -> pl.Expr:
+    """A mean of ``x`` weighted by ``w`` (null when nothing was weighted)."""
+    return (pl.col(x) * pl.col(w)).sum() / pl.when(pl.col(w).sum() > 0).then(pl.col(w).sum()).otherwise(None)
+
+
+def usage_features(ngs_rec: pl.DataFrame | None, ngs_rush: pl.DataFrame | None, status: pl.DataFrame | None, week: int) -> pl.DataFrame:
+    """(player_id, season) -> Next Gen receiving / rushing to date (weeks 1..``week``, regular season,
+    weighted by targets / attempts; week 0 is the season aggregate and is skipped) and the snap share to
+    date with its three-week trend. Sources are optional; a missing one leaves its columns absent."""
+    parts = []
+    if ngs_rec is not None and ngs_rec.height:
+        r = ngs_rec.filter((pl.col("week") >= 1) & (pl.col("week") <= week) & ((pl.col("season_type") == "REG") if "season_type" in ngs_rec.columns else True))
+        r = r.with_columns(pl.col("player_gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64), pl.col("targets").cast(pl.Float64))
+        parts.append(r.group_by("player_id", "season").agg(
+            *[_wmean(src, "targets").alias(f"ng_{dst}") for src, dst in NGS_REC_SRC.items() if src in r.columns and dst != "air_share"],
+            *([pl.col("percent_share_of_intended_air_yards").mean().alias("ng_air_share")] if "percent_share_of_intended_air_yards" in r.columns else [])))
+    if ngs_rush is not None and ngs_rush.height:
+        u = ngs_rush.filter((pl.col("week") >= 1) & (pl.col("week") <= week) & ((pl.col("season_type") == "REG") if "season_type" in ngs_rush.columns else True))
+        u = u.with_columns(pl.col("player_gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64), pl.col("rush_attempts").cast(pl.Float64))
+        parts.append(u.group_by("player_id", "season").agg(*[_wmean(src, "rush_attempts").alias(f"ng_{dst}") for src, dst in NGS_RUSH_SRC.items() if src in u.columns]))
+    if status is not None and status.height and "offense_pct" in status.columns:
+        s = (status.filter((pl.col("week") <= week) & pl.col("offense_pct").is_not_null())
+                   .with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64), pl.col("offense_pct").cast(pl.Float64))
+                   .sort("week"))
+        parts.append(s.group_by("player_id", "season").agg(pl.col("offense_pct").mean().alias("sn_pct_td"), pl.col("offense_pct").tail(3).mean().alias("sn_pct_last3"))
+                      .with_columns((pl.col("sn_pct_last3") - pl.col("sn_pct_td")).alias("sn_trend")))
+    if not parts:
+        return pl.DataFrame(schema={"player_id": pl.Utf8, "season": pl.Int64})
+    out = parts[0]
+    for q in parts[1:]:
+        out = out.join(q, on=["player_id", "season"], how="full", coalesce=True)
+    return out
+
+
+def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> pl.DataFrame:
+    """(player_id, season) -> recency windows from the played weeks <= ``week`` (last game, last five, the
+    last three games' targets and touches per game against the season rate) and, from the status
+    table, games since the player last missed a week (byes are neutral), misses in the last three
+    weeks, injured and dnp weeks to date."""
+    sub = wk.filter(pl.col("week") <= week).sort("week").with_columns((pl.col("rush_att") + pl.col("rec")).alias("_touches"))
+    out = sub.group_by("player_id", "season").agg(
+        pl.col("fpts").last().alias("last1_fpts"), pl.col("fpts").tail(5).mean().alias("last5_ppg"),
+        pl.col("targets").tail(3).mean().alias("last3_targets_pg"), pl.col("_touches").tail(3).mean().alias("last3_touches_pg"),
+        pl.col("targets").mean().alias("_tg"), pl.col("_touches").mean().alias("_to"),
+    ).with_columns((pl.col("last3_targets_pg") - pl.col("_tg")).alias("tgt_trend"), (pl.col("last3_touches_pg") - pl.col("_to")).alias("touch_trend")).drop("_tg", "_to")
+    if status is None or status.height == 0:
+        return out
+    s = (status.filter((pl.col("week") <= week) & (pl.col("status") != "bye"))
+               .with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64),
+                             pl.col("status").is_in(MISSED_STATUSES).alias("_missed"), pl.col("status").is_in(INJURED_STATUSES).alias("_inj"),
+                             pl.col("status").is_in(["dnp", "inactive"]).alias("_dnp"), (pl.col("status") == "played").alias("_played"))
+               .sort("week"))
+    st = s.group_by("player_id", "season").agg(
+        pl.col("_played").cast(pl.Int8).reverse().cum_prod().sum().alias("games_since_return"),   # the trailing run of played weeks
+        pl.col("_missed").filter(pl.col("week") > week - 3).sum().alias("missed_last3"),
+        pl.col("_inj").sum().alias("td_injured_weeks"), pl.col("_dnp").sum().alias("td_dnp_weeks"),
+    )
+    return out.join(st, on=["player_id", "season"], how="full", coalesce=True)
+
+
+def schedule_features(schedules: pl.DataFrame, week: int, last_week: int = 18) -> pl.DataFrame:
+    """(season, team) -> the remaining regular-season schedule after ``week``: games left, the remaining
+    opponents' mean point differential per game to date (their games <= ``week``, so nothing from the
+    future), the next opponent's, and whether a bye is still ahead. Team codes are the current ones."""
+    g = schedules.filter((pl.col("game_type") == "REG") if "game_type" in schedules.columns else True).with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
+    long = pl.concat([
+        g.select("season", "week", _norm_team("home_team").alias("team"), _norm_team("away_team").alias("opp"), (pl.col("home_score") - pl.col("away_score")).cast(pl.Float64).alias("pd")),
+        g.select("season", "week", _norm_team("away_team").alias("team"), _norm_team("home_team").alias("opp"), (pl.col("away_score") - pl.col("home_score")).cast(pl.Float64).alias("pd")),
+    ])
+    strength = long.filter((pl.col("week") <= week) & pl.col("pd").is_not_null()).group_by("season", "team").agg(pl.col("pd").mean().alias("_opp_pd")).rename({"team": "opp"})
+    ahead = long.filter(pl.col("week") > week).join(strength, on=["season", "opp"], how="left").sort("week")
+    season_last = g.group_by("season").agg(pl.col("week").max().alias("_last"))
+    return (ahead.group_by("season", "team").agg(pl.len().alias("sch_games_left"), pl.col("_opp_pd").mean().alias("sch_opp_pd"),
+                                                 pl.col("_opp_pd").first().alias("sch_opp_pd_next"), pl.col("week").n_unique().alias("_weeks"))
+                 .join(season_last, on="season", how="left")
+                 .with_columns(((pl.col("_last").fill_null(last_week) - week) > pl.col("_weeks")).cast(pl.Int8).alias("sch_bye_ahead"))
+                 .drop("_weeks", "_last"))
 
 
 # ---------------------------------------------------------------------------- snapshots
@@ -143,7 +244,9 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
 
 def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
                     depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
-                    contracts: pl.DataFrame | None = None) -> pl.DataFrame:
+                    contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,
+                    ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
+                    schedules: pl.DataFrame | None = None, role: bool = False) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -166,6 +269,15 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
         if ct is not None:
             snap = snap.join(ct, on=["player_id", "season"], how="left").with_columns(
                 pl.when(pl.col("season") >= CONTRACT_FIRST_SEASON).then(pl.col("ct_has_contract").fill_null(0.0)).otherwise(None).alias("ct_has_contract"))
+        if ngs_receiving is not None or ngs_rushing is not None or status is not None:
+            usage = usage_features(ngs_receiving, ngs_rushing, status, w)
+            if usage.width > 2:
+                snap = snap.join(usage, on=["player_id", "season"], how="left")
+        if role:
+            snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
+        if schedules is not None:
+            snap = (snap.with_columns(_norm_team().alias("_tm")).join(schedule_features(schedules, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
+                        .drop("_tm"))
         ros = wk.filter(pl.col("week") > w).group_by("player_id", "season").agg(
             pl.len().alias("ros_games"), pl.col("fpts").sum().alias("ros_fpts"))
         snap = snap.join(ros, on=["player_id", "season"], how="left").join(nxt, on=["player_id", "season"], how="left")
