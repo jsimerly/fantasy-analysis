@@ -8,6 +8,7 @@ notebooks import from it.
 | File | What |
 | --- | --- |
 | `fantasy_lib.py` | shared GCS/cache loaders + the team-value measure (the heart of the folder) |
+| `market_trends.py` | how the KTC market prices over time: seasonality, momentum, the age discount vs realized WAR, the pick cycle, big-game and injury reactions (`--publish` for a page tab); tests in `tests/test_market_trends.py` |
 | `team_value.py` | the team-value data prep (weekly grid, startup-ramp trim, power / value series, calendar, owner colors) + the summary the page's **Team value** tab reads (`--publish`); tests in `tests/test_team_value.py` |
 | `02_team_value_over_time.ipynb` | per-league team value/power timelines with league-event overlays (a thin matplotlib client of `team_value.py`) |
 | `01_player_pick_trends.ipynb` | player/pick value trends |

@@ -74,6 +74,23 @@ matplotlib.
 .venv/Scripts/python analysis/team_value.py --out analysis/_cache/team_value --publish
 ```
 
+## How the market prices over time (`market_trends.py`)
+
+The KTC dynasty market's own regularities, measured on its daily history since 2020 (SF values,
+players priced at 1,000 or more; every relative move is market-adjusted, i.e. minus the median
+priced player's move, because KTC rescales and the whole pool drifts with the calendar):
+seasonality of prices by position, career stage and age (mean 30-day change by month), momentum
+versus reversion (the past 28-day move against the next 56 days, by decile and for 15 %+ moves),
+the market's age discount against realized three-year WAR on the market-backtest cohorts (realized
+rank minus market rank, wins per 1,000 KTC), the rookie-pick price cycle by months before the draft,
+the reaction to one big game (2+ sd above the season rate) over the next week and eight weeks, and
+the price path around an injury absence (by injury class and age). `--publish` writes
+`backtests/market_trends/run_date=<today>/summary.json` for a page tab.
+
+```
+machine_learning/.venv/Scripts/python analysis/market_trends.py --out analysis/_cache/market_trends --players <market backtest>/players.parquet --publish
+```
+
 ## Expected draft slot (`pick_slots.py`, `pick_slots_report.py`)
 
 The market prices a pick by its expected slot, so a 1st from a 2-win team is not a 1st from the
