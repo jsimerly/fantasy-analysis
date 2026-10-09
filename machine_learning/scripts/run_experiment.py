@@ -118,7 +118,7 @@ def main() -> None:
     ap.add_argument("--realized-replacement", choices=["share", "fill", "weekly"], default=None,
                     help="score realized value on a different replacement level (ledger shows projected/realized)")
     ap.add_argument("--fixed-scale", default="", help="fixed value scale per position, e.g. QB=0.8,TE=1.1 (applied to iv / war / par)")
-    ap.add_argument("--target", choices=["level", "residual", "opportunity"], default="level",
+    ap.add_argument("--target", choices=["level", "residual", "opportunity", "blend"], default="level",
                     help="ppg target: the level, the change from this season's rate, or opportunities per game x points per opportunity")
     ap.add_argument("--weight", choices=["ppg", "ppg2"], default=None, help="relevance sample weights for the career models")
     ap.add_argument("--backend", choices=["xgb", "tabpfn", "blend"], default="xgb",

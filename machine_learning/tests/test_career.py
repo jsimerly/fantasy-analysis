@@ -297,3 +297,39 @@ class TestBackend:
         assert seen == {"device": "cpu", "random_state": 7, "n_estimators": 4, "ignore_pretraining_limits": True, "fit_mode": "fit_preprocessors"}
         import os
         assert os.environ["TABPFN_MODEL_VERSION"] == "v2"
+
+
+class TestBlendTarget:
+    """The blend target averages the level prediction and the shifted residual prediction, per horizon and pooled."""
+
+    class _Mean:
+        def __init__(self):
+            self.mu = 0.0
+
+        def fit(self, X, y, sample_weight=None):
+            self.mu = float(np.mean(y)); return self
+
+        def predict(self, X):
+            return np.full(len(X), self.mu)
+
+    def _frame(self):
+        n = 40
+        rng = np.random.default_rng(3)
+        ppg = rng.uniform(2, 12, n)
+        return pl.DataFrame({"player_id": [f"p{i}" for i in range(n)], "season": [2020] * n, "position": ["WR"] * n, "age_at_season": [25.0] * n,
+                             "ppg": ppg, "games": [15] * n, "fpts": ppg * 15, "h1_observable": [True] * n, "h1_played": [True] * n,
+                             "h1_ppg": ppg + 1.0, "h1_games": [14] * n, "h1_fpts": (ppg + 1.0) * 14})
+
+    def test_blend_is_the_mean_of_level_and_residual(self, monkeypatch):
+        df = self._frame()
+        for stacked in (False, True):
+            m = career.HorizonModels([1], backend="xgb", target="blend", stacked=stacked)
+            monkeypatch.setattr(m, "_new", lambda: TestBlendTarget._Mean())
+            m.fit(df)
+            out = m.predict(df)
+            level = float(np.mean(df["h1_ppg"].to_numpy()))                    # the level model predicts the mean outcome
+            resid = 1.0 + df["ppg"].to_numpy()                                    # the residual model predicts +1 on top of each player's rate
+            expect = np.clip(0.5 * level + 0.5 * resid, 0.0, None)
+            assert np.allclose(out["h1_ppg_hat"].to_numpy(), expect, atol=1e-6), stacked
+        with pytest.raises(ValueError):
+            career.HorizonModels([1], target="halfway")

@@ -96,7 +96,7 @@ def main() -> None:
     ap.add_argument("--groups", default="base,career", help="feature groups for the career tail (feature_groups.GROUPS), e.g. base,career,injury,trend,situation,rookie,college")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons for the career tail: one games and one ppg model over every horizon")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies get a pre-NFL row (college + draft capital) the career tail projects, instead of the rookie tail table")
-    ap.add_argument("--target", choices=["level", "residual"], default="level", help="career ppg target: the level, or the change from this season's rate")
+    ap.add_argument("--target", choices=["level", "residual", "blend"], default="level", help="career ppg target: the level, the change from this season's rate, or the mean of both")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it

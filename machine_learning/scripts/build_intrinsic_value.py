@@ -49,7 +49,7 @@ def main() -> None:
     ap.add_argument("--groups", default="base,career", help="feature groups (feature_groups.GROUPS)")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons: one games and one ppg model over every horizon")
     ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (draft_rows.py)")
-    ap.add_argument("--target", choices=["level", "residual"], default="level")
+    ap.add_argument("--target", choices=["level", "residual", "blend"], default="level")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
                     help="also print the top 10 under horizon x discount alternatives")

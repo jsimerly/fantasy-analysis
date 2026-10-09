@@ -81,7 +81,7 @@ def main() -> None:
     ap.add_argument("--range", action="store_true", help="keep the career tail's 20/50/80 band (TabPFN backends): floor / ceiling wins on the page")
     ap.add_argument("--groups", default="base,career", help="feature groups for the career tail")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons for the career tail")
-    ap.add_argument("--target", choices=["level", "residual"], default="level")
+    ap.add_argument("--target", choices=["level", "residual", "blend"], default="level")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
