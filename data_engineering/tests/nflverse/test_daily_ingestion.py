@@ -67,3 +67,7 @@ class TestNextGenSlices:
         cfg = mod.DATASETS_CONFIG["ff_opportunity"]
         assert cfg["loader"].keywords == {"stat_type": "weekly"} and cfg["seasonal"] is True and cfg["start_season"] == 2006
 
+    def test_rankings_history_is_the_all_file_refreshed_weekly(self):
+        cfg = mod.DATASETS_CONFIG["ff_rankings_history"]
+        assert cfg["loader"].args == ("all",) and cfg["seasonal"] is False and cfg["schedule"] == mod.SCHEDULE_TUESDAY
+
