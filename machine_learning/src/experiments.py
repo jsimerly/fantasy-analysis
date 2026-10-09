@@ -153,6 +153,7 @@ def run_experiment(
                                       target=cfg.target, weight=cfg.weight, backend=cfg.backend, tabpfn_params=cfg.tabpfn_params,
                                       stacked=cfg.stacked, range_quantiles=cfg.range_quantiles, **cfg.params).fit(df, as_of_season=T)
         models.estimate_sigma(df, as_of_season=T)
+        fit_scores = in_sample_scores(models, df, T, H)
         t_fit = time.perf_counter() - t_cohort
         survival = career.fit_survival(df.filter((pl.col("season") + 1) <= T), cfg.cap)
         import draft_rows as _dr
@@ -219,6 +220,10 @@ def run_experiment(
             o = cohort.filter(pl.col(f"h{k}_observable"))
             if o.height:
                 row[f"mae_h{k}"] = float(np.mean(np.abs(o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float))))
+        row.update(fit_scores)
+        for k in (1, max(H)):                               # the train-test gap: out-of-sample minus in-sample season-points error
+            if f"mae_h{k}" in row and f"mae_h{k}_train" in row:
+                row[f"gap_h{k}"] = row[f"mae_h{k}"] - row[f"mae_h{k}_train"]
         row.update(range_scores(cohort, H))
         # magnitude bias (realized - projected season points, + = model too low): everyone, and prior top-12 by position
         prior = cohort.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
@@ -231,7 +236,7 @@ def run_experiment(
                 row[f"bias_top12_h{k}"] = float(res[top].mean()) if top.any() else None
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
-    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_", "share_"))]
+    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_", "share_", "gap_"))]
     # warn when market context is missing entirely (the primary metrics never need it)
     summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
                "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
@@ -245,6 +250,9 @@ def run_experiment(
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
+    for c in ("spearman_war_top", "mae_war_top"):          # cohort-to-cohort spread: the stability read
+        if c in per_cohort.columns and per_cohort[c].drop_nulls().len() >= 2:
+            summary[f"{c}_sd"] = float(per_cohort[c].drop_nulls().std())
     if "spearman_iv_vs_realized" in summary and "spearman_ktc_vs_realized" in summary:
         summary["iv_minus_ktc"] = summary["spearman_iv_vs_realized"] - summary["spearman_ktc_vs_realized"]
     return per_cohort, summary
@@ -258,7 +266,36 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
                "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread",
                # the range of outcomes (TabPFN quantiles): share of realized ppg inside the 20-80 band, pinball loss at 20/50/80
-               "ppg_cover_2080", "ppg_pinball", "ppg_skew"]
+               "ppg_cover_2080", "ppg_pinball", "ppg_skew",
+               # the overfitting reads: in-sample error and the train-test gap (season points), cohort spread of the co-primaries
+               "mae_h1_train", "gap_h1", "spearman_war_top_sd", "mae_war_top_sd"]
+
+
+IN_SAMPLE_ROWS = 2000
+
+
+def in_sample_scores(models, df: pl.DataFrame, T: int, horizons: list[int], n: int = IN_SAMPLE_ROWS, seed: int = 0) -> dict:
+    """The fitted models' error on a sample of their own training rows (seasons whose horizon-k
+    outcome was known by T), for h1 and the last horizon: ``mae_h{k}_train`` in season points. A
+    foundation model sees these labels in its context, so a tiny in-sample error with a large
+    out-of-sample one is memorisation; the gap to ``mae_h{k}`` is the overfitting read."""
+    out = {}
+    for k in sorted({1, max(horizons)}):
+        rows = df.filter(pl.col(f"h{k}_observable") & ((pl.col("season") + k) <= T))
+        if "is_snapshot_row" in rows.columns:
+            rows = rows.filter(pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) < 0.5)
+        if rows.height < 50:
+            continue
+        sample = rows.sample(n=min(n, rows.height), seed=seed)
+        try:
+            pred = models.predict(sample)
+        except Exception:  # noqa: BLE001 - a backend without a usable predict on these rows
+            continue
+        if f"h{k}_fpts_hat" not in pred.columns:
+            continue
+        y, yhat = sample[f"h{k}_fpts"].to_numpy().astype(float), pred[f"h{k}_fpts_hat"].to_numpy().astype(float)
+        out[f"mae_h{k}_train"] = float(np.mean(np.abs(y - yhat)))
+    return out
 
 
 def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
@@ -307,7 +344,7 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 PRIMARY = "spearman_war_top"
 RUNS_PREFIX = ("experiments", "runs")
 PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err",
-                  "ppg_pinball", "ppg_cover_2080", "ppg_skew"]
+                  "ppg_pinball", "ppg_cover_2080", "ppg_skew", "mae_h1_train", "gap_h1"]
 
 
 def save_run(per_cohort: pl.DataFrame, summary: dict) -> str:
@@ -414,6 +451,9 @@ def verdict(table: pl.DataFrame) -> str:
         if "ppg_cover_2080" in rows:
             c = rows["ppg_cover_2080"]
             stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
+    if "gap_h1" in rows:                      # the overfitting read: out-of-sample minus in-sample season-points error next year
+        g = rows["gap_h1"]
+        stats += f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts (in-sample A {rows['mae_h1_train']['a']:.1f} vs B {rows['mae_h1_train']['b']:.1f})" if "mae_h1_train" in rows else f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts"
     why = ("gain on " + " and ".join(n for n, g in (("ordering", gain_o), ("wins error", gain_e)) if g)) if (gain_o or gain_e) else "no gain past the line on either"
     dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
     if dips:

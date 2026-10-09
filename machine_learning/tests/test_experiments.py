@@ -157,3 +157,22 @@ def test_regime_stamp_and_pairing_warning(monkeypatch, capsys):
     ex.paired("a", "d"); assert "regime unknown for d" in capsys.readouterr().out
     row = ex.append_result(None, {"name": "x", "regime": s, "timestamp": "t"})
     assert row["regime"][0] == s and "regime" in ex.LEDGER_COLS
+
+
+def test_in_sample_scores_and_the_gap_use_the_training_rows_only():
+    import experiments as ex
+
+    class _M:
+        def predict(self, df):
+            return df.with_columns((pl.col("h1_fpts") + 10.0).alias("h1_fpts_hat"))     # 10 points off on every row
+
+    n = 120
+    df = pl.DataFrame({"season": [2015] * 60 + [2019] * 60, "h1_observable": [True] * n, "h1_fpts": [100.0] * n,
+                       "is_snapshot_row": [False] * 110 + [True] * 10})
+    s = ex.in_sample_scores(_M(), df, T=2016, horizons=[1])
+    assert abs(s["mae_h1_train"] - 10.0) < 1e-9                                           # only the 2015 rows (known by 2016) are in sample
+    assert ex.in_sample_scores(_M(), df.head(20), T=2016, horizons=[1]) == {}             # too few rows: nothing
+    assert "gap_h1" in ex.PAIRED_METRICS and "mae_h1_train" in ex.LEDGER_COLS and "spearman_war_top_sd" in ex.LEDGER_COLS
+    t = _paired_table(-0.5, 3.0)
+    t = pl.concat([t, pl.DataFrame({"metric": ["gap_h1", "mae_h1_train"], "a": [12.0, 20.0], "b": [25.0, 8.0], "diff_b_minus_a": [13.0, -12.0], "se": [1.0, 1.0], "t": [13.0, -12.0], "b_wins": [8, 0], "cohorts": [8, 8]})])
+    assert "train-test gap h1 A 12.0 vs B 25.0" in ex.verdict(t)
