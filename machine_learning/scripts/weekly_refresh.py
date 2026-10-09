@@ -31,6 +31,22 @@ import power  # noqa: E402
 
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 STEPS = ["inseason", "war", "analysis", "export"]
+# the adopted production configuration (BACKLOG 22, owner's call 2026-10-09): TabPFN 3.5 with the
+# owner's feature set and pooled horizons for the career tail, TabPFN 3.5 for the in-season model,
+# the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
+PRESETS = {
+    "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
+                       inseason_backend="tabpfn"),
+}
+
+
+def apply_preset(args):
+    """Overlay a named preset on the parsed arguments (explicit flags do not override it: a preset is the configuration)."""
+    name = getattr(args, "preset", None)
+    if name:
+        for k, v in PRESETS[name].items():
+            setattr(args, k, v)
+    return args
 # the analysis reports the page embeds (draft-slot standings, the trade log) run in the repo-root
 # venv (analysis/ has its own deps); when it is absent this interpreter is used
 ANALYSIS_PY = ROOT.parent / ".venv" / "Scripts" / "python.exe"
@@ -68,7 +84,8 @@ def main() -> None:
     ap.add_argument("--target", choices=["level", "residual"], default="level")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
-    args = ap.parse_args()
+    ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
+    args = apply_preset(ap.parse_args())
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
     season, week = current_season_week()
