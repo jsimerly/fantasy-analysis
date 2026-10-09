@@ -1307,7 +1307,14 @@ t = 1.45) stays a tie.
     season completes) -- the weekly run becomes the in-season stage alone (~1.5 h); (b) sigma
     from the fitted model's own quantile spread instead of a holdout refit (TabPFN gives the
     predictive distribution; the refit exists for the trees' sake) -- test that the WAR
-    pricing is unchanged before switching.
+    pricing is unchanged before switching. **Found and fixed the same afternoon (py-spy
+    locals: the loop was on horizon 8 of 10 at 15:20):** `estimate_sigma` predicted the holdout
+    rows once PER HORIZON, and with pooled horizons every prediction expands the frame H-fold,
+    so the sigma stage was H x H = 100 horizon-predictions of the 8-member ensemble over a 60k
+    context instead of 10. It now predicts the union of the holdout rows once and takes each
+    horizon's residuals from that frame -- row-wise identical (spec-tested against the
+    per-horizon loop), about ten times cheaper. The running production job kept the old code
+    (restarting would not have finished sooner); every later run has the fix.
     **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
     (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
     (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**
@@ -1441,4 +1448,24 @@ t = 1.45) stays a tie.
     Fuzzing (1 % noise) is not the remedy: it regularises gradient-trained nets, blurs tree
     splits a little, and only degrades an in-context model's signal; what matters is that a
     repeated outcome counts once, and the harness's train-test gap (`gap_h1`) is the detector.
+
+40. **Title odds: the championship lens next to WAR (owner, 2026-10-09: "maximize our
+    championship odds, not our win rate ... it does show up as important in leagues where they
+    are top heavy").** `machine_learning/src/title.py`: a Monte Carlo of the remaining
+    regular-season matchups from each roster's projected lineup points (the roster view the page
+    already uses, plus the league's curve offset) and the league's weekly spread, seeded by record
+    then points for, Sleeper's default bracket one week per round (4 teams: two rounds; 6: byes
+    for the top two, 3v6 / 4v5, then 1 v the 4/5 winner and 2 v the 3/6 winner) -> each team's
+    chance of the playoffs, a bye and the title, expected wins and seed; `title_curve` repeats it
+    on common random numbers over a grid of weekly-point shifts for one team, which is what a
+    player's marginal title odds interpolate on (a player's weekly lineup points = his `m_par_1`
+    lineup gain over his projected games, spread over the NFL weeks left). `analysis/title_odds.py`
+    builds the season per league from the latest `war/league=<slug>/.../teams.parquet` +
+    `meta.json` and Sleeper live (records, points for, every week's matchups, the playoff format)
+    and publishes `backtests/title_odds/run_date=<d>/summary.json`: per league, the teams ranked
+    by title odds with their curve, each rostered player's d_title / d_playoffs beside his ROS
+    wins, the trade targets by what they add in title odds, and a top-heaviness read (the gap
+    between the first and second title favourites). The export carries it as `title_odds`; the
+    Rosters tab shows it beside WAR. WAR stays the dynasty currency: for seasons two through ten
+    the standings are unknown and a win's title value is the same for everyone.
 
