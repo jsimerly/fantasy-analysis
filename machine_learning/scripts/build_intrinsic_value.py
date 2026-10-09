@@ -49,6 +49,7 @@ def main() -> None:
     ap.add_argument("--groups", default="base,career", help="feature groups (feature_groups.GROUPS)")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons: one games and one ppg model over every horizon")
     ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (draft_rows.py)")
+    ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py)")
     ap.add_argument("--target", choices=["level", "residual", "blend"], default="level")
     ap.add_argument("--no-write", action="store_true")
     ap.add_argument("--sensitivity", action="store_true",
@@ -58,7 +59,7 @@ def main() -> None:
     H = list(range(1, args.horizon + 1))
     today = datetime.now(timezone.utc).date()
 
-    df = career.build_career_matrix(H, draft_rows=args.draft_rows)
+    df = career.build_career_matrix(H, draft_rows=args.draft_rows, snapshot_weeks=[int(w) for w in args.snapshot_weeks.split(",") if w] or None)
     groups = fg.resolve(args.groups.split(","))
     if args.groups != "base,career":
         df = fg.assemble(df, groups, fg.Context())

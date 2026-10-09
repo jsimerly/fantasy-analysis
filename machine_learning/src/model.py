@@ -25,9 +25,10 @@ NUMERIC_FEATURES = [
     "lag1_fpts", "lag1_ppg", "lag1_games", "lag1_pass_yds", "lag1_rush_yds", "lag1_rec_yds",
     "lag1_targets", "lag1_rec", "lag1_total_touches", "lag2_fpts", "lag2_ppg", "lag2_games",
     "d_fpts_1", "d_ppg_1",
+    "row_week",            # weeks of the season behind the row: 18 for a complete season, W for a mid-season snapshot (unified.py), 0 for a draft row
 ]
 POSITIONS = ["QB", "RB", "WR", "TE"]
-FLAG_COLS = ["is_undrafted", "is_rookie", "is_draft_row"]   # is_draft_row: a pre-NFL row of a drafted player (draft_rows.py)
+FLAG_COLS = ["is_undrafted", "is_rookie", "is_draft_row", "is_snapshot_row"]   # draft_rows.py / unified.py mark their rows
 FEATURE_COLS = NUMERIC_FEATURES + FLAG_COLS + [f"pos_{p}" for p in POSITIONS]
 
 DEFAULT_PARAMS = dict(

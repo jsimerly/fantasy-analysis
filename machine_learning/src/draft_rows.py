@@ -39,6 +39,7 @@ def build_draft_rows(xwalk: pl.DataFrame, season_fact: pl.DataFrame, first_draft
         "player_id", pl.col("cfbd_id").cast(pl.Int64), (pl.col("draft_year") - 1).alias("season"), "draft_year",
         pl.col("name").cast(pl.Utf8).alias("player_name"), "position", "draft_round", "draft_pick", "age_at_season",
         pl.lit(0).alias("exp_at_season"), pl.lit(True).alias("is_rookie"), pl.lit(False).alias("is_undrafted"), pl.lit(True).alias("is_draft_row"),
+        pl.lit(0, pl.Int64).alias("row_week"),
         pl.lit(True).alias("season_complete"), pl.lit(None, pl.Utf8).alias("team"),
     ).sort(["draft_year", "draft_pick"])
 
@@ -51,14 +52,27 @@ def with_draft_rows(matrix: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([m, r], how="diagonal_relaxed")
 
 
+def _flag(df: pl.DataFrame, col: str) -> pl.Expr:
+    if col not in df.columns:
+        return pl.lit(False)
+    return pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0) > 0.5
+
+
 def is_draft(df: pl.DataFrame) -> pl.Expr:
     """Boolean expression for the draft rows; False when the column is absent or null (a feature frame
     may carry it as a float column of nulls)."""
-    if "is_draft_row" not in df.columns:
-        return pl.lit(False)
-    return pl.col("is_draft_row").cast(pl.Float64, strict=False).fill_null(0.0) > 0.5
+    return _flag(df, "is_draft_row")
+
+
+def is_aux(df: pl.DataFrame) -> pl.Expr:
+    """The auxiliary rows: draft rows and mid-season snapshot rows (unified.py). They train the model
+    and are projected, but never serve as another row's future season, form a test cohort, or feed
+    replacement levels and survival."""
+    return _flag(df, "is_draft_row") | _flag(df, "is_snapshot_row")
 
 
 def drop_draft_rows(df: pl.DataFrame) -> pl.DataFrame:
-    """The played-season rows only (replacement levels, survival and tiers are fitted on these)."""
-    return df.filter(~is_draft(df)) if "is_draft_row" in df.columns else df
+    """The played-season rows only (replacement levels, survival, snapshots and tiers are fitted on these)."""
+    if "is_draft_row" not in df.columns and "is_snapshot_row" not in df.columns:
+        return df
+    return df.filter(~is_aux(df))

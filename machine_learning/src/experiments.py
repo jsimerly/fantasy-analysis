@@ -59,6 +59,7 @@ class ExperimentConfig:
     cap: str = career.DEFAULT_CAP    # age-survival cap on projected games: career.apply_cap specs ("30+t" production, "30+", "30+t34", all, none)
     range_quantiles: tuple | None = None   # keep these quantiles of the predictive distribution (TabPFN): scored as coverage / pinball
     draft_rows: bool = False         # the matrix carries a pre-NFL row per drafted player (draft_rows.py)
+    snapshot_weeks: str = ""         # mid-season snapshot rows in the training table (unified.py), e.g. "9" or "6,13"
     tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
@@ -139,6 +140,9 @@ def run_experiment(
     groups = fg.resolve(cfg.groups)
     cols = fg.feature_columns(groups)
     df = fg.assemble(matrix, groups, ctx)
+    if "is_snapshot_row" in df.columns:
+        import unified
+        df = unified.mask_group_columns(df, [c for c in cols if c not in career.FEATURES])
     H = list(cfg.horizons)
     rows = []
     for T in cfg.cohorts:
@@ -151,7 +155,11 @@ def run_experiment(
         models.estimate_sigma(df, as_of_season=T)
         t_fit = time.perf_counter() - t_cohort
         survival = career.fit_survival(df.filter((pl.col("season") + 1) <= T), cfg.cap)
-        pred = models.predict(df.filter(pl.col("season") == T))
+        import draft_rows as _dr
+        test = df.filter(pl.col("season") == T)
+        if "is_snapshot_row" in test.columns:               # snapshot rows train the model, they are not projected as a cohort
+            test = test.filter(~_dr._flag(test, "is_snapshot_row"))
+        pred = models.predict(test)
         cohort = career.apply_cap(survival, pred, H, cfg.cap)
         cohort = value.realized_value(value.intrinsic_value(cohort, rep, H, cfg.discount_rate), rep_real, H, cfg.discount_rate)
         # the same thing in wins: projected WAR and realized WAR on the league's curve
@@ -233,7 +241,7 @@ def run_experiment(
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "target": cfg.target, "weight": cfg.weight or "",
                "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else "") + (" range" if cfg.range_quantiles else ""),
-               "draft_rows": cfg.draft_rows,
+               "draft_rows": cfg.draft_rows, "snapshot_weeks": cfg.snapshot_weeks,
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -243,7 +251,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "regime", "draft_rows", "backend", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "regime", "draft_rows", "snapshot_weeks", "backend", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players

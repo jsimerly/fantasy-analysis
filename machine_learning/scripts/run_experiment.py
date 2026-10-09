@@ -52,13 +52,16 @@ class HarnessContext:
 
 
 def build_context(H: list[int], first_cohort: int, last_cohort: int | None, replacement_kind: str,
-                  realized_replacement: str | None = None, draft_rows: bool = False) -> HarnessContext:
+                  realized_replacement: str | None = None, draft_rows: bool = False, snapshot_weeks: list[int] | None = None,
+                  snapshot_from: int = 2010) -> HarnessContext:
     """The harness setup shared by every script that scores projections walk-forward: cohorts
     ``first_cohort``..``last_cohort`` (default: last complete season minus the horizon), replacement
     as of each cohort (``share`` / ``fill`` / ``weekly``) and KTC the following February."""
     import draft_rows as dr
-    matrix = career.build_career_matrix(H, draft_rows=draft_rows)
+    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from)
     base = dr.drop_draft_rows(matrix)                 # played seasons: replacement levels and the regime stamp
+    if snapshot_weeks:
+        print(f"snapshot rows: {int(matrix.filter(pl.col('is_snapshot_row'))['player_id'].len())} at weeks {list(snapshot_weeks)} from {snapshot_from}")
     last = career.last_complete_season(matrix)
     horizon = max(H)
     last_cohort = last_cohort if last_cohort is not None else last - horizon
@@ -126,6 +129,8 @@ def main() -> None:
     ap.add_argument("--tabpfn-params", nargs="*", default=[], help="TabPFNRegressor overrides, e.g. n_estimators=4")
     ap.add_argument("--stacked", action="store_true", help="one games / ppg model over all horizons, years-ahead as a feature (instead of one pair per horizon)")
     ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (college + draft capital; draft_rows.py) to the matrix")
+    ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py), e.g. 9 or 6,13")
+    ap.add_argument("--snapshot-from", type=int, default=2010, help="first season of the snapshot rows")
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the predictive distribution (TabPFN) and score the band: coverage, pinball")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default, as production: tier-aware from 30) | 30+ | 30+t34 | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
@@ -162,7 +167,9 @@ def main() -> None:
 
     variants = parse_variants(args.variants) if args.variants else [(args.name or (args.groups or ",".join(fg.DEFAULT)), (args.groups or ",".join(fg.DEFAULT)).split(","))]
     H = list(range(1, args.horizon + 1))
-    bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement, args.realized_replacement, draft_rows=args.draft_rows)
+    snap_weeks = [int(w) for w in args.snapshot_weeks.split(",") if w]
+    bc = build_context(H, args.first_cohort, args.last_cohort, args.replacement, args.realized_replacement, draft_rows=args.draft_rows,
+                       snapshot_weeks=snap_weeks or None, snapshot_from=args.snapshot_from)
     matrix, cohorts, ctx, curve = bc.matrix, bc.cohorts, bc.ctx, bc.curve
     rep_for, market_for, realized_rep_for = bc.rep_for, bc.market_for, bc.realized_rep_for
 
@@ -195,7 +202,7 @@ def main() -> None:
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
-                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows)
+                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
         summary["regime"] = bc.regime
         per_cohort = per_cohort.with_columns(pl.lit(bc.regime).alias("regime"))
