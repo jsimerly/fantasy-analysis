@@ -68,6 +68,8 @@ def healthy() -> tuple[dict, dict]:
     # bronze feeds
     for prefix in ("bronze/ktc/dynasty/daily_load/", "bronze/ktc/redraft/daily_load/", "bronze/ktc/devy/daily_load/", "bronze/fantasycalc/values/daily/", "bronze/sleeper/drafts/drafts/", "bronze/nflverse/contracts/"):
         parts[prefix] = [(TODAY.isoformat(), prefix + "today")]
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity", "fantasy_rankings_history"):   # the model feeds: not landed yet (known open)
+        parts[f"bronze/nflverse/{ds}/"] = []
     frames["bronze/ktc/dynasty/daily_load/today"] = pl.DataFrame({"playerName": ["a"] * 500, "playerID": list(range(500)), "sf_value": [1.0] * 500, "oneqb_value": [1.0] * 500})
     frames["bronze/fantasycalc/values/daily/today"] = pl.DataFrame({"n_qb": [2] * 400 + [1] * 400, "n_teams": [12] * 800, "ppr": [1] * 800, "value": [1] * 800, "sleeper_id": ["1"] * 800})
     frames["bronze/sleeper/drafts/drafts/today"] = pl.DataFrame({"league_id": [lg for lg, _, _ in LEAGUES], "season": ["2026"] * 2, "status": ["complete"] * 2})
