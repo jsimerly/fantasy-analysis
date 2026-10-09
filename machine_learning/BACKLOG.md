@@ -1133,53 +1133,74 @@ t = 1.45) stays a tie.
 
 33. **How the market prices over time: the edges in the pricing community itself (owner,
     2026-10-09).** `analysis/market_trends.py`, on KTC's daily SF history 2020-2026 (players
-    priced at 1,000+, every relative move market-adjusted). **Findings, first pass:**
+    priced at 1,000+, every relative move market-adjusted). **Data caveat found and fixed the
+    same day:** `dim_players_master` carries a gsis_id for 3,893 of 12,229 players, so the
+    id-only crosswalk reached a third of the priced pool (62 of 307 priced players in September
+    2025) and the first-pass age / stage, big-game and injury reads were on that biased third.
+    `ktc_crosswalk` now falls back to normalised name + position against the season fact
+    (ambiguous names to the most recent namesake): 401 of 427 KTC players, 95 % of player-dates,
+    300 of the 307. (The market backtests already matched id-then-name, so they were never
+    affected; the DE fix, a fuller gsis_id in the master, is a separate item.) **Findings, on the
+    full pool:**
     - *The whole market deflates every month* (-0.3 to -2.2 % per 30 days for the median priced
-      player; worst in April, the draft, when new rookies take value out of the pool). Nothing to
-      trade, but every raw price chart drifts down and relative moves are what matter.
-    - *Seasonality by age and stage.* Players 29+ re-rate +4.9 % in February (the season ends,
-      the vet looks fine again) and are marked down -2 to -3 % a month from October to December;
-      year-7+ players the same (+4.9 % Feb, -2.0 / -2.7 / -2.5 % Oct-Dec). Under-25s gain in
-      January (+1.7), May (+1.4, rookie fever) and August-September (+0.8 / +0.9, camp hype) and
-      drop -4.2 % in October when the games do not match. Year-2-3 players -3.3 % in October.
+      player, most in April when the draft class takes value out of the pool). Relative moves
+      are what matter.
+    - *The age curve runs continuously, and in season.* Players 29+ (and year-7+) lose -2.0 to
+      -3.1 % a month against the market from October to December and re-rate +4.9 % in
+      February; 25-28-year-olds are flat in season and +3.7 % in February; under-25s gain +1.6
+      to +3.0 % a month October-December, +3.8 % in April (the draft) and only dip in
+      February-March (-0.7 / -1.0 %). Year-2-3 players lose -1.3 / -2.6 % in March-April as the
+      new class arrives and gain +1.3 to +1.6 % a month October-December. The incoming rookie
+      class (priced before the NFL draft) is -2.9 % in February, then +19 % in April and +4.6 %
+      in May.
     - *By position.* QBs +3 % a month in January-February and +2 % in November-December, -1 to
-      -3 % April-October; TEs +4.1 % in October and +2 to +2.4 % December-February, -1.5 to -1.7 %
-      July-August; RBs +1.6 % April-May and +1.3 to +1.9 % September-October; WRs mildly positive
-      most months.
+      -3 % April-October; TEs +4.1 % in October and +2 to +2.4 % December-February, -1.5 to
+      -1.7 % July-August; RBs +1.6 % April-May and +1.3 to +1.9 % September-October, slightly
+      negative January-March; WRs mildly positive most months.
     - *Momentum, not reversion, for risers.* The past 28-day move predicts the next 56 days
       (deciles monotonic: the top decile, +35 % past, goes on to +4.1 % market-adjusted; the
-      bottom, -17 %, +0.8). Big moves: up 15 %+ continues +2.7 to +5.2 % over eight weeks (55-57 %
-      of them up); down 15 %+ bounces +3.7 to +4.0 % for RB / WR / TE (51-54 % up) but keeps
-      falling for QBs (-3.1 %, 42 % up).
+      bottom, -17 %, +0.8). Big moves: up 15 %+ continues +2.7 to +5.2 % over eight weeks;
+      down 15 %+ bounces +3.7 to +4.0 % for RB / WR / TE but keeps falling for QBs (-3.1 %).
     - *The age discount is wrong in both directions.* On the 2020-22 market-backtest cohorts
       (364 priced players, three-year realized WAR): under-24s finished 7.5 ranks worse than
-      priced (WR under 24 +12.6, QB under 24 +13.7) at 0.146 wins per 1,000 KTC; 27-29-year-olds
-      finished 18 ranks better than priced at 0.241 wins per 1,000 (WR 27-29 -11.6, QB 27-29
-      -22.7); 30+ 7.6 better. The swap test's "29-32-year-old buys" result, now as a market
-      property.
+      priced (WR +12.6, QB +13.7) at 0.146 wins per 1,000 KTC; 27-29-year-olds finished 18 ranks
+      better than priced at 0.241 wins per 1,000; 30+ 7.6 better. The swap test's "29-32-year-old
+      buys" result, now as a market property, and the reason the in-season markdown of vets
+      (above) is an edge rather than fair.
+    - *What the market pays per point* (first September price vs that season's PPG, the top 12
+      QB / 24 RB / 36 WR / 12 TE by price): a point a game cost 350-420 KTC at QB, 350-480 at RB,
+      420-510 at WR, 350-415 at TE, with no trend worth trading; the market's taste has moved:
+      QBs held 28 % of all priced value in 2020-21 and 18 % in 2026 (the priced QB pool tripled,
+      the share did not), RBs 22 % to 27 %, WRs 35 % to 40 %, TEs flat at 13-14 %. The preseason
+      price ranks the season's scorers at 0.50-0.67 (QB), 0.59-0.78 (RB), 0.55-0.74 (WR),
+      0.52-0.88 (TE, falling: 0.63 in 2024, 0.52 in 2025): TE and QB are where a better
+      projection pays most.
     - *Rookie picks appreciate into the draft.* A 1st is 9-13 % cheaper 9-18 months before its
       draft than one month before and 22 % cheaper at two years; a 3rd 40-50 % cheaper two years
-      out. Part time value, part the hype ramp; the draft rows (item 30) say whether the rookies
-      then hold the price.
-    - *One big game.* A 2+ sd week moves the price +5 to +9 % in a week; RBs and TEs keep it
-      (+12 / +10 % at eight weeks), WRs give it back (+3.1 % at eight weeks, -3.6 % after the pop;
-      53 events).
-    - *Injuries.* The first missed week costs 2-4 % in a week and 4-8 % by week four; by week 16
-      knee / Achilles absences are fully recovered in price (+0.7 %) and concussions nearly so,
-      while ankle / foot and soft-tissue absences stay 5.5-6.5 % down; the 29+ drop 7.9 % by week
-      four and recover to -3.7 %, the under-25s stay -5.9 %. Small samples (14-74 events per class).
+      out. Part time value, part the hype ramp (and the +19 % April re-rating of the class).
+    - *One big game is momentum, not a fade* (553 events, a 2+ sd week): +7.5 % (QB) to +10.5 %
+      (TE) in the week, +10 to +15 % at eight weeks for every position, and +1.9 to +4.5 % after
+      the first week. (The first pass's "WRs give it back" was the biased third.)
+    - *Injuries* (770 absences): the first missed week costs -1.5 to -2.3 % (-3.8 % for 29+);
+      week four -0.5 % (concussion) to -4.5 % (ankle / foot), -8 % for 29+; by week 16
+      concussions (+3.3 %), soft tissue (+0.1 %) and under-25s (+0.8 %) are fully recovered,
+      ankle / foot (-1.9 %) and upper body (-1.1 %) nearly, while knee / Achilles absences
+      (-3.7 %) and the 29+ (-4.0 %) stay down. (The first pass had the knee as the one that
+      recovered; the biased third.)
     **Edges to act on** (each a few percent, systematic, to combine with the model's own
-    mispricing): buy productive 27-29-year-olds October-December and hold into February; do not
-    buy under-25s in May or August, look again in November; ride risers for eight weeks, buy
-    non-QB fallers after a 15 % drop, do not catch falling QBs; sell a WR within the week of a
-    big game, hold the RB or TE; buy picks one to two years out; buy TEs in July-August, QBs
-    May-October; a knee injury is a buying window, a soft-tissue one is not. **On the page
-    (2026-10-09):** a Market tab (the seasonality heat-maps by age / stage / position and the raw
-    whole-market drift, the calendar of edges, momentum deciles and big moves, the age discount,
-    the pick-cycle chart, big-game and injury paths) from the published summary, which the export
-    carries as `market_trends`; and a **Season** column in the Players table's Pricing group: the
-    player's seasonal tailwind this month (mean of his position's and his age band's
-    market-adjusted 30-day change for the run month; green = the calendar favours him, red =
-    works against him; blank for picks). **Next:** the age-discount read on the production
-    model's own backtest once it runs; `col_breakout_age` needs a class year (the crosswalk has
-    no birth dates).
+    mispricing): buy productive 29+ vets in December, sell in February-March; buy year-2-3
+    players in March-April and under-25s in February-March; buy rookie picks before the draft;
+    ride risers eight weeks, buy non-QB fallers after a 15 % drop, do not catch falling QBs; a
+    big game is a buy (or at least not a sell) at every position; buy TEs July-August and sell
+    October, buy QBs May-October and sell January-February, RBs cheapest January-March; an
+    injured under-25 at week four is a modest buy, an injured 29+ a sell, and a knee / Achilles
+    absence stays down. **On the page (2026-10-09):** a Market tab (the seasonality heat-maps by
+    age / stage / position and the raw whole-market drift, the calendar of edges, momentum
+    deciles and big moves, the age discount, the pick-cycle chart, big-game and injury paths,
+    what the market pays per point) from the published summary, which the export carries as
+    `market_trends`; and a **Season** column in the Players table's Pricing group: the player's
+    seasonal tailwind this month (mean of his position's and his age band's market-adjusted
+    30-day change for the run month; green = the calendar favours him, red = works against him;
+    blank for picks). **Next:** the age-discount read on the production model's own backtest
+    once it runs; `col_breakout_age` needs a class year (the crosswalk has no birth dates); a DE
+    item for the master's gsis_id coverage.
