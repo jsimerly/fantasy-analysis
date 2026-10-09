@@ -1497,3 +1497,23 @@ t = 1.45) stays a tie.
     for time). Page v46 published 19:20. The Monday-night job is this preset, after the Tuesday
     DAG, with the career tail and sigma cached per season once item 36 lands.
 
+42. **Positional calibration (owner, 2026-10-09 evening: "why is like every WR over rated?").** The
+    pooled mispricing column carries a positional lean: tonight's run gives quarterbacks 36-47 %
+    of league WAR against the market's 17 % in the roster views, so every receiver reads rich in
+    the pooled ranking while the within-position column is flat (+5 to +8 % median at every
+    position). On the 2020-22 market-backtest cohorts (364 priced, three-year realized WAR): QB
+    delivered 27 % of value (market 27 %, model 33 %), RB 27 % (market 20 %, model 21 %), TE
+    12 % (15 %, 13 %), WR 34 % (38 %, 33 %). So the model over-weights quarterbacks by ~6 points
+    on a three-year window and more on ten pooled horizons (long QB careers at the page's default
+    discount), the market over-weights receivers (and under-24 receivers finished 12-13 ranks
+    worse than priced) and under-weights backs. **Next:** (1) a positional-share calibration in
+    the harness as a reported metric (projected vs realized share by position per cohort) and as
+    an optional correction (scale PAR by position to the realized share on the training
+    cohorts; `HorizonModels.calibrate` has the per-position hook); (2) the far-horizon default:
+    the page's discount / years against the market's effective horizon (the ten-horizon pooled
+    model + a 10 % rate values years 6-10 more than the market does; test 15-20 % or a 5-year
+    default on the market backtest); (3) the page: make "vs position" the default sort for the
+    Players table's mispricing columns and label the pooled column as cross-position. Advice
+    given tonight: buy productive backs and prime (27-29) quarterbacks, sell young hyped
+    receivers, pick within position; the title lens is position-agnostic.
+
