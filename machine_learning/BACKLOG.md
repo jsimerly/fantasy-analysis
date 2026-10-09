@@ -1302,3 +1302,29 @@ t = 1.45) stays a tie.
     more VRAM would be an accuracy lever (context), a faster GPU only a time one; a Vertex H100
     per run is the cheap way to a bigger context if bagging (2) does not close the gap.
 
+37. **In-season feature groups: usage, role, schedule (owner, 2026-10-09: recency the model cannot
+    build itself, role signals, the schedule ahead; "the model should find richer recency right?"
+    -- only from columns it is handed).** Three optional in-season groups in `inseason.py`, joined
+    per snapshot week like team / contract (`--inseason-groups usage,role,schedule`):
+    - *usage*: Next Gen Stats to date, weighted by targets / attempts (receiving: separation,
+      cushion, share of intended air yards, depth of target, YAC over expected, catch rate;
+      rushing: efficiency, yards over expected per attempt, stacked-box rate, time to the line)
+      and snap share to date with its three-week trend. The lake held the passing slice of Next
+      Gen only; the receiving and rushing slices are now their own nflverse datasets (2016 on,
+      backfilled by the daily reconcile after the merge); `--ngs-dir` reads the slices pulled
+      locally until then.
+    - *role*: recency windows beyond the three-game form (last game, last five, the last three
+      games' targets and touches per game against the season rate) and the status table (games
+      since returning from a missed week with byes neutral, misses in the last three weeks,
+      injured and dnp weeks to date).
+    - *schedule*: from the schedules' own scores, the remaining opponents' point differential
+      per game to date (mean and the next opponent's), games left, a bye still ahead. Nothing
+      from the future: opponent strength is their games <= the snapshot week.
+    **The funnel (owner's idea, adjusted to the trees):** (1) the in-season backtest on the trees,
+    CPU, minutes per run, against a fresh trees baseline -- drop the flat groups; (2) 3.5 at
+    reduced scope (two cohorts, two weeks, three horizons); (3) the full 3.5 paired run under the
+    co-primary rule for adoption. Stage 1 running 2026-10-09 (`chain_screen_trees.sh`: base,
+    usage, role, schedule, all three). Next group in the funnel: the free "advanced usage" sources
+    beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
+    *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
+
