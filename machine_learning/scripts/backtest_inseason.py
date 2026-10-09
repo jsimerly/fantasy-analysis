@@ -95,6 +95,7 @@ def main() -> None:
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
+    ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
     ap.add_argument("--ngs-dir", default=None, help="a directory with receiving.parquet / rushing.parquet (Next Gen Stats pulled locally) for the usage group, instead of the lake")
     ap.add_argument("--inseason-train-weeks", default="", help="snapshot weeks the in-season model trains on, e.g. 3,6,9,13 (default: all for xgb, the checkpoint weeks for tabpfn)")
     ap.add_argument("--inseason-max-rows", type=int, default=50000, help="in-context cap for the tabpfn in-season model (recent seasons first)")
@@ -160,8 +161,11 @@ def main() -> None:
         else:
             ngs_rec, ngs_rush = gcs_io.read_lake_prefix(inseason.NGS_REC_PATH), gcs_io.read_lake_prefix(inseason.NGS_RUSH_PATH)
     schedules = gcs_io.read_lake_prefix(inseason.SCHEDULES_PATH) if "schedule" in is_groups else None
+    ffo = None
+    if "opportunity" in is_groups:
+        ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
-                                                        status=status, schedules=schedules, role="role" in is_groups))
+                                                        status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:

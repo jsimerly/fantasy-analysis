@@ -72,7 +72,15 @@ USAGE_COLS = [f"ng_{v}" for v in NGS_REC_SRC.values()] + [f"ng_{v}" for v in NGS
 ROLE_COLS = ["last1_fpts", "last5_ppg", "last3_targets_pg", "last3_touches_pg", "tgt_trend", "touch_trend",
              "games_since_return", "missed_last3", "td_injured_weeks", "td_dnp_weeks"]
 SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahead"]
-EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS}
+# opportunity - nflverse's expected fantasy points (ff_opportunity, 2006 on): expected points per game to
+#               date and by phase (pass / rush / receiving), the last three weeks' expected and its trend,
+#               actual minus expected per game (points, touchdowns: the luck / regression signal), expected
+#               yards, targets and air yards per game
+OPP_COLS = ["op_xfp_pg", "op_pass_xfp_pg", "op_rush_xfp_pg", "op_rec_xfp_pg", "op_xfp_last3", "op_xfp_trend", "op_fp_oe_pg",
+            "op_x_td_pg", "op_td_oe_pg", "op_x_yards_pg", "op_targets_pg", "op_air_yards_pg"]
+EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
+                "opportunity": OPP_COLS}
+FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
 STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
@@ -144,6 +152,31 @@ def usage_features(ngs_rec: pl.DataFrame | None, ngs_rush: pl.DataFrame | None, 
     for q in parts[1:]:
         out = out.join(q, on=["player_id", "season"], how="full", coalesce=True)
     return out
+
+
+def opportunity_features(ffo: pl.DataFrame, week: int) -> pl.DataFrame:
+    """(player_id, season) -> expected fantasy points to date from the nflverse opportunity model
+    (weeks 1..``week``): per game overall and by phase, the last three weeks' expected per game and its
+    trend, actual minus expected per game for points and touchdowns, expected yards, targets and air
+    yards per game. ``player_id`` is the gsis id."""
+    f = ffo.filter((pl.col("week") >= 1) & (pl.col("week") <= week)).with_columns(
+        pl.col("player_id").cast(pl.Utf8).str.strip_chars(), pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64)).sort("week")
+    num = lambda c: pl.col(c).cast(pl.Float64, strict=False).fill_null(0.0)  # noqa: E731
+    return f.group_by("player_id", "season").agg(
+        pl.len().alias("_n"),
+        num("total_fantasy_points_exp").sum().alias("_xfp"), num("pass_fantasy_points_exp").sum().alias("_pass"),
+        num("rush_fantasy_points_exp").sum().alias("_rush"), num("rec_fantasy_points_exp").sum().alias("_rec"),
+        num("total_fantasy_points_exp").tail(3).mean().alias("op_xfp_last3"),
+        (num("total_fantasy_points") - num("total_fantasy_points_exp")).sum().alias("_oe"),
+        num("total_touchdown_exp").sum().alias("_xtd"), (num("total_touchdown") - num("total_touchdown_exp")).sum().alias("_tdoe"),
+        num("total_yards_gained_exp").sum().alias("_xyd"), num("rec_attempt").sum().alias("_tg"), num("rec_air_yards").sum().alias("_air"),
+    ).with_columns(
+        (pl.col("_xfp") / pl.col("_n")).alias("op_xfp_pg"), (pl.col("_pass") / pl.col("_n")).alias("op_pass_xfp_pg"),
+        (pl.col("_rush") / pl.col("_n")).alias("op_rush_xfp_pg"), (pl.col("_rec") / pl.col("_n")).alias("op_rec_xfp_pg"),
+        (pl.col("_oe") / pl.col("_n")).alias("op_fp_oe_pg"), (pl.col("_xtd") / pl.col("_n")).alias("op_x_td_pg"),
+        (pl.col("_tdoe") / pl.col("_n")).alias("op_td_oe_pg"), (pl.col("_xyd") / pl.col("_n")).alias("op_x_yards_pg"),
+        (pl.col("_tg") / pl.col("_n")).alias("op_targets_pg"), (pl.col("_air") / pl.col("_n")).alias("op_air_yards_pg"),
+    ).with_columns((pl.col("op_xfp_last3") - pl.col("op_xfp_pg")).alias("op_xfp_trend")).drop("_n", "_xfp", "_pass", "_rush", "_rec", "_oe", "_xtd", "_tdoe", "_xyd", "_tg", "_air")
 
 
 def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> pl.DataFrame:
@@ -246,7 +279,7 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                     depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
                     contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
-                    schedules: pl.DataFrame | None = None, role: bool = False) -> pl.DataFrame:
+                    schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -275,6 +308,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                 snap = snap.join(usage, on=["player_id", "season"], how="left")
         if role:
             snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
+        if opportunity is not None:
+            snap = snap.join(opportunity_features(opportunity, w), on=["player_id", "season"], how="left")
         if schedules is not None:
             snap = (snap.with_columns(_norm_team().alias("_tm")).join(schedule_features(schedules, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
                         .drop("_tm"))
