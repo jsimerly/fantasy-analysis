@@ -316,3 +316,9 @@ class TestUsageRoleScheduleGroups:
         assert ps[("g3", 2010)]["ps_adp"] == 30.0 and ps[("g2", 2010)]["ps_adp"] == 1.0                   # 2010: FFC by name (suffix dropped)
         assert all(r["ps_drafted"] == 1.0 for r in ps.values()) and inseason.extra_columns(["preseason"]) == inseason.PRESEASON_COLS
 
+    def test_one_week_per_season_keeps_a_single_snapshot_per_player_season(self):
+        rows = pl.DataFrame({"player_id": ["a"] * 4 + ["b"] * 2, "season": [2024] * 4 + [2024, 2023], "week": [3, 6, 9, 13, 3, 6]})
+        out = inseason.one_week_per_season(rows, seed=1)
+        assert out.height == 3 and out.select("player_id", "season").n_unique() == 3 and set(out.columns) == {"player_id", "season", "week"}
+        assert inseason.one_week_per_season(rows, seed=1).equals(out)      # seeded: the same draw each time
+

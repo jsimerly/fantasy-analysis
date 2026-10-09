@@ -95,6 +95,7 @@ def main() -> None:
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
+    ap.add_argument("--inseason-next-one-per-season", action="store_true", help="the next-season models see one random snapshot week per player-season (a repeated label counts once)")
     ap.add_argument("--adp-dir", default=None, help="a directory with mfl.parquet / ffc.parquet (average draft position pulled locally) for the preseason group, instead of the lake")
     ap.add_argument("--proj-dir", default=None, help="a directory with weekly.parquet (Sleeper weekly projections pulled locally) for the consensus group, instead of the lake")
     ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
@@ -148,7 +149,7 @@ def main() -> None:
     is_groups = [g for g in args.inseason_groups.split(",") if g]
     is_tabpfn = args.inseason_backend == "tabpfn"
     is_train_weeks = [int(w) for w in args.inseason_train_weeks.split(",") if w] or ([int(w) for w in args.weeks.split(",")] if is_tabpfn else None)
-    is_kw = dict(backend=args.inseason_backend, tabpfn_params=tabpfn_params if is_tabpfn else None,
+    is_kw = dict(backend=args.inseason_backend, tabpfn_params=tabpfn_params if is_tabpfn else None, next_one_per_season=args.inseason_next_one_per_season,
                  train_weeks=is_train_weeks, max_train_rows=args.inseason_max_rows if is_tabpfn else None)
     if is_tabpfn:
         print(f"in-season model: tabpfn {tabpfn_params or {}} on weeks {is_train_weeks}, at most {args.inseason_max_rows:,} rows per fit", flush=True)

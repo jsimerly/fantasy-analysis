@@ -431,6 +431,13 @@ def feature_frame(df: pl.DataFrame, extra: Iterable[str] = ()) -> pl.DataFrame:
 
 
 # ------------------------------------------------------------------------------ models
+def one_week_per_season(rows: pl.DataFrame, seed: int = 0) -> pl.DataFrame:
+    """One random snapshot week per (player, season): a label that repeats across a season's snapshots
+    (next season's outcome) counts once."""
+    return (rows.with_columns(pl.int_range(pl.len()).shuffle(seed=seed).alias("_r"))
+                .sort("_r").unique(["player_id", "season"], keep="first", maintain_order=True).drop("_r"))
+
+
 def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None, max_rows: int | None = None, seed: int = 0) -> pl.DataFrame:
     """The in-context set for a size-limited estimator: optionally only the snapshots of some
     checkpoint weeks, then at most ``max_rows`` rows keeping the most recent seasons whole and a
@@ -459,8 +466,13 @@ class InSeasonModels:
     optionally the checkpoint weeks ``train_weeks``, recent seasons first)."""
 
     def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
-                 tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None, **params):
+                 tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None,
+                 next_one_per_season: bool = False, **params):
         self.device, self.seed = device, seed
+        # the next-season label is the same on every checkpoint week's snapshot of a player-season, so four
+        # snapshots are four votes for one outcome; this keeps one random week per player-season for the
+        # next-season models (ROS labels differ by week and keep every snapshot)
+        self.next_one_per_season = next_one_per_season
         self.extra_features = list(extra_features)       # in-season group columns (extra_columns) on top of FEATURES
         self.backend, self.tabpfn_params = backend, dict(tabpfn_params or {})
         self.train_weeks = [int(w) for w in train_weeks] if train_weeks is not None else None
@@ -487,6 +499,8 @@ class InSeasonModels:
         }
         self.train_rows: dict[str, int] = {}
         for name, (rows, target) in specs.items():
+            if self.next_one_per_season and name.startswith("next_"):
+                rows = one_week_per_season(rows, self.seed)
             rows = training_subset(rows, self.train_weeks, self.max_train_rows, self.seed)
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")
