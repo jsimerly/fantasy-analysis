@@ -113,6 +113,25 @@ def rosters_one_per_lineage(ctx):
     return x.ok(f"one league per lineage in the snapshot ({per.height} lineages)", 0)
 
 
+@check("bronze.sleeper_projections.coming_week_present", "bronze/sleeper/projections", "error",
+       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it",
+       known_open="the dataset lands with the deploy of sleeper-incremental-projections and the PROJ_SEASONS=2018-2025 backfill (BACKLOG 38); until then there is nothing to check")
+def projections_fresh(ctx):
+    if ctx.nfl_phase() == "offseason":
+        return x.ok("offseason: not enforced")
+    season = ctx.nfl_season()
+    try:
+        pj = ctx.blob(f"bronze/sleeper/projections/season={season}/data.parquet")
+    except Exception:  # noqa: BLE001
+        return x.fail(f"no projections partition for {season}")
+    wk = _current_week(ctx) or 0
+    have = sorted(pj["week"].unique().to_list())
+    n_next = pj.filter(pl.col("week") == wk + 1).height
+    if n_next < 1500:
+        return x.fail(f"week {wk + 1} has {n_next} projections (weeks present {have[:3]}..{have[-1:]}), need 1500+", n_next)
+    return x.ok(f"week {wk + 1} has {n_next:,} projections", n_next)
+
+
 @check("bronze.sleeper_transactions.in_season_activity", "bronze/sleeper/transactions/transactions/daily", "warn",
        "transactions silently stopped at leg 14 of 2025 (incremental fetched weeks=[1] once complete); trades missing = picks and players mis-owned")
 def txn_activity(ctx):

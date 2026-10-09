@@ -59,6 +59,9 @@ jobs:
             ["sleeper-incremental-transactions"]="sleeper_ingestion.daily.incremental_transactions:512Mi:1:30m"
             ["sleeper-incremental-players"]="sleeper_ingestion.daily.incremental_players:512Mi:1:30m"
             ["sleeper-incremental-users"]="sleeper_ingestion.daily.incremental_users:512Mi:1:30m"
+            # Sleeper's weekly projections (the consensus feature group): the current season rebuilt daily;
+            # the one-time backfill is `--update-env-vars PROJ_SEASONS=2018-2025` on a manual execution
+            ["sleeper-incremental-projections"]="sleeper_ingestion.daily.incremental_projections:512Mi:1:30m"
             ["sleeper-commissioner-adjustments"]="sleeper_ingestion.historical.commissioner_adjustments:512Mi:1:30m"
             ["sleeper-league-lineage"]="sleeper_ingestion.historical.league_lineage_ingestion:512Mi:1:30m"
             ["sleeper-league-transactions"]="sleeper_ingestion.historical.league_transactions_ingestion:512Mi:1:30m"

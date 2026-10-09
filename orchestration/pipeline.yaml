@@ -32,6 +32,7 @@ main:
               - "sleeper-incremental-rosters"
               - "sleeper-incremental-transactions"
               - "sleeper-incremental-users"
+              - "sleeper-incremental-projections"   # the provider's weekly projections, the current season rebuilt daily (consensus features)
               - "sleeper-drafts-overview"      # keeps drafts status/rounds current (pick lifecycle)
               - "fantasycalc-daily"
               - "ktc-incremental-dynasty"
