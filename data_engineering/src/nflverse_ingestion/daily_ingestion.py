@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import partial
 import os
 import sys
 from typing import Dict, List, Union
@@ -85,6 +86,24 @@ DATASETS_CONFIG = {
     'nextgen_stats': {
         'loader': nfl.load_nextgen_stats, 
         'folder': 'nextgen_stats', 
+        'seasonal': True,
+        'start_season': 2016,
+        'schedule': SCHEDULE_DAILY
+    },
+    # the receiving and rushing slices of Next Gen Stats (the loader's default is passing: quarterbacks
+    # only, which is what 'nextgen_stats' holds): separation, cushion, share of intended air yards, YAC
+    # over expected; rushing efficiency, yards over expected, stacked boxes. 2016 on, player-week rows
+    # keyed by player_gsis_id. The daily reconcile backfills every season once these entries exist.
+    'nextgen_stats_receiving': {
+        'loader': partial(nfl.load_nextgen_stats, stat_type='receiving'),
+        'folder': 'nextgen_stats_receiving',
+        'seasonal': True,
+        'start_season': 2016,
+        'schedule': SCHEDULE_DAILY
+    },
+    'nextgen_stats_rushing': {
+        'loader': partial(nfl.load_nextgen_stats, stat_type='rushing'),
+        'folder': 'nextgen_stats_rushing',
         'seasonal': True,
         'start_season': 2016,
         'schedule': SCHEDULE_DAILY

@@ -19,7 +19,7 @@ rest; it prints a summary and exits non-zero if any failed).
 
 ## Datasets & partitioning
 - **Seasonal** (partition `season=<YYYY>`): `play_by_play`, `player_stats`, `team_stats`, `schedules`,
-  `rosters`, `rosters_weekly`, `depth_charts`, `snap_counts`, `nextgen_stats`, `ftn_charting`,
+  `rosters`, `rosters_weekly`, `depth_charts`, `snap_counts`, `nextgen_stats` (the passing slice: quarterbacks only), `nextgen_stats_receiving`, `nextgen_stats_rushing` (2016 on, player-week by gsis_id; added 2026-10-09 for the advanced-usage feature group), `ftn_charting`,
   `officials`.
 - **Non-seasonal / weekly** (partition `load_date=`, gated to **Tuesday** — settles after MNF
   corrections): `fantasy_rankings` (FantasyPros ECR — carries FP/cbs/yahoo ids), `fantasy_opportunity`,
