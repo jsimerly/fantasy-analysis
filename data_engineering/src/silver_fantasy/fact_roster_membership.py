@@ -857,7 +857,8 @@ def _drafts_completed_by(drafts_df, day: str):
 
 
 def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df: pl.DataFrame,
-                        overrides_df: pl.DataFrame, drafts_df) -> pl.DataFrame:
+                        overrides_df: pl.DataFrame, drafts_df,
+                        league_seasons: pl.DataFrame | None = None) -> pl.DataFrame:
     """Per-day pick ownership over the daily traded_picks snapshots ->
     (franchise_id, pick_id, snapshot_date).
 
@@ -877,6 +878,8 @@ def _read_pick_presence(bucket_name: str, lineage_map: pl.DataFrame, leagues_df:
     for n in names:
         d = n.split("load_date=")[1].split("/")[0]
         traded = pl.read_parquet(f"gs://{bucket_name}/{n}")
+        if league_seasons is not None:   # a completed league re-snapshotted beside its successor (see drop_stale_league_snapshots)
+            traded = drop_stale_league_snapshots(traded.with_columns(pl.lit(d).alias("snapshot_date")), league_seasons).drop("snapshot_date")
         # date-aware cutoff: only count drafts that had actually run by day `d`, so a
         # now-complete FUTURE draft can't retroactively roll earlier days' picks forward
         # a year (e.g. the 2026 class vanishing months before the 2026 draft).
@@ -1229,7 +1232,8 @@ def main():
         drafts_df = None
 
     print("Resolving per-day pick ownership over traded_picks snapshots...")
-    pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df)
+    pick_present = _read_pick_presence(bucket_name, lineage_map, leagues_df, overrides_df, drafts_df,
+                                       leagues_df.select("league_id", "league_lineage_id", "season"))
 
     print("Reconstructing pre-snapshot pick ownership (mint/consume + trades)...")
     rounds_df = (
