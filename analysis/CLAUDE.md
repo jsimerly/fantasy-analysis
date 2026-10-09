@@ -58,6 +58,9 @@ export (`machine_learning/scripts/export_projections.py`) picks up the newest
   is only where the scripts here write their outputs (`trades/`, `pick_slots/`, `team_value/`) plus
   old figures. Nothing reads `_cache/` as an input any more.
 - 2026 roster reconstruction depends on the REST-event backfill (offseason rollover), not GraphQL.
+- **`dim_players_master` has a gsis_id for a third of players**, so `market.load_crosswalk()` alone
+  reaches a third of KTC's priced pool; `market_trends.ktc_crosswalk` adds a name + position fallback
+  (most recent namesake). Use it for any KTC-wide read.
 
 See [../data_engineering/silver_fantasy/CLAUDE.md](../data_engineering/silver_fantasy/CLAUDE.md) for the
 facts these loaders read, and [../data_engineering/ktc_ingestion/CLAUDE.md](../data_engineering/ktc_ingestion/CLAUDE.md)
