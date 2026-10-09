@@ -105,7 +105,8 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
         g = [_r(r["ros_games_hat"], 2), _r(r["next_games_hat"], 2)] + [_r(r.get(f"h{k}_games_hat") or 0.0, 2) for k in tail]
         band = None
         if any(r.get(f"h{k}_ppg_q20") is not None for k in tail):      # the range of outcomes: 20th / 80th percentile ppg per tail span
-            band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail]}
+            band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail],
+                    "md": [None, None] + [_r(r.get(f"h{k}_ppg_q50"), 1) for k in tail]}    # the median: the point is the mean, and the distribution is skewed
         out.append({**_common(r),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),

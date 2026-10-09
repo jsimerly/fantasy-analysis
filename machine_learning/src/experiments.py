@@ -250,7 +250,7 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
                "spearman_iv_vs_realized", "spearman_ktc_vs_realized", "iv_minus_ktc", "spearman_iv_vs_realized_all",
                "top_decile_iv", "top_decile_ktc", "edge_corr", "edge_cheap", "edge_rich", "edge_spread",
                # the range of outcomes (TabPFN quantiles): share of realized ppg inside the 20-80 band, pinball loss at 20/50/80
-               "ppg_cover_2080", "ppg_pinball"]
+               "ppg_cover_2080", "ppg_pinball", "ppg_skew"]
 
 
 def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
@@ -258,9 +258,9 @@ def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
     ``h{k}_ppg_q80``, on the players who played that season, the share of realized ppg inside the
     band (0.6 is calibrated) and the mean pinball loss over the quantiles present (the proper
     scoring rule for quantiles: hedging and false confidence both cost). Averaged over horizons."""
-    cover, pin = [], []
+    cover, pin, skew = [], [], []
     for k in horizons:
-        lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
+        lo, hi, md = f"h{k}_ppg_q20", f"h{k}_ppg_q80", f"h{k}_ppg_q50"
         if lo not in cohort.columns or hi not in cohort.columns:
             continue
         o = cohort.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & pl.col(lo).is_not_null())
@@ -268,6 +268,10 @@ def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
             continue
         y = o[f"h{k}_ppg"].to_numpy().astype(float)
         cover.append(float(np.mean((y >= o[lo].to_numpy()) & (y <= o[hi].to_numpy()))))
+        if md in o.columns:                      # the band's asymmetry: (upside - downside) / width, > 0 = right-skewed
+            up = o[hi].to_numpy().astype(float) - o[md].to_numpy().astype(float)
+            dn = o[md].to_numpy().astype(float) - o[lo].to_numpy().astype(float)
+            skew.append(float(np.mean((up - dn) / np.maximum(up + dn, 1e-9))))
         losses = []
         for q in (0.2, 0.5, 0.8):
             c = f"h{k}_ppg_{career.q_name(q)}"
@@ -281,6 +285,8 @@ def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
         out["ppg_cover_2080"] = float(np.mean(cover))
     if pin:
         out["ppg_pinball"] = float(np.mean(pin))
+    if skew:
+        out["ppg_skew"] = float(np.mean(skew))
     return out
 
 
@@ -292,7 +298,8 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 
 PRIMARY = "spearman_war_top"
 RUNS_PREFIX = ("experiments", "runs")
-PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err"]
+PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err",
+                  "ppg_pinball", "ppg_cover_2080", "ppg_skew"]
 
 
 def save_run(per_cohort: pl.DataFrame, summary: dict) -> str:
@@ -393,6 +400,12 @@ def verdict(table: pl.DataFrame) -> str:
         state = "NO"
     stats = (f"ordering (spearman, realized WAR, top 150) A {o['a']:.3f} vs B {o['b']:.3f}, t = {t_order:+.2f}"
              f" | wins error (MAE, top 150) A {e['a']:.3f} vs B {e['b']:.3f}, t = {t_err:+.2f}")
+    if "ppg_pinball" in rows:                 # the distribution, shown whenever both runs kept a band (not in the rule yet)
+        p = rows["ppg_pinball"]
+        stats += f" | distribution (pinball on ppg at 20/50/80, lower is better) A {p['a']:.3f} vs B {p['b']:.3f}, t = {p['t']:+.2f}"
+        if "ppg_cover_2080" in rows:
+            c = rows["ppg_cover_2080"]
+            stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
     why = ("gain on " + " and ".join(n for n, g in (("ordering", gain_o), ("wins error", gain_e)) if g)) if (gain_o or gain_e) else "no gain past the line on either"
     dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
     if dips:

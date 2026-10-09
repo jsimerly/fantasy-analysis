@@ -107,6 +107,21 @@ def test_paired_comparison_is_cohort_by_cohort(monkeypatch):
 
 
 
+def test_range_scores_record_the_bands_asymmetry_and_the_verdict_prints_the_distribution():
+    import experiments as ex
+    y = np.array([10.0, 12.0, 14.0, 30.0] * 6)
+    cohort = pl.DataFrame({"h1_observable": [True] * 24, "h1_played": [True] * 24, "h1_ppg": y,
+                           "h1_ppg_q20": [9.0] * 24, "h1_ppg_q50": [11.0] * 24, "h1_ppg_q80": [16.0] * 24})
+    s = ex.range_scores(cohort, [1])
+    assert abs(s["ppg_skew"] - (5.0 - 2.0) / 7.0) < 1e-9 and "ppg_pinball" in s and "ppg_skew" in ex.PAIRED_METRICS and "ppg_skew" in ex.LEDGER_COLS
+    t = _paired_table(-0.5, 3.0)
+    t = pl.concat([t, pl.DataFrame({"metric": ["ppg_pinball", "ppg_cover_2080"], "a": [0.90, 0.58], "b": [0.95, 0.52], "diff_b_minus_a": [0.05, -0.06],
+                                    "se": [0.01, 0.02], "t": [5.0, -3.0], "b_wins": [8, 1], "cohorts": [8, 8]})])
+    v = ex.verdict(t)
+    assert "distribution (pinball" in v and "A 0.900 vs B 0.950, t = +5.00" in v and "coverage A 0.58 vs B 0.52" in v and v.startswith("co-primary verdict")
+    assert "distribution" not in ex.verdict(_paired_table(-0.5, 3.0))
+
+
 def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
     return pl.DataFrame({"metric": ["spearman_war_top", "mae_war_top"], "a": [0.61, 0.50], "b": [0.60, 0.52],
                          "diff_b_minus_a": [-0.01, 0.02], "se": [0.004, 0.008], "t": [t_order_b_minus_a, t_err_b_minus_a], "b_wins": [2, 7], "cohorts": [8, 8]})
