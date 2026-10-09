@@ -63,3 +63,7 @@ class TestNextGenSlices:
             assert cfg["seasonal"] is True and cfg["start_season"] == 2016 and cfg["folder"] == f"nextgen_stats_{slice_}"
         assert "stat_type" not in getattr(mod.DATASETS_CONFIG["nextgen_stats"]["loader"], "keywords", {})
 
+    def test_expected_points_is_a_seasonal_dataset_from_2006(self):
+        cfg = mod.DATASETS_CONFIG["ff_opportunity"]
+        assert cfg["loader"].keywords == {"stat_type": "weekly"} and cfg["seasonal"] is True and cfg["start_season"] == 2006
+
