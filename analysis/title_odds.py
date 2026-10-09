@@ -118,7 +118,7 @@ def league_summary(slug: str, teams: pl.DataFrame, meta: dict, live: dict, n_sim
         out_teams.append({**t, "p_playoffs": round(float(base["p_playoffs"][i]), 4), "p_bye": round(float(base["p_bye"][i]), 4), "p_title": round(float(base["p_title"][i]), 4),
                           "exp_wins": round(float(base["exp_wins"][i]), 2), "exp_seed": round(float(base["exp_seed"][i]), 2),
                           "curve": {"shift": [float(s) for s in curve["shift"]], "p_title": [round(float(v), 4) for v in curve["p_title"]], "p_playoffs": [round(float(v), 4) for v in curve["p_playoffs"]]},
-                          "players": players, "targets": targets[:15]})
+                          "players": players, "targets": targets[:30]})
     out_teams.sort(key=lambda z: -z["p_title"])
     st = live["settings"]
     return {"slug": slug, "id": meta.get("league_id"), "name": meta.get("display_name", slug), "playoff_teams": int(st["playoff_teams"]), "playoff_week_start": int(st["playoff_week_start"]),
