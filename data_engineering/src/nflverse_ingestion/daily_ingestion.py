@@ -131,11 +131,17 @@ DATASETS_CONFIG = {
         'seasonal': False,
         'schedule': SCHEDULE_TUESDAY
     },
+    # nflverse's expected fantasy points (ff_opportunity): per player-week, every pass / rush / reception
+    # with its expected completions, yards, touchdowns and fantasy points from play-level models, 2006 on,
+    # keyed by gsis player_id; actual minus expected to date is the luck / regression signal (the
+    # opportunity feature group). Was a weekly current-season snapshot under `fantasy_opportunity`
+    # (load_date partitions, 2025-10 on, left in place); now the seasonal history, reconciled daily.
     'ff_opportunity': {
-        'loader': nfl.load_ff_opportunity, 
-        'folder': 'fantasy_opportunity', 
-        'seasonal': False,
-        'schedule': SCHEDULE_TUESDAY
+        'loader': partial(nfl.load_ff_opportunity, stat_type='weekly'),
+        'folder': 'ff_opportunity',
+        'seasonal': True,
+        'start_season': 2006,
+        'schedule': SCHEDULE_DAILY
     },
     'ff_player_ids': {
         'loader': nfl.load_ff_playerids, 
