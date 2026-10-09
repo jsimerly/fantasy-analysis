@@ -37,15 +37,33 @@ def season_year(d: pl.Expr) -> pl.Expr:
     return pl.when(d.dt.month() >= 3).then(d.dt.year()).otherwise(d.dt.year() - 1)
 
 
+def ktc_crosswalk(hist: pl.DataFrame, xw: pl.DataFrame, fps: pl.DataFrame) -> pl.DataFrame:
+    """KTC ``player_key`` -> nflverse ``gsis_id``: by id through the players master where it has one
+    (a third of the priced pool: the master's gsis_id is sparse), else by normalised name and
+    position against the season fact's names, an ambiguous name resolved to the player who played
+    most recently. Lifts coverage of the priced pool from about a fifth to nearly all of it."""
+    keys = hist.select("player_key", "ktc_name", "ktc_position").unique("player_key")
+    names = (fps.filter(pl.col("position").is_in(POS)).group_by("player_id", "player_name", "position").agg(pl.col("season").max().alias("_last"))
+                .with_columns(market.norm_name("player_name").alias("_n")).sort("_last", descending=True)
+                .unique(["_n", "position"], keep="first", maintain_order=True).select("_n", pl.col("position").alias("ktc_position"), pl.col("player_id").alias("_gsis_name")))
+    m = (keys.join(xw.select("player_key", "gsis_id").unique("player_key"), on="player_key", how="left")
+             .with_columns(market.norm_name("ktc_name").alias("_n")).join(names, on=["_n", "ktc_position"], how="left")
+             .with_columns(pl.coalesce(["gsis_id", "_gsis_name"]).alias("gsis_id"),
+                           pl.when(pl.col("gsis_id").is_not_null()).then(pl.lit("id")).when(pl.col("_gsis_name").is_not_null()).then(pl.lit("name")).otherwise(None).alias("match")))
+    return m.select("player_key", "gsis_id", "match")
+
+
 def load_prices() -> pl.DataFrame:
     """KTC dynasty values (SF) per player and date with the player's season context: position, age,
     experience, draft capital and that season's points per game (the fantasy season of the date;
     a rookie before his first game takes his rookie season's row)."""
     h = market.load_ktc_history().filter(pl.col("ktc_value") > 0)
-    xw = market.load_crosswalk().select("gsis_id", "player_key").unique("player_key")
     fps = gcs_io.read_lake("silver/fantasy/fact_player_season/data.parquet").select(
-        "player_id", "season", "position", "age_at_season", "exp_at_season", "draft_round", "draft_pick", "ppg", "games", "fpts", "rookie_season")
-    h = (h.join(xw, on="player_key", how="left").with_columns(season_year(pl.col("valuation_date")).alias("season"))
+        "player_id", "player_name", "season", "position", "age_at_season", "exp_at_season", "draft_round", "draft_pick", "ppg", "games", "fpts", "rookie_season")
+    xw = ktc_crosswalk(h, market.load_crosswalk(), fps)
+    print(f"crosswalk: {xw.height} KTC players, by id {xw.filter(pl.col('match') == 'id').height}, by name {xw.filter(pl.col('match') == 'name').height}, unmatched {xw.filter(pl.col('gsis_id').is_null()).height}")
+    fps = fps.drop("player_name")
+    h = (h.join(xw.select("player_key", "gsis_id"), on="player_key", how="left").with_columns(season_year(pl.col("valuation_date")).alias("season"))
           .filter(pl.col("ktc_position").is_in(POS)))
     j = h.join(fps, left_on=["gsis_id", "season"], right_on=["player_id", "season"], how="left")
     # a rookie priced before his first season: take the row of the season after
@@ -150,6 +168,32 @@ def age_discount(players: pl.DataFrame) -> dict:
             "by_age_position": tbl(["position", "age_band"]), "by_exp": tbl("exp_band") if "exp_band" in p.columns else []}
 
 
+def price_per_point(prices: pl.DataFrame, min_games: int = 8) -> dict:
+    """What the market pays for a point, by position and season: each player's first September
+    price (the preseason snapshot) against the points per game he then scored that season (at least
+    ``min_games`` games): the median KTC per point of PPG, how well the preseason price ranked the
+    season's scorers (Spearman), and each position's share of all priced value in that snapshot
+    (the market's taste over the years). The current, incomplete season is in the composition only."""
+    sept = prices.filter((pl.col("valuation_date").dt.month() == 9) & (pl.col("ktc_value") >= MIN_VALUE)).sort("valuation_date")
+    snap = sept.group_by(["player_key", "season"]).agg(pl.all().first()).with_columns(pl.col("ktc_value").cast(pl.Float64))
+    comp = (snap.group_by(["season", "position"]).agg(pl.len().alias("n_priced"), pl.col("ktc_value").sum().alias("_v"))
+                .with_columns((pl.col("_v") / pl.col("_v").sum().over("season") * 100).round(1).alias("value_share")).drop("_v"))
+    done = snap.filter(pl.col("ppg").is_not_null() & (pl.col("games") >= min_games))
+    done = done.with_columns(pl.col("ktc_value").rank().over(["season", "position"]).alias("_pr"), pl.col("ppg").rank().over(["season", "position"]).alias("_sr"))
+    per = (done.group_by(["season", "position"]).agg(pl.len().alias("n"), pl.col("ktc_value").median().round(0).alias("ktc_median"), pl.col("ppg").median().round(2).alias("ppg_median"),
+                                                     (pl.col("ktc_value") / pl.col("ppg")).median().round(0).alias("ktc_per_ppg"), pl.corr("_pr", "_sr").round(3).alias("spearman_price_ppg"))
+               .filter(pl.col("n") >= 8))
+    # the priced pool deepens every year (KTC prices more players), so the medians drift towards lesser players; the top of each
+    # position by price (the starters) is the like-for-like read
+    top_n = {"QB": 12, "RB": 24, "WR": 36, "TE": 12}
+    top = (done.with_columns(pl.col("ktc_value").rank(descending=True).over(["season", "position"]).alias("_top"), pl.col("position").replace_strict(top_n, default=24).alias("_n_top"))
+               .filter(pl.col("_top") <= pl.col("_n_top"))
+               .group_by(["season", "position"]).agg(pl.len().alias("n_top"), (pl.col("ktc_value") / pl.col("ppg")).median().round(0).alias("ktc_per_ppg_top"), pl.col("ppg").median().round(2).alias("ppg_median_top")))
+    rows = comp.join(per, on=["season", "position"], how="left").join(top, on=["season", "position"], how="left").sort(["position", "season"])
+    latest = snap.filter(pl.col("season") == snap["season"].max())
+    return {"min_games": min_games, "top_n": top_n, "rows": rows.to_dicts(), "seasons": sorted(rows["season"].unique().to_list()), "latest_season": int(latest["season"].max()) if latest.height else None}
+
+
 def pick_cycle(pick_values: pl.DataFrame) -> dict:
     """A rookie pick's price by months before its draft (round-level KTC, Mid tier): the average
     log value relative to the value one month before the draft, by round."""
@@ -234,6 +278,9 @@ def main() -> None:
         summary["age_discount"] = age_discount(players)
         print("\n-- the market by age: realized rank minus market rank (+ = priced too rich), wins per 1,000 KTC")
         print(pl.DataFrame(summary["age_discount"]["by_age"])); print(pl.DataFrame(summary["age_discount"]["by_age_position"]))
+    summary["price_per_point"] = price_per_point(prices)
+    print("\n-- what the market pays per point: September price vs that season's PPG, by position and season")
+    print(pl.DataFrame(summary["price_per_point"]["rows"]))
     summary["pick_cycle"] = pick_cycle(gcs_io.read_lake("silver/fantasy/fact_pick_values"))
     print("\n-- rookie picks: value by months before the draft vs one month before (%)")
     print(pl.DataFrame(summary["pick_cycle"]["rows"]).pivot(on="round", index="months_to_draft", values="pct_vs_month_before_draft").sort("months_to_draft"))
