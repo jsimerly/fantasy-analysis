@@ -1388,9 +1388,33 @@ t = 1.45) stays a tie.
     claim -- "beats the provider's point-in-time view" is. *All four groups* (usage, role,
     opportunity, consensus): ROS 0.807 / 0.793 / 0.758 / 0.715, next 0.552 / 0.565 / 0.595 /
     0.607 -- the best model at every week on both reads. **Stage 2c queued** (ClaudeStage2c,
-    after 2b): consensus alone and all four on 3.5 at the stage-2 scope. **Next:** the bronze
-    ingestion + a quality check (freshness, the full slate, the current week present); the
-    season-level projection as a preseason career feature (2026 only has an as-of); FantasyPros
-    consensus for the live week once its backfill runs (owner's call); the provider's ROS number
-    captured weekly from now on so the ROS claim can be tested in a year.
+    after 2b): consensus alone and all four on 3.5 at the stage-2 scope. **The bronze ingestion** is in
+    (`sleeper-incremental-projections`, DAG bronze tier, `PROJ_SEASONS=2018-2025` for the
+    backfill; check `bronze.sleeper_projections.coming_week_present`).
+    **The projected stat line** (owner: "projected yards + tds ... could be slightly more
+    valuable"): its own group `consensus_line` (the coming week's projected attempts, yards,
+    touchdowns, targets, receptions by phase; targets and carries expected to date; expected
+    touchdowns to date and the player's actual rate minus it = touchdown luck through the
+    provider's eyes). Trees: alone next 0.552 / 0.570 / 0.582 / 0.600, ROS 0.803 / 0.783 / 0.755
+    / 0.702 -- as good as the points group on ROS and better early on next season (+0.011 at
+    week 6); with the points group next 0.546 / 0.564 / 0.582 / 0.592, ROS 0.808 / 0.786 / 0.756
+    / 0.706 -- not additive on the trees (the line sums to the points). Both go to stage 2; 3.5
+    may use the shape where the trees could not.
+    **Before 2018 (owner: "we can definitely get prior to 2018 right?").** Sleeper's endpoint
+    serves empty shells before 2018. What exists: (1) *ADP*, the preseason consensus with no
+    survivorship: Fantasy Football Calculator's public API (12-team; standard 2009-2011, PPR
+    2012 on; ~200 players and 300-1,300 drafts a year) and MyFantasyLeague's ADP export (2011
+    on; 320-460 players, 2,000-9,000 drafts a year; MFL ids, which `fantasy_player_ids` maps to
+    gsis) -- pulled locally (`adp/ffc.parquet`, `adp/mfl.parquet`); a preseason-consensus group
+    for the snapshot AND a career feature (every season since 2009) is next. (2) *FantasyPros
+    weekly projections 2012 on* through the owner's scraper, BUT its history is
+    survivorship-biased (only players still in their database render) and that is a LEAK, not
+    just noise: a consensus column present only for players who went on to long careers encodes
+    the future; usable only where coverage is complete (2022 on). (3) *Wayback captures* of
+    weekly projection pages (ESPN's old tool 2016-2019 confirmed; others untested, the CDX index
+    is slow): point-in-time and unbiased but a scraping project per site. (4) Paid vendors
+    (FantasyData, Sportradar) sell projection history to 2009; not pursued. **Next:** the ADP
+    group through the funnel; the bronze ingestion for ADP (yearly, both sources); the provider's
+    ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
+    consensus for the live week once its backfill runs (owner's call).
 
