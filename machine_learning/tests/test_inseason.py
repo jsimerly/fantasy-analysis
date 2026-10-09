@@ -276,3 +276,15 @@ class TestUsageRoleScheduleGroups:
         assert set(inseason.EXTRA_GROUPS) >= {"usage", "role", "schedule"}
         assert inseason.extra_columns(["role"]) == inseason.ROLE_COLS
 
+    def test_opportunity_expected_points_to_date_and_the_luck_signal(self):
+        ffo = pl.DataFrame({"season": [2025] * 4, "week": [1, 2, 3, 4], "player_id": ["g"] * 4,
+                            "total_fantasy_points_exp": [10.0, 12.0, 14.0, 99.0], "total_fantasy_points": [15.0, 12.0, 10.0, 99.0],
+                            "pass_fantasy_points_exp": [0.0] * 4, "rush_fantasy_points_exp": [2.0, 2.0, 2.0, 9.0], "rec_fantasy_points_exp": [8.0, 10.0, 12.0, 9.0],
+                            "total_touchdown_exp": [0.5, 0.5, 0.5, 9.0], "total_touchdown": [1, 0, 0, 9], "total_yards_gained_exp": [60.0, 70.0, 80.0, 9.0],
+                            "rec_attempt": [6, 8, 10, 9], "rec_air_yards": [60.0, 80.0, 100.0, 9.0]})
+        o = inseason.opportunity_features(ffo, week=3).to_dicts()[0]
+        assert abs(o["op_xfp_pg"] - 12.0) < 1e-9 and abs(o["op_rec_xfp_pg"] - 10.0) < 1e-9 and abs(o["op_xfp_last3"] - 12.0) < 1e-9
+        assert abs(o["op_fp_oe_pg"] - 1 / 3) < 1e-9 and abs(o["op_td_oe_pg"] - (1 - 1.5) / 3) < 1e-9       # +1 point and -0.5 TD of luck over three games
+        assert abs(o["op_targets_pg"] - 8.0) < 1e-9 and abs(o["op_x_yards_pg"] - 70.0) < 1e-9 and o["op_xfp_trend"] == 0.0
+        assert "opportunity" in inseason.EXTRA_GROUPS and inseason.extra_columns(["opportunity"]) == inseason.OPP_COLS
+

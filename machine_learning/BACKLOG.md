@@ -1345,7 +1345,15 @@ t = 1.45) stays a tie.
     0.750 / 0.695 -> flat, DROP. All three: next 0.537 / 0.560 / 0.584 / 0.605, ROS 0.798 /
     0.780 / 0.757 / 0.702 = usage + role. **Stage 2 queued** (`chain_stage2.sh`, Task Scheduler
     ClaudeStage2, waits for the unified chain): 3.5 in-season at cohorts 2023-24, weeks 6 / 13,
-    three horizons -- base, usage, usage + role. Next group in the funnel: the free "advanced usage" sources
+    three horizons -- base, usage, usage + role; **2b** (`chain_stage2b.sh`, ClaudeStage2b) usage +
+    role + opportunity. *opportunity* (nflverse ff_opportunity expected fantasy points to date:
+    per game overall / by phase, last-three and trend, actual minus expected for points and
+    touchdowns, expected yards, targets, air yards; 2006 on = 71 % of training rows; the lake
+    entry was a current-season weekly snapshot, now the seasonal history) on the trees: next
+    0.550 / 0.564 / 0.584 / 0.596, ROS 0.795 / 0.775 / 0.749 / 0.697 -- a little early-season
+    signal (expected points stabilise before actual points), flat late. usage + role +
+    opportunity: next 0.545 / 0.569 / 0.586 / 0.608, ROS 0.800 / 0.778 / 0.753 / 0.705 -- the
+    best combination at every rest-of-season week. Next group in the funnel: the free "advanced usage" sources
     beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
     *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
 
