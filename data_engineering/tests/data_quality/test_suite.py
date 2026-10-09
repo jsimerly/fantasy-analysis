@@ -255,3 +255,13 @@ def test_the_coming_weeks_projections_must_be_in_the_season_partition():
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})
     assert run(frames, parts, only="sleeper_projections")["passed"].all()
 
+
+def test_the_model_feeds_must_have_their_current_season_partition():
+    frames, parts = healthy()
+    r = failed(run(frames, parts, only="model_feeds"))["bronze.nflverse.model_feeds_current_season"]
+    assert "nextgen_stats_receiving season=2026" in r["observed"] and r["effective_severity"] == "warn"   # known open until the deploy
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity"):
+        parts[f"bronze/nflverse/{ds}/"] = [("2026", f"bronze/nflverse/{ds}/season=2026/data.parquet")]
+    parts["bronze/nflverse/fantasy_rankings_history/"] = [("2026-10-06", "bronze/nflverse/fantasy_rankings_history/load_date=2026-10-06/data.parquet")]
+    assert run(frames, parts, only="model_feeds")["passed"].all()
+

@@ -171,6 +171,21 @@ def drafts_current(ctx):
     return x.ok("every current league has its season's draft", 0)
 
 
+@check("bronze.nflverse.model_feeds_current_season", "bronze/nflverse", "error",
+       "the in-season feature groups (usage, opportunity, consensus) read these feeds; a season partition that never lands means the Monday model silently runs without them",
+       known_open="nextgen_stats_receiving / nextgen_stats_rushing / ff_opportunity (seasonal) and fantasy_rankings_history land with the deploy of PR #34's nflverse config and the daily reconcile (BACKLOG 37-38)")
+def model_feeds(ctx):
+    season = ctx.nfl_season()
+    missing = []
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity"):
+        parts = ctx.partitions(f"bronze/nflverse/{ds}/", key="season")
+        if not any(v == str(season) for v, _ in parts):
+            missing.append(f"{ds} season={season}")
+    if not ctx.partitions("bronze/nflverse/fantasy_rankings_history/"):
+        missing.append("fantasy_rankings_history")
+    return x.fail(f"missing feeds: {missing}", len(missing)) if missing else x.ok("every model feed has its current-season partition", 0)
+
+
 @check("bronze.nflverse_contracts.snapshot_fresh", "bronze/nflverse/contracts", "warn", "the Over The Cap snapshot refreshes on Tuesdays; a stale one means fact_player_contract_season stops moving")
 def contracts_fresh(ctx):
     return x.partition_fresh(ctx.partitions("bronze/nflverse/contracts/"), ctx.today, 10, "contracts")
