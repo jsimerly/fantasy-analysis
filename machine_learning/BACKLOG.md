@@ -1323,8 +1323,17 @@ t = 1.45) stays a tie.
     **The funnel (owner's idea, adjusted to the trees):** (1) the in-season backtest on the trees,
     CPU, minutes per run, against a fresh trees baseline -- drop the flat groups; (2) 3.5 at
     reduced scope (two cohorts, two weeks, three horizons); (3) the full 3.5 paired run under the
-    co-primary rule for adoption. Stage 1 running 2026-10-09 (`chain_screen_trees.sh`: base,
-    usage, role, schedule, all three). Next group in the funnel: the free "advanced usage" sources
+    co-primary rule for adoption. **Stage 1 (trees, 2026-10-09 12:57-12:59, 30 s a run; mean rank
+    correlation over cohorts 2021-24, weeks 3 / 6 / 9 / 13):** base next-season 0.546 / 0.559 /
+    0.582 / 0.596, ROS 0.793 / 0.773 / 0.750 / 0.696. *usage*: next 0.544 / 0.560 / 0.586 /
+    **0.609**, ROS 0.799 / 0.776 / 0.754 / 0.704 -- better at every ROS week and +0.013 next at
+    week 13, with Next Gen covering 13 % of training rows (2016 on) -> KEEP. *role*: next 0.538 /
+    0.563 / 0.586 / 0.600, ROS 0.793 / 0.780 / 0.753 / 0.699 -- marginal, positive from week 6
+    -> keep with usage. *schedule*: next 0.541 / 0.556 / 0.579 / 0.595, ROS 0.796 / 0.775 /
+    0.750 / 0.695 -> flat, DROP. All three: next 0.537 / 0.560 / 0.584 / 0.605, ROS 0.798 /
+    0.780 / 0.757 / 0.702 = usage + role. **Stage 2 queued** (`chain_stage2.sh`, Task Scheduler
+    ClaudeStage2, waits for the unified chain): 3.5 in-season at cohorts 2023-24, weeks 6 / 13,
+    three horizons -- base, usage, usage + role. Next group in the funnel: the free "advanced usage" sources
     beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
     *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
 
