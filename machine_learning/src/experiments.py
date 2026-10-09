@@ -58,6 +58,7 @@ class ExperimentConfig:
     stacked: bool = False            # one games / ppg model over all horizons with years-ahead as a feature
     cap: str = career.DEFAULT_CAP    # age-survival cap on projected games: career.apply_cap specs ("30+t" production, "30+", "30+t34", all, none)
     range_quantiles: tuple | None = None   # keep these quantiles of the predictive distribution (TabPFN): scored as coverage / pinball
+    draft_rows: bool = False         # the matrix carries a pre-NFL row per drafted player (draft_rows.py)
     tabpfn_params: dict = field(default_factory=dict)   # TabPFNRegressor constructor overrides (n_estimators, ...)
 
 
@@ -232,6 +233,7 @@ def run_experiment(
                "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
                "target": cfg.target, "weight": cfg.weight or "",
                "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else "") + (" range" if cfg.range_quantiles else ""),
+               "draft_rows": cfg.draft_rows,
                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
     for c in metric_cols:
         summary[c] = float(per_cohort[c].mean())
@@ -241,7 +243,7 @@ def run_experiment(
 
 
 # ------------------------------------------------------------------------------ ledger
-LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "regime", "backend", "commit",
+LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts", "n_cohorts", "discount_rate", "params", "calibrate", "quantile_sigma", "position_scale", "replacement", "fixed_scale", "target", "weight", "regime", "draft_rows", "backend", "commit",
                # primary, market-free: projected WAR vs realized WAR (all projected players / top-N by projected WAR)
                "spearman_war_all", "spearman_war_top", "mae_war_all", "mae_war_top", "bias_war_all", "bias_war_top", "bias_war_top12", "top_decile_war_all", "share_abs_err",
                # context: the market on the same (priced) players

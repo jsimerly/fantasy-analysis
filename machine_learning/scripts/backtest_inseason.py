@@ -44,11 +44,14 @@ SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 H = list(range(1, 11))
 
 
-def load_inputs() -> tuple[pl.DataFrame, pl.DataFrame]:
+def load_inputs(draft_rows: bool = False) -> tuple[pl.DataFrame, pl.DataFrame]:
     wk = gcs_io.read_lake(WEEK_PATH)
-    season = career.attach_horizon_targets(
-        career.career_features(features.attach_lags_and_target(features.load_fact_player_season(), drop_no_target=False)), H)
-    return wk, season
+    fact = features.load_fact_player_season()
+    df = career.career_features(features.attach_lags_and_target(fact, drop_no_target=False))
+    if draft_rows:
+        import draft_rows as dr
+        df = dr.with_draft_rows(df, dr.build_draft_rows(gcs_io.read_lake(career.XWALK_PATH), fact))
+    return wk, career.attach_horizon_targets(df, H)
 
 
 def week_end_date(wk: pl.DataFrame, season: int, week: int) -> date:
@@ -92,6 +95,7 @@ def main() -> None:
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the career tail's predictive distribution (TabPFN): the range of outcomes on the page")
     ap.add_argument("--groups", default="base,career", help="feature groups for the career tail (feature_groups.GROUPS), e.g. base,career,injury,trend,situation,rookie,college")
     ap.add_argument("--stacked", action="store_true", help="pooled horizons for the career tail: one games and one ppg model over every horizon")
+    ap.add_argument("--draft-rows", action="store_true", help="drafted rookies get a pre-NFL row (college + draft capital) the career tail projects, instead of the rookie tail table")
     ap.add_argument("--target", choices=["level", "residual"], default="level", help="career ppg target: the level, or the change from this season's rate")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default: tier-aware, from age 30) | 30+ | all (the pre-2026-10-05 behaviour) | none")
     args = ap.parse_args()
@@ -106,12 +110,16 @@ def main() -> None:
 
     weeks = [int(w) for w in args.weeks.split(",")]
 
-    wk, season = load_inputs()
+    import draft_rows as dr
+    wk, season = load_inputs(args.draft_rows)
     groups = fg.resolve(args.groups.split(","))
     feature_cols = fg.feature_columns(groups)
     if args.groups != "base,career":
         season = fg.assemble(season, groups, fg.Context())
         print(f"feature groups {[g.name for g in groups]}: {len(feature_cols)} columns", flush=True)
+    base = dr.drop_draft_rows(season)                 # played seasons: snapshots, replacement, rookie tables; the career tail sees every row
+    if args.draft_rows:
+        print(f"draft rows: {season.height - base.height} drafted skill players carry a pre-NFL row; the career tail projects them directly", flush=True)
     depth = gcs_io.read_lake("silver/fantasy/fact_depth_chart_week/data.parquet") if args.depth else None
     is_groups = [g for g in args.inseason_groups.split(",") if g]
     is_tabpfn = args.inseason_backend == "tabpfn"
@@ -123,7 +131,7 @@ def main() -> None:
     extra_cols = inseason.extra_columns(is_groups)
     team_week = gcs_io.read_lake(inseason.TEAM_WEEK_PATH) if "team" in is_groups else None
     contracts = gcs_io.read_lake(inseason.CONTRACT_PATH) if "contract" in is_groups else None
-    snaps = inseason.baselines(inseason.build_snapshots(wk, season, depth=depth, team_week=team_week, contracts=contracts))
+    snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:
@@ -137,7 +145,7 @@ def main() -> None:
     if args.current:
         cur = int(wk["season"].max())
         w_now = int(wk.filter(pl.col("season") == cur)["week"].max())
-        rep = replacement.replacement_levels(season, starters)
+        rep = replacement.replacement_levels(base, starters)
         tail, sigma, survival = career_tail(season, last_complete, rep, args.device, args.backend, tabpfn_params, args.cap,
                                             range_quantiles=(0.2, 0.5, 0.8) if args.range else None,
                                             features=feature_cols, stacked=args.stacked, target=args.target)
@@ -146,7 +154,7 @@ def main() -> None:
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
-        rookie_tbl = inseason.rookie_tail_table(season, H, through=last_complete)
+        rookie_tbl = inseason.rookie_tail_table(base, H, through=last_complete)
         snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl)
         print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
@@ -176,7 +184,7 @@ def main() -> None:
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")
         p2 = gcs_io.write_ml_json({
             "run_date": run, "season": cur, "week": w_now, "as_of_season": last_complete, "career_backend": backend_tag, "cap": args.cap,
-            "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target, "inseason_groups": args.inseason_groups, "inseason_backend": args.inseason_backend,
+            "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target, "draft_rows": args.draft_rows, "inseason_groups": args.inseason_groups, "inseason_backend": args.inseason_backend,
             "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
             "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
         }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")
@@ -185,9 +193,9 @@ def main() -> None:
 
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
-        rep = replacement.replacement_levels(season, starters, seasons=list(range(T - 5, T)))
+        rep = replacement.replacement_levels(base, starters, seasons=list(range(T - 5, T)))
         tail, sigma, survival = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target)
-        rookie_tbl = inseason.rookie_tail_table(season, H, through=T - 1)
+        rookie_tbl = inseason.rookie_tail_table(base, H, through=T - 1)
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
         for W in weeks:

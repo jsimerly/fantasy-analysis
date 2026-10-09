@@ -92,6 +92,9 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
     Not observable (censored) -> every target null.
     """
     done = df.filter(pl.col("season_complete")) if "season_complete" in df.columns else df
+    if "is_draft_row" in done.columns:                     # a draft row is never another row's future season
+        import draft_rows as dr
+        done = dr.drop_draft_rows(done)
     last = last_complete_season(df)
     out = df
     opp_cols = [c for c in OPPORTUNITY_COLS if c in done.columns]
@@ -708,8 +711,10 @@ class AgeSurvival:
 
 
 def fit_survival(season_df: pl.DataFrame, cap: str = DEFAULT_CAP) -> AgeSurvival:
-    """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs."""
-    return AgeSurvival(tiered="+t" in str(cap)).fit(season_df)
+    """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs. Draft rows (no
+    played season behind them) are left out: the prior is about players who were on a roster."""
+    import draft_rows as dr
+    return AgeSurvival(tiered="+t" in str(cap)).fit(dr.drop_draft_rows(season_df))
 
 
 def apply_cap(survival: AgeSurvival, df: pl.DataFrame, horizons: Iterable[int], cap: str = DEFAULT_CAP, **kw) -> pl.DataFrame:
@@ -754,15 +759,24 @@ def decay_baseline(train: pl.DataFrame, test: pl.DataFrame, horizons: Iterable[i
 
 
 # ------------------------------------------------------------------------- assembly
-def build_career_matrix(horizons: Iterable[int]) -> pl.DataFrame:
+XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
+
+
+def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False) -> pl.DataFrame:
     """fact_player_season (lake) -> one-year lags -> career features -> horizon targets.
     Rows from the in-progress season are kept (they have no outcomes yet) so the latest
-    complete season can be projected and the partial one inspected."""
+    complete season can be projected and the partial one inspected. With ``draft_rows`` every
+    drafted skill player also gets a pre-NFL row at the season before his rookie year
+    (``draft_rows.build_draft_rows``), flagged ``is_draft_row``."""
     import features
 
     season = features.load_fact_player_season()
-    df = features.attach_lags_and_target(season, drop_no_target=False)
-    return attach_horizon_targets(career_features(df), list(horizons))
+    df = career_features(features.attach_lags_and_target(season, drop_no_target=False))
+    if draft_rows:
+        import draft_rows as dr
+        import gcs_io
+        df = dr.with_draft_rows(df, dr.build_draft_rows(gcs_io.read_lake(XWALK_PATH), season))
+    return attach_horizon_targets(df, list(horizons))
 
 
 # -------------------------------------------------------------------------- evaluation
