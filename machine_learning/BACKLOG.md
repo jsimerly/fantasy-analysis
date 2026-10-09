@@ -1173,7 +1173,13 @@ t = 1.45) stays a tie.
     buy under-25s in May or August, look again in November; ride risers for eight weeks, buy
     non-QB fallers after a 15 % drop, do not catch falling QBs; sell a WR within the week of a
     big game, hold the RB or TE; buy picks one to two years out; buy TEs in July-August, QBs
-    May-October; a knee injury is a buying window, a soft-tissue one is not. **Next:** a Market
-    tab on the page from the published summary (seasonality heat-maps by position and stage, the
-    calendar of edges, the injury paths), a per-player "seasonal tailwind" flag next to the
-    mispricing, and the age-discount read on the production model's own backtest once it runs.
+    May-October; a knee injury is a buying window, a soft-tissue one is not. **On the page
+    (2026-10-09):** a Market tab (the seasonality heat-maps by age / stage / position and the raw
+    whole-market drift, the calendar of edges, momentum deciles and big moves, the age discount,
+    the pick-cycle chart, big-game and injury paths) from the published summary, which the export
+    carries as `market_trends`; and a **Season** column in the Players table's Pricing group: the
+    player's seasonal tailwind this month (mean of his position's and his age band's
+    market-adjusted 30-day change for the run month; green = the calendar favours him, red =
+    works against him; blank for picks). **Next:** the age-discount read on the production
+    model's own backtest once it runs; `col_breakout_age` needs a class year (the crosswalk has
+    no birth dates).

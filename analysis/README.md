@@ -85,7 +85,9 @@ the market's age discount against realized three-year WAR on the market-backtest
 rank minus market rank, wins per 1,000 KTC), the rookie-pick price cycle by months before the draft,
 the reaction to one big game (2+ sd above the season rate) over the next week and eight weeks, and
 the price path around an injury absence (by injury class and age). `--publish` writes
-`backtests/market_trends/run_date=<today>/summary.json` for a page tab.
+`backtests/market_trends/run_date=<today>/summary.json`; the export carries the newest one as
+`market_trends` for the page's **Market** tab and the Players table's **Season** column (the
+player's seasonal tailwind this month, from his position's and age band's cells).
 
 ```
 machine_learning/.venv/Scripts/python analysis/market_trends.py --out analysis/_cache/market_trends --players <market backtest>/players.parquet --publish
