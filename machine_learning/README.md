@@ -137,7 +137,9 @@ at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG ite
 ## Weekly refresh (Cloud Run)
 
 `scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
-(`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
+(`backtest_inseason.py --current`; the career tail and its sigma come from `_cache/career_tail/`
+while their key holds -- the visible rows, the configuration, the modelling code -- so a run
+between completed seasons is the in-season stage alone; `--no-tail-cache` recomputes), rebuilds WAR for every league the owner is in
 (`build_war.py --all-leagues --teams`), rebuilds the analysis summaries the page embeds (draft-slot
 standings and the trade log, `analysis/`, best-effort, so the page carries the lake's newest
 standings; `--skip analysis` leaves the previous ones) and exports the page data to
