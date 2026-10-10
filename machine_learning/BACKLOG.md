@@ -1,5 +1,40 @@
 # Model backlog
 
+## Status (read this, not the 1,600 lines below) — 2026-10-10
+
+**Production** (`weekly_refresh.py --preset production`, the owner's GPU, Tuesday after the Monday games):
+TabPFN 3.5, feature set `base,career,injury,trend,situation,rookie,college`, pooled horizons 1-10, the
+**blend** target (mean of level and residual), the 20/50/80 band, age-survival cap `30+t`, weekly
+replacement, in-season on 3.5 with no extra groups yet. The career tail is cached per season; the
+weekly run is the in-season stage plus the exports (~1.5 h; the first run is timed end to end before
+the Tuesday task is scheduled). Page: Players / Rosters (title odds this season and next) / Model
+performance / Trades / Draft slots / Team value / Market.
+
+**Adopted, with the number that decided it** (co-primary rule: ordering `spearman_war_top` and wins
+error `mae_war_top`, |t| > 2.4 on one with the other no worse, same-day baseline):
+- TabPFN 3.5 over the trees (item 22): error 0.474 vs 0.515, t = +7.3, 8 of 8 cohorts.
+- The owner's feature set + pooled horizons on 3.5 (22): t = +7.5 vs per-horizon.
+- Blend target over level (44): error 0.502 vs 0.513, ordering tie; the residual rematch runs 2026-10-10.
+- Weekly replacement line, cap `30+t`, rank-match fair value (items 19-21): see each item.
+
+**Rejected, with the number:** draft rows on the career model (43: ordering -0.035, error +0.04);
+snapshot rows as training augmentation (32 step 1: error 0.526 vs 0.513, t = -2.4); a provider flag on
+the consensus group (38: -0.004 at every week on the trees); team-change and schedule in-season groups
+(37: flat on the trees); the far-horizon discount as the cause of the quarterback lean (42: no effect).
+
+**Open, running or queued (the GPU queue of 2026-10-10):** unified model as the in-season projector
+(32 step 2); the five in-season groups on 3.5 (37-39; the trees say usage, opportunity, consensus and
+preseason help, FFToday 2010-17 adds +0.004 to +0.009); band sigma per player (6 / 26 / 36b) and the
+positional scale (42) by offline rescoring; residual rematch (44); ensemble 16 and fp32, context
+bagging and relevance-first context (36). Each verdict is written into its item with the numbers.
+
+**Data in the lake for the model:** Sleeper weekly projections 2018-2026, FFToday 2010-2017, nflverse
+Next Gen receiving / rushing, expected fantasy points, snap counts, FTN charting, depth charts,
+injuries, contracts, CFBD college. Still pending the owner's go: the ADP backfill (2009-2026).
+
+**How to read the rest:** items are numbered in the order they were raised; the owner's words that
+raised each one are quoted in its heading; verdicts are appended to the item in bold with the date.
+
 Ordered by expected gain per effort. Every item is accepted or rejected by the ablation harness
 (item 1), scored on rank correlation with realized 3-year PAR among market-priced players plus
 top-decile precision. Evidence below comes from the 2026-10-01 probes (OLS lift over a base of
