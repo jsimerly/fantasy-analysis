@@ -105,6 +105,43 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
                           realized_rep_for=realized_rep_for, hist=hist, crosswalk=xw, regime=regime)
 
 
+def rescore_cli(args) -> None:
+    """``--rescore RUN``: the saved cohort frames scored again under a value-side change, saved as
+    a run of their own and compared with the source, cohort by cohort."""
+    fixed = {k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)}
+    src_name = args.rescore.partition("@")[0]
+    src = ex.load_run(args.rescore)
+    ledger = ex.load_ledger()
+    meta = ledger.filter(pl.col("name") == src_name).sort("timestamp").tail(1).to_dicts() if ledger is not None else []
+    meta = meta[0] if meta else {}
+    groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
+    H = list(range(1, int(meta.get("horizon") or args.horizon) + 1))
+    suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + (f"_top{args.top_n}" if args.top_n else "")
+    name = args.as_name or (src_name + (suffix or "_rescored"))
+    backend = str(meta.get("backend") or args.backend)
+    cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(src["cohort"].to_list()),
+                              discount_rate=float(meta.get("discount_rate") or args.discount_rate), fixed_scale=fixed, position_scale=args.walk_scale,
+                              replacement=str(meta.get("replacement") or args.replacement).split("/")[0], target=str(meta.get("target") or args.target),
+                              backend=backend.split("(")[0].split(" ")[0], stacked=" stacked" in backend, **({"top_n": args.top_n} if args.top_n else {}))
+    per_cohort, summary = ex.rescore(ex.load_cohorts(args.rescore), cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src)
+    summary["regime"] = str(src["regime"][0]) if "regime" in src.columns else ""
+    summary["backend"] = backend + f" rescored<{args.rescore}>"
+    per_cohort = per_cohort.with_columns(pl.lit(summary["regime"]).alias("regime"))
+    change = " ".join(x for x in (("fixed " + args.fixed_scale) if fixed else "", "walk-forward scale" if args.walk_scale else "", f"top {args.top_n}" if args.top_n else "") if x)
+    with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
+        print(f"== {name}: {args.rescore} rescored ({change or 'as is'}) ==")
+        print(per_cohort.select([c for c in per_cohort.columns if c in ("cohort", "n_all", "spearman_war_top", "mae_war_top", "share_abs_err") or c.startswith("scale_")]))
+    if args.no_log:
+        return
+    ledger = ex.append_result(ledger, summary)
+    print("per-cohort ->", ex.save_run(per_cohort, summary))
+    ex.save_ledger(ledger)
+    with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
+        table = ex.paired(name, args.rescore)
+        print(table)
+        print(ex.verdict(table))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--variants", help='"name=g1,g2;name2=g1,g3" (several variants on one matrix build)')
@@ -139,6 +176,11 @@ def main() -> None:
     ap.add_argument("--quantile-sigma", action="store_true", help="player-specific projection spread from quantile models")
     ap.add_argument("--position-scale", action="store_true", help="scale each position's value by its holdout realized/projected PAR share")
     ap.add_argument("--no-log", action="store_true", help="do not append to the ledger")
+    ap.add_argument("--save-cohorts", action="store_true", help="keep every scored cohort frame (experiments/cohorts) for --rescore")
+    ap.add_argument("--rescore", metavar="RUN", help="score the saved cohort frames of RUN again (no GPU) under --fixed-scale, --walk-scale or --top-n; name it with --as")
+    ap.add_argument("--as", dest="as_name", help="the rescored run name (default: RUN plus a suffix for the change)")
+    ap.add_argument("--walk-scale", action="store_true", help="--rescore: walk-forward per-position value scale from the cohorts complete by each cohort")
+    ap.add_argument("--top-n", type=int, default=None, help="the top-N projected players the ordering and error metrics score (default: the config)")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
     ap.add_argument("--paired", nargs=2, metavar=("RUN_A", "RUN_B"),
@@ -163,6 +205,10 @@ def main() -> None:
             return
         with pl.Config(tbl_rows=-1, tbl_width_chars=220, float_precision=3):
             print(ex.leaderboard(ledger, horizon=args.horizon))
+        return
+
+    if args.rescore:
+        rescore_cli(args)
         return
 
     variants = parse_variants(args.variants) if args.variants else [(args.name or (args.groups or ",".join(fg.DEFAULT)), (args.groups or ",".join(fg.DEFAULT)).split(","))]
@@ -203,8 +249,11 @@ def main() -> None:
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
                                   range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
-        per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for)
+        got: list[pl.DataFrame] = []
+        per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for, collect=got if args.save_cohorts else None)
         summary["regime"] = bc.regime
+        if args.save_cohorts:
+            print("cohort frames ->", ex.save_cohorts(name, got, summary["timestamp"]))
         per_cohort = per_cohort.with_columns(pl.lit(bc.regime).alias("regime"))
         summaries.append(summary)
         with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
