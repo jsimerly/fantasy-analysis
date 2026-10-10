@@ -4,6 +4,16 @@
 and what it has delivered against the market. Every figure below is from the page's Model performance
 tab as of 2026-10-10 (runs of 2026-10-01 to 2026-10-09); the tab updates as the model does.*
 
+## The words
+
+- **Rank agreement.** Put the players in the order we projected them, and in the order they actually finished. 1.0 means the same order, 0 means no relation. 0.78 against the market's 0.70 means our order was closer to what happened. (The statistic is Spearman's correlation.)
+- **Points above replacement (PAR).** A player's points minus what a freely available player at his position would have scored in the same games: the part of his production you could not have had for nothing.
+- **Wins above replacement (WAR).** The same thing turned into wins on this league's own scoring and lineup. The model is tested on this.
+- **The market.** KeepTradeCut's dynasty values, the consensus price managers trade on. Measured against, never fed in.
+- **Fair value and mispricing.** Fair value is what the market would pay a player if it agreed with our order at his position; mispricing is how far his price sits above (rich) or below (cheap) that.
+- **Walk-forward.** To score a past year, the model is rebuilt with only what was known then and compared with what happened years later. No peeking.
+- **The swap test.** Two players priced within 15 % of each other that the model disagreed on by at least ten places: sell the one it called rich, buy the one it called cheap, then see who delivered more.
+
 ## The question the model answers
 
 Dynasty fantasy football is a market: players and draft picks are traded on a consensus price
