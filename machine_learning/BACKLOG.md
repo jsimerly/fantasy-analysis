@@ -1462,7 +1462,15 @@ t = 1.45) stays a tie.
     2,726-2,916 rows a season, 17 weeks each, with the stat line and injury tags; DQ check
     `bronze.fftoday.history_complete`. Next: map `fft_id` -> gsis (name + team + season via the nflverse
     rosters) and feed the consensus group's 2010-2017 rows from it so the in-season model's labelled weeks
-    double; trees screen first (CPU), then the 3.5 stage.
+    double; trees screen first (CPU), then the 3.5 stage. **Bridge built and screened 2026-10-10 11:40:**
+    `inseason.fftoday_as_consensus` (name + position onto nflverse ids, ties settled by the season fact; 98 % of
+    22.7k player-weeks match; PPR points from the stat line) feeds the consensus group for 2010-2017 beside
+    Sleeper. Trees screen, next-season ordering at weeks 3 / 6 / 9 / 13: without 0.544 / 0.561 / 0.585 / 0.598;
+    with FFToday 0.553 / 0.567 / 0.590 / 0.602 (+0.004 to +0.009 everywhere, from more labelled weeks; the test
+    cohorts 2021-24 never see FFToday). A provider flag as a feature cost 0.004 at every week and is out; the
+    era floor following the data (unlisted pre-2018 = 0 rather than unknown) was neutral and stays off.
+    Coverage per week is comparable (FFToday 28 QB / ~50 per other position, Sleeper's non-zero rows 24 / 58-112).
+    The 3.5 stage reads the lake by default (`--no-fftoday` to leave it out).
 
 39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
     by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
