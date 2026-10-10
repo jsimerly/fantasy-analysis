@@ -36,7 +36,7 @@ STEPS = ["inseason", "war", "analysis", "export"]
 # the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
-                       inseason_backend="tabpfn"),
+                       inseason_backend="tabpfn", target="blend"),   # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
 }
 
 
