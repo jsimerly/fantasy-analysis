@@ -1130,6 +1130,16 @@ t = 1.45) stays a tie.
     in-season model (0.572-0.621). If (2) wins, the page's seasons two and on, next season and
     the rookie tail all come from one model, and the hand-made bridges between them go away.
     Build after the draft-row and blend verdicts; it needs the GPU for every test.
+    **Step (1) verdict, 2026-10-10 04:58 (`tabpfn35_set_stacked_snap_w`: week-9 snapshot rows from
+    2010, 23.7k pooled rows, 3 h 04 m, paired vs `tabpfn35_set_stacked_w_c`): NO.** Ordering
+    0.630 vs 0.620 (t = +1.2, 3 of 8 cohorts), wins error 0.526 vs 0.513 (t = -2.4, worse in 7
+    of 8), top-12 bias -0.112 vs -0.041 (the model reads prior stars higher still), position-share
+    error 0.123 vs 0.119; the train-test gap goes 13.4 -> 20.3 pts because a snapshot row's target
+    contains the weeks already in the row (the in-sample score is not comparable, the out-of-sample
+    one is). Snapshot rows as training augmentation do not help the season-end projection; the
+    owner's fuzzing concern (item 40) was the right instinct. Step (2), the in-season use,
+    is the `inseason_unified.log` run that started 04:58 (next|unified vs next|model at weeks
+    3 / 6 / 9 / 13, cohorts 2021-); recorded below when it lands.
 
 33. **How the market prices over time: the edges in the pricing community itself (owner,
     2026-10-09).** `analysis/market_trends.py`, on KTC's daily SF history 2020-2026 (players
