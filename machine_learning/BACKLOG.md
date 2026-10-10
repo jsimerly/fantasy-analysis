@@ -1526,3 +1526,17 @@ t = 1.45) stays a tie.
     not overfitting: the draft rows' sparse features and zero-production targets pull the prior
     for young players down. The hand-made rookie tail stays. The draft rows remain available
     (`--draft-rows`) for the unified / snapshot tests but are off the production path.
+
+44. **Blend target: ADOPT over the level target on the 3-year window (2026-10-10 00:43, paired
+    on the fresh `_c` baseline, 8 cohorts).** Level + residual averaged (item 26's "blend"):
+    top-150 ordering 0.621 vs 0.620 (tie, t = +0.2), wins error **0.502 vs 0.513** (t = +3.5,
+    better in 7 of 8), all-player ordering 0.626 vs 0.623 (t = +5.2, 8 of 8), top decile +0.010,
+    train-test gap 13.0 vs 13.4 points (less overfit; in-sample error 20.6 vs 20.2, i.e. less
+    memorisation), top-12 bias flips from -0.04 (stars under) to +0.05 (stars slightly over).
+    Co-primary rule: ordering tie, error gain above the line -> ADOPT. Context: the pure residual
+    target's 10-07 run (`tabpfn35_set_stacked_res_w`, valid regime) sits at 0.628 / 0.499, so the
+    residual alone may be at least as good as the blend; **next:** a fresh residual run under
+    the regime stamp paired against the blend (one hour), then the production preset takes
+    whichever wins (`--target residual|blend`); the blend's market backtest (`market_blend`)
+    lands tonight for the second read; the distribution metrics need `--range` on the harness
+    runs (the after-prod chain ran without it, so pinball / coverage / skew are null tonight).
