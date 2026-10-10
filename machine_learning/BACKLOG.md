@@ -672,7 +672,12 @@ the same backtest that answers "are we beating the market"); 24 after the winner
     base,career,injury,trend,situation,rookie,college --stacked --range --inseason-backend tabpfn`
     (about 25 min on the 5070 Ti). Owner's call, as every production switch.
 
-23. **Model vs market backtest, 2021 to now: are we winning, and where.** KTC dynasty values are
+23. **Model vs market backtest, 2021 to now: are we winning, and where.** *(2026-10-10: the backtest now
+    carries realized points and points above replacement per player and per swap -- the numbers a
+    non-modeller reads; the page's swap test leads with them (+196 points per swap over three seasons,
+    +104 above replacement, ahead in 82 % of swaps; in wins 73 %, +0.46). The production summary of
+    2026-10-07 was enriched from the lake by a one-off (scratchpad `enrich_swaps.py`); the restart chain
+    re-runs the backtest on the blend preset with `--publish` so the permanent path fills them.)* KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
     season end vs KTC the following February", against what the players then delivered. Report
     per cohort and per horizon (1 / 2 / 3 years so 2023–25 count too): rank agreement with realized
