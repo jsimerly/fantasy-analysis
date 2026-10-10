@@ -1486,6 +1486,10 @@ t = 1.45) stays a tie.
     era floor following the data (unlisted pre-2018 = 0 rather than unknown) was neutral and stays off.
     Coverage per week is comparable (FFToday 28 QB / ~50 per other position, Sleeper's non-zero rows 24 / 58-112).
     The 3.5 stage reads the lake by default (`--no-fftoday` to leave it out).
+    **Sleeper projections backfilled 2026-10-10 12:40 (owner's go):** `bronze/sleeper/projections/season=2018..2026`,
+    ~56k rows a season, from the deployed job's code run locally; the daily DAG rebuilds the current season from
+    here on and `coming_week_present` is enforced (week 6: 3,117 projections). The consensus group reads the lake;
+    the local `--proj-dir` copy is retired. ADP (`adp-yearly`, 2009-2026) still awaits the owner's go.
 
 39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
     by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
