@@ -269,6 +269,7 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
                "ppg_cover_2080", "ppg_pinball", "ppg_skew",
                # the overfitting reads: in-sample error and the train-test gap (season points), cohort spread of the co-primaries
                "mae_h1_train", "gap_h1", "spearman_war_top_sd", "mae_war_top_sd"]
+LEDGER_COLS = list(dict.fromkeys(LEDGER_COLS))   # a column listed twice made append_result raise AFTER an hour of GPU (2026-10-09 20:22); unique, order kept
 
 
 IN_SAMPLE_ROWS = 2000
@@ -336,8 +337,10 @@ def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
 
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
-    row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c)
-                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h", "share_proj_", "share_real_")))])
+    # the per-horizon extras (mae_h3, bias_all_h5, ...) ride along by prefix; a fixed column that shares a prefix
+    # (mae_h1_train) must not be listed twice -- that duplicate raised AFTER an hour of GPU on 2026-10-09
+    extras = sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h", "share_proj_", "share_real_")) and k not in LEDGER_COLS)
+    row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c) for c in LEDGER_COLS + extras])
     return row if ledger is None or ledger.height == 0 else pl.concat([ledger, row], how="diagonal_relaxed")
 
 
