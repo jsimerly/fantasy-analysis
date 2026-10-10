@@ -85,12 +85,12 @@ OPP_COLS = ["op_xfp_pg", "op_pass_xfp_pg", "op_rush_xfp_pg", "op_rec_xfp_pg", "o
 #             from past seasons when the consensus was right and when rows that looked like this one beat it.
 CS_LINE = {"pass_att": "pass_att", "pass_yd": "pass_yd", "pass_td": "pass_td", "rush_att": "rush_att", "rush_yd": "rush_yd", "rush_td": "rush_td",
            "rec_tgt": "tgt", "rec": "rec", "rec_yd": "rec_yd", "rec_td": "rec_td"}     # the provider's projected stat line, coming week
-CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has"]
+CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has", "cs_src"]   # cs_src: 0 Sleeper, 1 FFToday (the provider, so an offset can be learnt)
 # consensus_line - the provider's projected stat line for the coming week (volume and scoring by phase) and the
 #                  expected touchdown rate to date against the player's actual one (touchdown luck through the
 #                  provider's eyes); its own group so the funnel can judge it apart from the points
 CONSENSUS_LINE_COLS = [f"cs_next_{v}" for v in CS_LINE.values()] + ["cs_td_tgt", "cs_td_rush_att", "cs_td_xtd", "cs_td_luck"]
-CONSENSUS_FIRST_SEASON = 2018
+CONSENSUS_FIRST_SEASON = 2018          # Sleeper; with FFToday rows the floor follows the data (2010)
 PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
 FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
 FFT_PATH = "bronze/fftoday/projections"                   # FFToday 2010-2017 weekly projections (season partitions): the consensus before 2018
@@ -210,13 +210,14 @@ def consensus_features(proj: pl.DataFrame, xwalk: pl.DataFrame, wk: pl.DataFrame
     x = (xwalk.select(pl.col("sleeper_id").cast(pl.Utf8).alias("sid"), pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"))
               .drop_nulls().filter(pl.col("player_id") != "").unique("sid"))
     pr = (proj.with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), pl.col("player_id").cast(pl.Utf8).alias("sid"),
-                            pl.col("pts_ppr").cast(pl.Float64, strict=False))
+                            pl.col("pts_ppr").cast(pl.Float64, strict=False),
+                            (pl.col("src").cast(pl.Float64, strict=False).fill_null(0.0) if "src" in proj.columns else pl.lit(0.0)).alias("src"))
               .drop("player_id").join(x, on="sid", how="inner").filter(pl.col("pts_ppr").is_not_null()))
     line = [c for c in CS_LINE if c in pr.columns]
     num = lambda c: pl.col(c).cast(pl.Float64, strict=False)  # noqa: E731
     nxt = (pr.filter(pl.col("week") == week + 1)
              .with_columns(pl.col("pts_ppr").rank(method="min", descending=True).over("season", "position").alias("cs_next_rank_pos"))
-             .select("player_id", "season", pl.col("pts_ppr").alias("cs_next_ppr"), pl.col("cs_next_rank_pos").cast(pl.Float64),
+             .select("player_id", "season", pl.col("pts_ppr").alias("cs_next_ppr"), pl.col("cs_next_rank_pos").cast(pl.Float64), pl.col("src").alias("cs_src"),
                      *[num(c).alias(f"cs_next_{CS_LINE[c]}") for c in line]))
     xtd = sum((num(c).fill_null(0.0) for c in ("pass_td", "rush_td", "rec_td") if c in pr.columns), pl.lit(0.0))   # a phase the provider leaves blank is zero, not unknown
     td = (pr.filter((pl.col("week") >= 1) & (pl.col("week") <= week)).group_by("player_id", "season")
@@ -265,8 +266,8 @@ def fftoday_as_consensus(fft: pl.DataFrame, ids: pl.DataFrame, season_fact: pl.D
         f = f.filter(pl.col("_k") == 1)
     pts = sum((pl.col(c).cast(pl.Float64, strict=False).fill_null(0.0) * w for c, w in PPR.items() if c in f.columns), pl.lit(0.0))
     line = [c for c in CS_LINE if c in f.columns]
-    return (f.with_columns(pts.alias("pts_ppr"))
-             .select("season", "week", "player_id", "position", "pts_ppr", *line)
+    return (f.with_columns(pts.alias("pts_ppr"), pl.lit(1.0).alias("src"))
+             .select("season", "week", "player_id", "position", "pts_ppr", "src", *line)
              .unique(["season", "week", "player_id"], keep="first", maintain_order=True))
 
 
@@ -439,8 +440,9 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
             snap = snap.join(preseason, on=["player_id", "season"], how="left").with_columns(
                 pl.when(pl.col("season") >= PRESEASON_FIRST_SEASON).then(pl.col("ps_drafted").fill_null(0.0)).otherwise(None).alias("ps_drafted"))
         if consensus is not None and consensus_xwalk is not None:
+            cs_first = int(consensus["season"].min()) if consensus.height else CONSENSUS_FIRST_SEASON
             snap = snap.join(consensus_features(consensus, consensus_xwalk, wk, w), on=["player_id", "season"], how="left").with_columns(
-                pl.when(pl.col("season") >= CONSENSUS_FIRST_SEASON).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
+                pl.when(pl.col("season") >= cs_first).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
         if schedules is not None:
             snap = (snap.with_columns(_norm_team().alias("_tm")).join(schedule_features(schedules, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
                         .drop("_tm"))

@@ -336,7 +336,7 @@ def test_fftoday_rows_become_consensus_rows_keyed_by_gsis():
                         "rec": [None, 5.0, None, None], "rec_yd": [None, 70.0, None, None], "rec_td": [None, 1.0, None, None], "fpts": [28.0, 18.0, 23.5, 15.0]})
     played = pl.DataFrame({"player_id": ["00-1", "00-3", "00-4"], "season": [2015, 2015, 2015]})     # only one Mike Williams played in 2015
     out = inseason.fftoday_as_consensus(fft, ids, played)
-    assert out.columns[:5] == ["season", "week", "player_id", "position", "pts_ppr"] and out.height == 4
+    assert out.columns[:6] == ["season", "week", "player_id", "position", "pts_ppr", "src"] and out.height == 4 and out["src"].unique().to_list() == [1.0]
     brady = out.filter((pl.col("player_id") == "00-1") & (pl.col("week") == 9)).row(0, named=True)
     assert abs(brady["pts_ppr"] - (320 * 0.04 + 3 * 4)) < 1e-9                                        # nflverse PPR, not FFToday's own points
     assert out.filter(pl.col("player_id") == "00-3")["pts_ppr"][0] == 10 * 0.0 + 40 * 0.1 + 5 + 7.0 + 6.0   # the Mike Williams who played
