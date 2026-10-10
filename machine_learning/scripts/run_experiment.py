@@ -110,21 +110,25 @@ def rescore_cli(args) -> None:
     a run of their own and compared with the source, cohort by cohort."""
     fixed = {k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)}
     src_name = args.rescore.partition("@")[0]
-    src = ex.load_run(args.rescore)
+    frames = ex.load_cohorts(args.rescore)
+    try:
+        src = ex.load_run(args.rescore)
+    except FileNotFoundError:                     # a --no-log run: frames only, no in-sample scores or regime to carry
+        src = None
     ledger = ex.load_ledger()
     meta = ledger.filter(pl.col("name") == src_name).sort("timestamp").tail(1).to_dicts() if ledger is not None else []
     meta = meta[0] if meta else {}
     groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
-    H = list(range(1, int(meta.get("horizon") or args.horizon) + 1))
+    H = sorted(int(c[1:-9]) for c in frames.columns if c.startswith("h") and c.endswith("_fpts_hat") and c[1:-9].isdigit())   # the horizons the frames hold
     suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + (f"_top{args.top_n}" if args.top_n else "")
     name = args.as_name or (src_name + (suffix or "_rescored"))
     backend = str(meta.get("backend") or args.backend)
-    cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(src["cohort"].to_list()),
+    cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(int(t) for t in frames["cohort"].unique().to_list()),
                               discount_rate=float(meta.get("discount_rate") or args.discount_rate), fixed_scale=fixed, position_scale=args.walk_scale,
                               replacement=str(meta.get("replacement") or args.replacement).split("/")[0], target=str(meta.get("target") or args.target),
                               backend=backend.split("(")[0].split(" ")[0], stacked=" stacked" in backend, **({"top_n": args.top_n} if args.top_n else {}))
-    per_cohort, summary = ex.rescore(ex.load_cohorts(args.rescore), cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src)
-    summary["regime"] = str(src["regime"][0]) if "regime" in src.columns else ""
+    per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src)
+    summary["regime"] = str(src["regime"][0]) if src is not None and "regime" in src.columns else ""
     summary["backend"] = backend + f" rescored<{args.rescore}>"
     per_cohort = per_cohort.with_columns(pl.lit(summary["regime"]).alias("regime"))
     change = " ".join(x for x in (("fixed " + args.fixed_scale) if fixed else "", "walk-forward scale" if args.walk_scale else "", f"top {args.top_n}" if args.top_n else "") if x)
