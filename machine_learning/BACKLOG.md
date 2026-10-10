@@ -1517,3 +1517,12 @@ t = 1.45) stays a tie.
     given tonight: buy productive backs and prime (27-29) quarterbacks, sell young hyped
     receivers, pick within position; the title lens is position-agnostic.
 
+43. **Draft rows: NO on the career model (2026-10-09 22:38, paired on the fresh 3.5 set + stacked
+    baseline `_c`, 8 cohorts 2015-22, horizon 3).** With one pre-NFL row per drafted player
+    (item 30) the top-150 ordering falls 0.620 -> 0.585 (t = -7.3, 0 of 8 cohorts better), the
+    wins error rises 0.513 -> 0.553 (t = +4.9, worse in 8 of 8), the top-12 bias deepens -0.04
+    -> -0.14 (the stars under-projected more), all-player ordering -0.009. The fit read is
+    unchanged (in-sample h1 error 20.2 vs 20.0 points, train-test gap 13.4 vs 13.7), so it is
+    not overfitting: the draft rows' sparse features and zero-production targets pull the prior
+    for young players down. The hand-made rookie tail stays. The draft rows remain available
+    (`--draft-rows`) for the unified / snapshot tests but are off the production path.
