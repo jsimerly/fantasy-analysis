@@ -72,6 +72,12 @@ USAGE_COLS = [f"ng_{v}" for v in NGS_REC_SRC.values()] + [f"ng_{v}" for v in NGS
 ROLE_COLS = ["last1_fpts", "last5_ppg", "last3_targets_pg", "last3_touches_pg", "tgt_trend", "touch_trend",
              "games_since_return", "missed_last3", "td_injured_weeks", "td_dnp_weeks"]
 SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahead"]
+# team_change - what changed around the player this season (known from week 1): a new starting quarterback on his
+#               team against last season's regular starter, the share of this season's offensive-line starters who
+#               started on the line for that team last season (snap counts, 2013 on), and whether he IS the new starter
+TEAM_CHANGE_COLS = ["tc_qb_new", "tc_ol_returning", "tc_is_new_qb"]
+OL_POS = ("T", "G", "C", "OL", "OT", "OG", "LT", "RT", "LG", "RG")
+SNAP_COUNTS_PATH = "bronze/nflverse/snap_counts"                 # season partitions (gcs_io.read_lake_prefix)
 # opportunity - nflverse's expected fantasy points (ff_opportunity, 2006 on): expected points per game to
 #               date and by phase (pass / rush / receiving), the last three weeks' expected and its trend,
 #               actual minus expected per game (points, touchdowns: the luck / regression signal), expected
@@ -104,7 +110,8 @@ PRESEASON_COLS = ["ps_adp", "ps_adp_pos_rank", "ps_drafted"]
 PRESEASON_FIRST_SEASON = 2009
 ADP_PATH = "bronze/adp"                                   # season partitions per source (ingestion to follow); --adp-dir until then
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
-                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS}
+                "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS,
+                "team_change": TEAM_CHANGE_COLS}
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
@@ -129,6 +136,37 @@ def extra_columns(groups: Iterable[str]) -> list[str]:
 
 def _norm_team(col: str = "team") -> pl.Expr:
     return pl.col(col).cast(pl.Utf8).str.strip_chars().replace(TEAM_CODE)
+
+
+def team_change_features(depth: pl.DataFrame, snap_counts: pl.DataFrame | None, week: int) -> pl.DataFrame:
+    """(season, team) -> ``tc_qb_new`` (the week-1 starting quarterback is not last season's regular one),
+    ``tc_ol_returning`` (share of this season's offensive-line starters through ``week`` who started on
+    that line last season; null before the snap counts begin), and ``_qb1`` (the week-1 starter's id,
+    for the player-level flag). Last season's regular starter is the quarterback with most weeks at
+    depth rank 1. Current franchise codes throughout."""
+    d = (depth.filter((pl.col("slot") == "QB") & (pl.col("depth_rank") == 1) & (pl.col("game_type").fill_null("REG") == "REG"))
+              .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), _norm_team().alias("team"), pl.col("gsis_id").cast(pl.Utf8)))
+    qb1 = d.filter(pl.col("week") == 1).unique(["season", "team"], keep="first").select("season", "team", pl.col("gsis_id").alias("_qb1"))
+    regular = (d.group_by("season", "team", "gsis_id").len().sort(["season", "team", "len"], descending=[False, False, True])
+                 .unique(["season", "team"], keep="first").select((pl.col("season") + 1).alias("season"), "team", pl.col("gsis_id").alias("_qb_prev")))
+    out = (qb1.join(regular, on=["season", "team"], how="left")
+              .with_columns(pl.when(pl.col("_qb_prev").is_null()).then(None).otherwise((pl.col("_qb1") != pl.col("_qb_prev")).cast(pl.Float64)).alias("tc_qb_new"))
+              .drop("_qb_prev"))
+    if snap_counts is not None and snap_counts.height:
+        sc = (snap_counts.filter(pl.col("position").cast(pl.Utf8).is_in(list(OL_POS)) & (pl.col("offense_pct").cast(pl.Float64, strict=False) >= 0.5)
+                                 & (pl.col("game_type").fill_null("REG") == "REG"))
+                         .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64), _norm_team().alias("team"), pl.col("pfr_player_id").cast(pl.Utf8).alias("_pid")))
+        now = sc.filter(pl.col("week") <= week).select("season", "team", "_pid").unique()
+        last = sc.select((pl.col("season") + 1).alias("season"), "team", "_pid").unique().with_columns(pl.lit(True).alias("_back"))
+        ol = (now.join(last, on=["season", "team", "_pid"], how="left").group_by("season", "team")
+                 .agg(pl.col("_back").fill_null(False).cast(pl.Float64).mean().alias("tc_ol_returning"), pl.len().alias("_n_ol")))
+        first_sc = int(sc["season"].min()) if sc.height else None
+        out = out.join(ol.filter(pl.col("_n_ol") >= 3).drop("_n_ol"), on=["season", "team"], how="left")
+        if first_sc is not None:                                     # a season before the snap counts stays unknown, not 0
+            out = out.with_columns(pl.when(pl.col("season") <= first_sc).then(None).otherwise(pl.col("tc_ol_returning")).alias("tc_ol_returning"))
+    else:
+        out = out.with_columns(pl.lit(None, pl.Float64).alias("tc_ol_returning"))
+    return out.select("season", "team", "tc_qb_new", "tc_ol_returning", "_qb1")
 
 
 def team_week_features(team_week: pl.DataFrame, week: int) -> pl.DataFrame:
@@ -408,7 +446,7 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
                     schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None,
                     consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None,
-                    preseason: pl.DataFrame | None = None) -> pl.DataFrame:
+                    preseason: pl.DataFrame | None = None, team_change: tuple[pl.DataFrame, pl.DataFrame | None] | None = None) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -449,6 +487,12 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
         if schedules is not None:
             snap = (snap.with_columns(_norm_team().alias("_tm")).join(schedule_features(schedules, w).rename({"team": "_tm"}), on=["season", "_tm"], how="left")
                         .drop("_tm"))
+        if team_change is not None:
+            tc = team_change_features(team_change[0], team_change[1], w).rename({"team": "_tm"})
+            snap = (snap.with_columns(_norm_team().alias("_tm")).join(tc, on=["season", "_tm"], how="left")
+                        .with_columns(pl.when(pl.col("tc_qb_new").is_null()).then(None)
+                                        .otherwise(((pl.col("player_id") == pl.col("_qb1")) & (pl.col("tc_qb_new") == 1.0)).cast(pl.Float64)).alias("tc_is_new_qb"))
+                        .drop("_tm", "_qb1"))
         ros = wk.filter(pl.col("week") > w).group_by("player_id", "season").agg(
             pl.len().alias("ros_games"), pl.col("fpts").sum().alias("ros_fpts"))
         snap = snap.join(ros, on=["player_id", "season"], how="left").join(nxt, on=["player_id", "season"], how="left")

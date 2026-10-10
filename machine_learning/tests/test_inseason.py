@@ -403,3 +403,27 @@ class TestContextLevers:
         both = pl.concat([big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(2), big.filter((pl.col("season") == 2022) & (pl.col("week") == 8)).head(2)])
         with pytest.raises(ValueError):
             f.predict(both)                                                 # two weeks at once
+
+
+def test_team_change_features_flag_a_new_starter_and_count_the_returning_line():
+    depth = pl.DataFrame({
+        "season": [2023] * 6 + [2024] * 2, "week": [1, 2, 3, 4, 5, 6, 1, 1], "game_type": ["REG"] * 8,
+        "team": ["KC"] * 6 + ["KC", "DET"], "slot": ["QB"] * 8, "depth_rank": [1] * 8,
+        "gsis_id": ["Q1", "Q1", "Q1", "Q2", "Q1", "Q1", "Q2", "Q9"],            # KC's regular 2023 starter is Q1; week 1 of 2024 starts Q2
+    })
+    sc = pl.DataFrame({
+        "season": [2023] * 5 + [2024] * 5, "week": [1] * 10, "game_type": ["REG"] * 10, "team": ["KC"] * 10,
+        "position": ["T", "G", "C", "G", "T"] * 2, "offense_pct": [0.9] * 10,
+        "pfr_player_id": ["a", "b", "c", "d", "e", "a", "b", "c", "x", "y"],   # three of five 2024 starters started in 2023
+    })
+    out = inseason.team_change_features(depth, sc, week=1)
+    kc = out.filter((pl.col("season") == 2024) & (pl.col("team") == "KC")).row(0, named=True)
+    assert kc["tc_qb_new"] == 1.0 and kc["_qb1"] == "Q2" and abs(kc["tc_ol_returning"] - 0.6) < 1e-9
+    det = out.filter((pl.col("season") == 2024) & (pl.col("team") == "DET")).row(0, named=True)
+    assert det["tc_qb_new"] is None and det["tc_ol_returning"] is None                      # no 2023 history for DET; no line snaps
+    kc23 = out.filter((pl.col("season") == 2023) & (pl.col("team") == "KC")).row(0, named=True)
+    assert kc23["tc_ol_returning"] is None                                                   # the snap counts' first season stays unknown
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2], team_change=(depth, sc))
+    assert {"tc_qb_new", "tc_ol_returning", "tc_is_new_qb"} <= set(snaps.columns)
+    assert inseason.extra_columns(["team_change"]) == inseason.TEAM_CHANGE_COLS

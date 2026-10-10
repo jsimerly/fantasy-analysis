@@ -189,6 +189,9 @@ def main() -> None:
         else:
             ngs_rec, ngs_rush = gcs_io.read_lake_prefix(inseason.NGS_REC_PATH), gcs_io.read_lake_prefix(inseason.NGS_RUSH_PATH)
     schedules = gcs_io.read_lake_prefix(inseason.SCHEDULES_PATH) if "schedule" in is_groups else None
+    team_change = None
+    if "team_change" in is_groups:
+        team_change = (fg.Context().depth, gcs_io.read_lake_prefix(inseason.SNAP_COUNTS_PATH))
     ffo = None
     if "opportunity" in is_groups:
         ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
@@ -219,7 +222,7 @@ def main() -> None:
         print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
                                                         status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
-                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason))
+                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:
