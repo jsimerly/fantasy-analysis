@@ -1314,7 +1314,13 @@ t = 1.45) stays a tie.
     context instead of 10. It now predicts the union of the holdout rows once and takes each
     horizon's residuals from that frame -- row-wise identical (spec-tested against the
     per-horizon loop), about ten times cheaper. The running production job kept the old code
-    (restarting would not have finished sooner); every later run has the fix.
+    (restarting would not have finished sooner); every later run has the fix. **Second cut
+    (2026-10-10 02:40):** the production predictions ran TWO forward passes per estimator and
+    horizon frame, one for the point (`predict`) and one for the bands (`predict_quantiles`);
+    the TabPFN wrapper now asks the model for mean + the wanted quantiles together
+    (`output_type="main"`, the same one pass) and memoises the answer for the last X, so the
+    bands that follow on the same rows are free -- the predict stage halves, outputs unchanged
+    (spec-tested: one call per estimator per frame; other quantiles or new rows still ask).
     **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
     (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
     (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**
@@ -1489,7 +1495,7 @@ t = 1.45) stays a tie.
 41. **Production switched to TabPFN 3.5 (2026-10-09, week 5).** `weekly_refresh.py --preset
     production` (3.5, the full feature set, stacked, pooled horizons 1-10, quantile bands,
     in-season on 3.5) ran 09:29 -> 19:16 (9 h 47 m: the sigma loop's H-squared predictions,
-    since fixed, plus the quantile pass over the ten-horizon frame, next to fix) and wrote
+    since fixed, plus the quantile pass over the ten-horizon frame, fixed 2026-10-10) and wrote
     `inseason/season=2026/week=5/run_date=2026-10-09` (474 players, 345 priced, rank agreement
     with KTC 0.927), the three league roster views, the trade and draft-slot reports; the export
     carries the Market tab, the Season column, the week-5 title odds, team value and the

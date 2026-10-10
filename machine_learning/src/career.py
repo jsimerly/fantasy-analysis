@@ -26,6 +26,7 @@ Leakage rules (enforced here, not left to the caller):
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Iterable
 
 import numpy as np
@@ -133,9 +134,16 @@ class _TabPFN:
     work at prediction time. Missing values pass through as NaN. Sample weights are not supported
     by the model and are ignored (``weight`` variants are an xgboost-only experiment)."""
 
-    def __init__(self, device: str = "cpu", seed: int = 0, params: dict | None = None):
+    def __init__(self, device: str = "cpu", seed: int = 0, params: dict | None = None,
+                 want_quantiles: Iterable[float] | None = None):
         self.device, self.seed, self.params = device, seed, dict(params or {})
         self.model = None
+        # one forward pass serves the point and its bands: with want_quantiles set, ``predict``
+        # asks the model for mean + these quantiles together and memoises the answer for the
+        # last X, so the ``predict_quantiles`` that follows on the same rows is free (the forward
+        # pass over the in-context training set is the whole cost of a TabPFN predict)
+        self.want_quantiles = tuple(float(q) for q in want_quantiles) if want_quantiles else None
+        self._memo: tuple[tuple, np.ndarray, np.ndarray] | None = None
 
     def fit(self, X, y, sample_weight=None):
         import os
@@ -157,12 +165,29 @@ class _TabPFN:
         return self
 
     def predict(self, X):
-        return np.asarray(self.model.predict(np.asarray(X, dtype=np.float32)), dtype=float)
+        X = np.asarray(X, dtype=np.float32)
+        if self.want_quantiles:
+            return self._point_and_bands(X)[0]
+        return np.asarray(self.model.predict(X), dtype=float)
 
     def predict_quantiles(self, X, qs) -> np.ndarray:
         """(n, len(qs)) quantiles of the predictive distribution (TabPFN returns one per row for free)."""
-        out = self.model.predict(np.asarray(X, dtype=np.float32), output_type="quantiles", quantiles=[float(q) for q in qs])
+        X, qs = np.asarray(X, dtype=np.float32), tuple(float(q) for q in qs)
+        if self.want_quantiles and qs == self.want_quantiles:
+            return self._point_and_bands(X)[1]
+        out = self.model.predict(X, output_type="quantiles", quantiles=list(qs))
         return np.column_stack([np.asarray(a, dtype=float) for a in out])
+
+    def _point_and_bands(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Mean and ``want_quantiles`` of the predictive distribution from one forward pass,
+        memoised for the last X (keyed on its shape and bytes)."""
+        key = (X.shape, hashlib.sha1(np.ascontiguousarray(X).tobytes()).hexdigest())
+        if self._memo is None or self._memo[0] != key:
+            out = self.model.predict(X, output_type="main", quantiles=list(self.want_quantiles))
+            mean = np.asarray(out["mean"], dtype=float)
+            bands = np.column_stack([np.asarray(a, dtype=float) for a in out["quantiles"]])
+            self._memo = (key, mean, bands)
+        return self._memo[1], self._memo[2]
 
 
 class _Blend:
@@ -259,7 +284,7 @@ class HorizonModels:
 
     def _new(self):
         if self.backend == "tabpfn":
-            return _TabPFN(self.device, self.seed, self.tabpfn_params)
+            return _TabPFN(self.device, self.seed, self.tabpfn_params, want_quantiles=self.range_quantiles)
         if self.backend == "blend":
             return _Blend([self._xgb(), _TabPFN(self.device, self.seed, self.tabpfn_params)])
         return self._xgb()
