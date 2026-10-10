@@ -641,6 +641,10 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8,
 Z_20_80 = 0.8416     # a 20-80 band is +- 0.84 standard deviations of a normal spread
 
 
+BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma (experiments.apply_sigma_mode uses the same)
+SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain
+
+
 def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int, dict[str, float]] | None) -> pl.DataFrame:
     """Where the run carries a projected band (``h{k}_ppg_q20`` / ``_q50`` / ``_q80`` from TabPFN) but a
     player has none (a rookie's or returning veteran's extrapolated tail), give him one from the
@@ -669,7 +673,7 @@ def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
-    rookie_table: pl.DataFrame | None = None,
+    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None,
 ) -> pl.DataFrame:
     """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
     from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
@@ -681,6 +685,10 @@ def inseason_value(
     This is what the dynasty market should be compared with in-season: next-season points alone
     make every productive 38-year-old look cheap against a price that already discounts his
     remaining career.
+
+    ``sigma_mode="band"`` (items 6 / 36b) prices each career span's upside with the player's OWN
+    spread from the run's 20/80 band (``h{k}_ppg_sigma`` = width / 1.68, floored at 1 ppg) instead of
+    the position's holdout sigma; the in-season spans (rest of season, next season) keep the dict.
     """
     import value as _value
 
@@ -689,10 +697,18 @@ def inseason_value(
     tail = career_pred.select(["player_id"] + [c for k in horizons for c in (f"h{k}_ppg_hat", f"h{k}_games_hat")] + band_cols)
     df = fill_missing_tail(snaps.join(tail, on="player_id", how="left"), horizons, rookie_table=rookie_table)
     df = fill_missing_band(df, horizons, sigma)
+    if sigma_mode == "band":
+        df = df.with_columns([((pl.col(f"h{k}_ppg_q80") - pl.col(f"h{k}_ppg_q20")) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma")
+                              for k in horizons if f"h{k}_ppg_q20" in df.columns and f"h{k}_ppg_q80" in df.columns])
+    elif sigma_mode:
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None or 'band'")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
 
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
+        own = mu_col.replace("_ppg_hat", "_ppg_sigma")
+        if own in df.columns and df[own].null_count() < df.height:
+            return _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
         if sigma and k in sigma:
             s = df["position"].replace_strict({p: v for p, v in sigma[k].items() if p != "__all__"},
                                               default=sigma[k]["__all__"], return_dtype=pl.Float64).to_numpy()
