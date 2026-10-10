@@ -1321,6 +1321,16 @@ t = 1.45) stays a tie.
     (`output_type="main"`, the same one pass) and memoises the answer for the last X, so the
     bands that follow on the same rows are free -- the predict stage halves, outputs unchanged
     (spec-tested: one call per estimator per frame; other quantiles or new rows still ask).
+    **Third cut, the weekly cache (2026-10-10 03:30, item (a) above):** `backtest_inseason.py
+    --current` keeps the capped career tail and sigma under `_cache/career_tail/<key>/`
+    (`tail_cache.py`): the key hashes every row the tail can see (seasons up to the as-of
+    season plus training snapshots; the in-progress season's partial rows are left out), the
+    configuration, the polars version and the modelling modules' bytes, so a lake restatement,
+    a code change or a completed season misses and recomputes, and a Monday run in between
+    is the in-season stage alone. `--no-tail-cache` forces the recompute. Spec-tested with a
+    fake model (hit on the in-progress season moving, miss on a completed row changing). The
+    first production run after this writes the cache; time that run end to end before the
+    weekly task is scheduled.
     **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
     (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
     (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**

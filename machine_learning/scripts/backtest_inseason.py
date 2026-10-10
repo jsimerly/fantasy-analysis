@@ -37,11 +37,13 @@ import power  # noqa: E402
 import inseason  # noqa: E402
 import market  # noqa: E402
 import replacement  # noqa: E402
+import tail_cache  # noqa: E402
 import value  # noqa: E402
 
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 H = list(range(1, 11))
+TAIL_CACHE_DIR = ROOT / "_cache" / "career_tail"      # the --current career tail, reused weekly (tail_cache)
 
 
 def load_inputs(draft_rows: bool = False, snapshot_weeks: list[int] | None = None, snapshot_from: int = 2010) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -68,20 +70,37 @@ SNAP_TIER_COLS = ("prev_ppg", "prev_games")   # a snapshot's prior tier is last 
 
 def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, backend: str = "xgb", tabpfn_params: dict | None = None,
                 cap: str = career.DEFAULT_CAP, range_quantiles: tuple | None = None, features: list[str] | None = None, stacked: bool = False,
-                target: str = "level"):
+                target: str = "level", cache_dir: Path | None = None):
     """Career-model projections off every player's row in season ``as_of`` (their latest
     complete season), plus the out-of-sample spread, trained only on outcomes known by then.
     Projected games are capped by the age-survival prior per ``cap`` (career.apply_cap: from age
-    30, tier-aware, by default). Returns (predictions, sigma, survival)."""
+    30, tier-aware, by default). Returns (predictions, sigma, survival, model).
+
+    With ``cache_dir`` the capped predictions and sigma are reused from ``cache_dir/<key>`` while
+    the key holds (tail_cache: the visible rows, this configuration, the modelling code) and the
+    model comes back as None -- the weekly refresh, where the tail is identical until a season
+    completes or the code or the lake changes."""
+    survival = career.fit_survival(season_df.filter((pl.col("season") + 1) <= as_of), cap)
+    cfg = dict(horizons=H, backend=backend, tabpfn_params=tabpfn_params or {}, cap=cap, range_quantiles=range_quantiles,
+               features=features, stacked=stacked, target=target)
+    key = tail_cache.cache_key(season_df, as_of, cfg) if cache_dir else None
+    if key:
+        hit = tail_cache.load(cache_dir, key)
+        if hit:
+            print(f"career tail: cached as of {as_of} (key {key}, {hit[0].height} players, written {hit[2].get('written')}); "
+                  f"--no-tail-cache recomputes", flush=True)
+            return hit[0], hit[1], survival, None
+        print(f"career tail: no cache for key {key}; computing", flush=True)
     m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params, range_quantiles=range_quantiles,
                              features=features, stacked=stacked, target=target).fit(season_df, as_of_season=as_of)
     sigma = m.estimate_sigma(season_df, as_of_season=as_of)
-    survival = career.fit_survival(season_df.filter((pl.col("season") + 1) <= as_of), cap)
     import draft_rows as dr
     rows = season_df.filter(pl.col("season") == as_of)
     if "is_snapshot_row" in rows.columns:                   # project the season rows (and draft rows), not the training snapshots
         rows = rows.filter(~dr._flag(rows, "is_snapshot_row"))
     pred = career.apply_cap(survival, m.predict(rows), H, cap)
+    if key:
+        print("career tail: cached under", tail_cache.store(cache_dir, key, pred, sigma, {"as_of": as_of, "config": cfg}), flush=True)
     return pred, sigma, survival, m
 
 
@@ -92,6 +111,7 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
+    ap.add_argument("--no-tail-cache", action="store_true", help="--current: recompute the career tail even when _cache/career_tail has it for this key")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
@@ -200,7 +220,8 @@ def main() -> None:
         rep = replacement.replacement_levels(base, starters)
         tail, sigma, survival, _ = career_tail(season, last_complete, rep, args.device, args.backend, tabpfn_params, args.cap,
                                             range_quantiles=(0.2, 0.5, 0.8) if args.range else None,
-                                            features=feature_cols, stacked=args.stacked, target=args.target)
+                                            features=feature_cols, stacked=args.stacked, target=args.target,
+                                            cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
         backend_tag = (args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
                        + (" stacked" if args.stacked else "") + (f" {args.target}" if args.target != "level" else "") + (f" [{args.groups}]" if args.groups != "base,career" else ""))
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps)
