@@ -10,6 +10,8 @@
 | 3 years out: ordering by the wins players then delivered | **0.695 rank agreement** | vs the market's 0.673 on 364 priced players, cohorts 2020-2022 |
 | Career projection, 3 years ahead: error vs repeating last season | **-30 % error** | −8.0% vs an age-decay curve; 7,338 player-seasons since 2010 |
 
+**The words.** *Rank agreement*: put the players in the order we projected them and in the order they actually finished; 1.0 is the same order, 0 is no relation (Spearman). *Points above replacement*: a player's points minus what a freely available player at his position would have scored in the same games. *Wins above replacement*: those points turned into wins on this league's scoring and lineup, the number the model is tested on. *The market*: KeepTradeCut's dynasty values, the yardstick, never an input. *Walk-forward*: a past year is scored by rebuilding the model with only what was known then.
+
 ## The swaps, by name
 
 Points are what each player scored over the next three seasons in this league's scoring; "above replacement" is the part a freely available player at his position would not have given you; wins are the model's own unit.

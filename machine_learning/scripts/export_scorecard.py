@@ -86,6 +86,10 @@ def to_markdown(card: dict) -> str:
         v = h["value"]
         val = f"{v:+.0f}" if h["key"] == "career_error" else (f"{v:g}" if v is not None else "–")
         L.append(f"| {h['label']} | **{val} {h['unit']}** | {h['detail']} |")
+    L += ["", "**The words.** *Rank agreement*: put the players in the order we projected them and in the order they actually finished; 1.0 is the same order, 0 is no relation (Spearman). "
+          "*Points above replacement*: a player's points minus what a freely available player at his position would have scored in the same games. "
+          "*Wins above replacement*: those points turned into wins on this league's scoring and lineup, the number the model is tested on. "
+          "*The market*: KeepTradeCut's dynasty values, the yardstick, never an input. *Walk-forward*: a past year is scored by rebuilding the model with only what was known then."]
     if card.get("swaps"):
         pts = any(r.get("sold_pts") is not None for r in card["swaps"])
         if pts:
