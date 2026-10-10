@@ -80,10 +80,11 @@ deploys the workflow and creates/updates the single scheduler (`fantasy-pipeline
 
 ## Migration: retire the old triggers (STILL PENDING as of 2026-09-30)
 
-The 14 legacy per-job Cloud Scheduler triggers are **still enabled** and fire alongside the
-workflow every morning, so every bronze job and the T1/T2 dims run twice a day (and every
-failure shows up twice). `fantasy-pipeline-daily` covers all of them. Delete them (their full
-configs were exported first, in case one is ever needed again):
+The 14 legacy per-job Cloud Scheduler triggers were **deleted on 2026-10-10** (owner's go); until then
+they fired alongside the workflow every morning, so every bronze job and the T1/T2 dims ran twice a
+day. `fantasy-pipeline-daily` covers all of them. The remaining schedulers are `fantasy-pipeline-daily`
+(10:00 UTC), `fantasypros-live-current-daily` (13:00), `ml-weekly-refresh` (Tuesdays 15:00) and
+`fantasy-college-yearly`. The deletion, for the record (their full configs were exported first):
 
 ```
 for s in silver-dim-leagues-scheduler-trigger sleeper-incremental-league-scheduler-trigger \
