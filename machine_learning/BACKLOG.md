@@ -1304,6 +1304,15 @@ t = 1.45) stays a tie.
        week to week. Draft rows and the blend target (items 30 / 26) are queued ahead of it.
     5. *Full-precision inference* (`inference_precision=float32`): doubles the cost, sometimes
        tightens the tails; low expected gain, in the chain.
+    **Levers 2 and 3 built 2026-10-10 12:30 (owner: "I think we should really just start adding these"):**
+    `InSeasonModels(bags=K)` fits K estimators per target on different `bag_subset` draws (the two
+    most recent seasons whole, the rest of the 50k budget a random sample of the older rows, a
+    different draw per bag) and averages; `InSeasonModels(focus_week=True)` fits when a week is
+    predicted, on `training_subset(around_week=w)` (the snapshots nearest that week across every
+    season first, recency second), one set per week. `--inseason-bags` / `--inseason-focus-week`
+    on the backtest; spec-tested. Queued as `chain_context.sh` behind the accuracy chain at the
+    stage-2 scope against `stage2_base.log` (bags 3, then focus). Lever 1 (ensemble 16, fp32) is
+    in the accuracy chain the same day.
     Not worth the hours: more checkpoint weeks (the week is a feature), speed-only changes
     (caching the career tail, a 20k cap) -- unless the budget is exceeded. **Where the first
     production run's hours went (py-spy on the live process, 2026-10-09 14:00, 4.5 h in):**
