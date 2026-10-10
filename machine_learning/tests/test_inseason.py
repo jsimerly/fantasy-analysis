@@ -322,3 +322,26 @@ class TestUsageRoleScheduleGroups:
         assert out.height == 3 and out.select("player_id", "season").n_unique() == 3 and set(out.columns) == {"player_id", "season", "week"}
         assert inseason.one_week_per_season(rows, seed=1).equals(out)      # seeded: the same draw each time
 
+
+
+def test_fftoday_rows_become_consensus_rows_keyed_by_gsis():
+    import polars as pl
+    import inseason
+    ids = pl.DataFrame({"name": ["Tom Brady", "Mike Williams", "Mike Williams", "Drew Brees"], "position": ["QB", "WR", "WR", "QB"],
+                        "gsis_id": ["00-1", "00-2", "00-3", "00-4"], "sleeper_id": [11, 22, 33, None]})
+    fft = pl.DataFrame({"season": [2015, 2015, 2015, 2015], "week": [9, 9, 9, 10], "position": ["QB", "WR", "QB", "QB"],
+                        "player": ["Tom Brady", "Mike Williams", "Drew Brees Jr.", "Tom Brady"],
+                        "pass_yd": [320.0, None, 310.0, 250.0], "pass_td": [3.0, None, 2.0, 1.0], "pass_int": [0.0, None, 1.0, 0.0],
+                        "rush_att": [0.0, 10.0, 0.0, 2.0], "rush_yd": [0.0, 40.0, 0.0, 5.0], "rush_td": [0.0, 0.0, 0.0, 0.0],
+                        "rec": [None, 5.0, None, None], "rec_yd": [None, 70.0, None, None], "rec_td": [None, 1.0, None, None], "fpts": [28.0, 18.0, 23.5, 15.0]})
+    played = pl.DataFrame({"player_id": ["00-1", "00-3", "00-4"], "season": [2015, 2015, 2015]})     # only one Mike Williams played in 2015
+    out = inseason.fftoday_as_consensus(fft, ids, played)
+    assert out.columns[:5] == ["season", "week", "player_id", "position", "pts_ppr"] and out.height == 4
+    brady = out.filter((pl.col("player_id") == "00-1") & (pl.col("week") == 9)).row(0, named=True)
+    assert abs(brady["pts_ppr"] - (320 * 0.04 + 3 * 4)) < 1e-9                                        # nflverse PPR, not FFToday's own points
+    assert out.filter(pl.col("player_id") == "00-3")["pts_ppr"][0] == 10 * 0.0 + 40 * 0.1 + 5 + 7.0 + 6.0   # the Mike Williams who played
+    assert out.filter(pl.col("player_id") == "00-4").height == 1                                        # "Jr." stripped
+    assert inseason.fftoday_as_consensus(fft, ids, None).filter(pl.col("position") == "WR").height == 0  # an unsettled tie is dropped
+    x = inseason.gsis_identity_rows(ids)
+    assert x.columns == ["sleeper_id", "gsis_id"] and x["sleeper_id"].to_list() == x["gsis_id"].to_list() and x.height == 4
+    assert inseason.fftoday_as_consensus(fft.head(0), ids).height == 0
