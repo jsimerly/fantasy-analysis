@@ -1398,6 +1398,12 @@ t = 1.45) stays a tie.
     best combination at every rest-of-season week. Next group in the funnel: the free "advanced usage" sources
     beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
     *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
+    **Team change built and screened 2026-10-10 12:25 (`team_change`: a new week-1 starting quarterback vs
+    last season's regular starter from the depth-chart fact, the returning share of the offensive line
+    from the snap counts 2013 on, and whether the player is the new starter; 89 % of snapshots covered):
+    FLAT on the trees -- next-season ordering 0.541 / 0.560 / 0.583 / 0.598 against the bare base's
+    0.542 / 0.558 / 0.582 / 0.596, rest-of-season a hair worse at weeks 6-13. Like schedule: in the
+    registry, not in the production set. Play-caller changes have no source in the lake.
 
 38. **Consensus as an input the model learns to trust or beat (owner, 2026-10-09: "a model that
     learns to trust consensus vs when our signal beats it is actually BRILLIANT ... we may even be
