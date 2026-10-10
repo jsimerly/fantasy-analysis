@@ -37,9 +37,14 @@ def scorecard(payload: dict) -> dict:
     ov0 = ov[0] if ov else None
     sw0 = next((r for r in mk.get("swap_overall") or [] if ov0 and r.get("variant") == ov0.get("variant") and r.get("horizon") == ov0.get("horizon")), None)
     if sw0 and sw0.get("pairs"):
-        head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["win_rate"] * 100, 0), "unit": "% won",
-                     "detail": f"{sw0['pairs']} swaps, cohorts {meta.get('cohorts', '')}, {ov0['horizon']} years out; +{_f(sw0['gain_mean'], 2)} wins per swap",
-                     "secondary": _f(sw0["gain_mean"], 2), "run_date": meta.get("run_date")})
+        if sw0.get("gain_pts_mean") is not None:
+            head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["gain_pts_mean"], 0), "unit": "more fantasy points per swap over three seasons",
+                         "detail": f"{sw0['pairs']} swaps, cohorts {meta.get('cohorts', '')}: the player bought out-scored the one sold by that much; {round(sw0.get('gain_par_mean') or 0):,} more above a replacement-level player, ahead in {round((sw0.get('win_rate_par') or 0) * 100)}% of swaps; in wins {round(sw0['win_rate'] * 100)}% won, +{_f(sw0['gain_mean'], 2)} per swap",
+                         "secondary": _f(sw0["win_rate"] * 100, 0), "run_date": meta.get("run_date")})
+        else:
+            head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["win_rate"] * 100, 0), "unit": "% won",
+                         "detail": f"{sw0['pairs']} swaps, cohorts {meta.get('cohorts', '')}, {ov0['horizon']} years out; +{_f(sw0['gain_mean'], 2)} wins per swap",
+                         "secondary": _f(sw0["gain_mean"], 2), "run_date": meta.get("run_date")})
     if ov0 and ov0.get("cheap_gap_real") is not None:
         head.append({"key": "mispricing", "label": "The mispricing is real", "value": _f(ov0["cheap_gap_real"], 1), "unit": "ranks better",
                      "detail": f"players the model called cheap finished that many ranks better than the market had them; the ones it called rich finished {_f(abs(ov0['rich_gap_real']), 1)} worse",
@@ -62,10 +67,12 @@ def scorecard(payload: dict) -> dict:
                      "secondary": _f(-abs(r3.get("model_%_vs_decay", 0)), 0), "run_date": ce.get("run_date")})
     swaps = sorted([r for r in mk.get("top_swaps") or [] if r.get("gain") is not None], key=lambda r: -r["gain"])
     named = [{"cohort": r["cohort"], "sold": r["sell"], "sold_pos": r["sell_pos"], "sold_ktc": r["sell_ktc"], "sold_delivered": _f(r["sell_real"], 2),
-              "bought": r["buy"], "bought_pos": r["buy_pos"], "bought_ktc": r["buy_ktc"], "bought_delivered": _f(r["buy_real"], 2), "gain": _f(r["gain"], 2)} for r in swaps[:8]]
-    by_cohort = [{"cohort": r["cohort"], "pairs": r["pairs"], "win_rate": _f(r["win_rate"] * 100, 0), "gain_mean": _f(r["gain_mean"], 2)}
+              "bought": r["buy"], "bought_pos": r["buy_pos"], "bought_ktc": r["buy_ktc"], "bought_delivered": _f(r["buy_real"], 2), "gain": _f(r["gain"], 2),
+              "sold_pts": _f(r.get("sell_pts"), 0), "bought_pts": _f(r.get("buy_pts"), 0), "sold_par": _f(r.get("sell_par"), 0), "bought_par": _f(r.get("buy_par"), 0),
+              "gain_pts": _f(r.get("gain_pts"), 0), "gain_par": _f(r.get("gain_par"), 0)} for r in swaps[:8]]
+    by_cohort = [{"cohort": r["cohort"], "pairs": r["pairs"], "win_rate": _f(r["win_rate"] * 100, 0), "gain_mean": _f(r["gain_mean"], 2), "gain_pts_mean": _f(r.get("gain_pts_mean"), 0)}
                  for r in sorted(mk.get("swap_by_cohort") or [], key=lambda r: r["cohort"]) if sw0 and r.get("variant") == sw0.get("variant") and r.get("horizon") == sw0.get("horizon")]
-    by_pos = [{"position": r["buy_pos"], "pairs": r["pairs"], "win_rate": _f(r["win_rate"] * 100, 0), "gain_mean": _f(r["gain_mean"], 2)}
+    by_pos = [{"position": r["buy_pos"], "pairs": r["pairs"], "win_rate": _f(r["win_rate"] * 100, 0), "gain_mean": _f(r["gain_mean"], 2), "gain_pts_mean": _f(r.get("gain_pts_mean"), 0)}
               for r in mk.get("swap_by_buy_pos") or [] if sw0 and r.get("variant") == sw0.get("variant") and r.get("horizon") == sw0.get("horizon")]
     return {"as_of": payload.get("run_date"), "season": payload.get("season"), "week": payload.get("week"), "model": payload.get("career_backend"),
             "headline": head, "swaps": named, "swaps_by_cohort": by_cohort, "swaps_by_position_bought": by_pos,
@@ -80,9 +87,16 @@ def to_markdown(card: dict) -> str:
         val = f"{v:+.0f}" if h["key"] == "career_error" else (f"{v:g}" if v is not None else "–")
         L.append(f"| {h['label']} | **{val} {h['unit']}** | {h['detail']} |")
     if card.get("swaps"):
-        L += ["", "## The swaps, by name", "", "| February | Sold (KTC) | Delivered | Bought (KTC) | Delivered | Gain (wins) |", "| --- | --- | --- | --- | --- | --- |"]
-        for r in card["swaps"]:
-            L.append(f"| {r['cohort']} | {r['sold']}, {r['sold_pos']} ({r['sold_ktc']:,}) | {r['sold_delivered']:.2f} | {r['bought']}, {r['bought_pos']} ({r['bought_ktc']:,}) | {r['bought_delivered']:.2f} | {r['gain']:+.2f} |")
+        pts = any(r.get("sold_pts") is not None for r in card["swaps"])
+        if pts:
+            L += ["", "## The swaps, by name", "", "Points are what each player scored over the next three seasons in this league's scoring; \"above replacement\" is the part a freely available player at his position would not have given you; wins are the model's own unit.", "",
+                  "| February | Sold (KTC) | Points | Above repl. | Bought (KTC) | Points | Above repl. | Gain (points) | Gain (wins) |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+            for r in card["swaps"]:
+                L.append(f"| {r['cohort']} | {r['sold']}, {r['sold_pos']} ({r['sold_ktc']:,}) | {r['sold_pts']:,.0f} | {r['sold_par']:,.0f} | {r['bought']}, {r['bought_pos']} ({r['bought_ktc']:,}) | {r['bought_pts']:,.0f} | {r['bought_par']:,.0f} | {r['gain_pts']:+,.0f} | {r['gain']:+.2f} |")
+        else:
+            L += ["", "## The swaps, by name", "", "| February | Sold (KTC) | Delivered | Bought (KTC) | Delivered | Gain (wins) |", "| --- | --- | --- | --- | --- | --- |"]
+            for r in card["swaps"]:
+                L.append(f"| {r['cohort']} | {r['sold']}, {r['sold_pos']} ({r['sold_ktc']:,}) | {r['sold_delivered']:.2f} | {r['bought']}, {r['bought_pos']} ({r['bought_ktc']:,}) | {r['bought_delivered']:.2f} | {r['gain']:+.2f} |")
     if card.get("swaps_by_cohort"):
         L += ["", "Win rate by year: " + " · ".join(f"{r['cohort']}: {r['win_rate']:.0f}% of {r['pairs']}" for r in card["swaps_by_cohort"]) + "."]
     if card.get("swaps_by_position_bought"):
