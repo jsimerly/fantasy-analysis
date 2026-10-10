@@ -259,7 +259,7 @@ def test_the_coming_weeks_projections_must_be_in_the_season_partition():
     frames, parts = healthy()
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [1, 2, 3, 4, 5] * 400, "player_id": [str(i) for i in range(2000)]})
     r = failed(run(frames, parts, only="sleeper_projections"))["bronze.sleeper_projections.coming_week_present"]
-    assert "week 6 has 0 projections" in r["observed"] and r["effective_severity"] == "warn"    # known open until the backfill
+    assert "week 6 has 0 projections" in r["observed"] and r["effective_severity"] == "error"   # the backfill landed 2026-10-10
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})
     assert run(frames, parts, only="sleeper_projections")["passed"].all()
 

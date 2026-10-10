@@ -114,8 +114,7 @@ def rosters_one_per_lineage(ctx):
 
 
 @check("bronze.sleeper_projections.coming_week_present", "bronze/sleeper/projections", "error",
-       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it",
-       known_open="the dataset lands with the deploy of sleeper-incremental-projections and the PROJ_SEASONS=2018-2025 backfill (BACKLOG 38); until then there is nothing to check")
+       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it")
 def projections_fresh(ctx):
     if ctx.nfl_phase() == "offseason":
         return x.ok("offseason: not enforced")
