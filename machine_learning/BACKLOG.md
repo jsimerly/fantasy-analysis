@@ -1543,6 +1543,10 @@ t = 1.45) stays a tie.
     target's 10-07 run (`tabpfn35_set_stacked_res_w`, valid regime) sits at 0.628 / 0.499, so the
     residual alone may be at least as good as the blend; **next:** a fresh residual run under
     the regime stamp paired against the blend (one hour), then the production preset takes
-    whichever wins (`--target residual|blend`); the blend's market backtest (`market_blend`)
-    lands tonight for the second read; the distribution metrics need `--range` on the harness
+    whichever wins (`--target residual|blend`); the blend's market backtest (01:53, 364 priced, 2020-22):
+    blend 0.696 vs KTC 0.673, level 0.695, residual 0.692 -- a tie on ordering; the blend has the
+    lowest error (0.488 vs 0.491 / 0.494), the level the best mispricing edge (0.368 vs 0.364 /
+    0.339), the residual the heaviest bias (+0.23 vs +0.14 / +0.19); tiers alike. Harness ADOPT +
+    market tie -> **the production preset's target is `blend` from 2026-10-10** (one line in
+    `weekly_refresh.py`, reversible), pending the residual rematch; the distribution metrics need `--range` on the harness
     runs (the after-prod chain ran without it, so pinball / coverage / skew are null tonight).
