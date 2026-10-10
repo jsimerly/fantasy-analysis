@@ -62,3 +62,16 @@ def test_swap_pairs_match_on_price_and_gain_follows_realized():
     # a tight tolerance leaves fewer pairs, never more
     assert mb.swap_pairs(df, tol=0.02, min_gap=1).height <= pairs.height
     assert mb.swap_pairs(df, tol=0.5, min_gap=100).height == 0
+
+
+def test_realized_points_and_par_ride_along_for_the_non_modeller():
+    f = _frame().with_columns(pl.lit(100.0).alias("h1_fpts"), pl.lit(90.0).alias("h2_fpts"), pl.lit(None, pl.Float64).alias("h3_fpts"),
+                              pl.lit(20.0).alias("h1_vorp"), pl.lit(10.0).alias("h2_vorp"), pl.lit(0.0).alias("h3_vorp"))
+    df = mb.priced_frame([f])
+    assert df["realized_pts"].unique().to_list() == [190.0] and df["realized_par"].unique().to_list() == [30.0]   # an unplayed season is 0, not unknown
+    pairs = mb.swap_pairs(df, tol=0.5, min_gap=1)
+    assert pairs.height and pairs["gain_pts"].unique().to_list() == [0.0] and pairs["buy_par"].unique().to_list() == [30.0]
+    s = mb.swap_summary(pairs, ["variant", "horizon"]).row(0, named=True)
+    assert s["gain_pts_mean"] == 0.0 and s["gain_par_mean"] == 0.0 and s["win_rate_par"] == 0.0
+    plain = mb.swap_summary(mb.swap_pairs(mb.priced_frame([_frame()]), tol=0.5, min_gap=1), ["variant", "horizon"])
+    assert plain.row(0, named=True)["gain_pts_mean"] is None                           # a frame without the columns: the means are unknown, not zero
