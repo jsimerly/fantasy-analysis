@@ -26,7 +26,11 @@ import numpy as np  # noqa: E402
 import polars as pl  # noqa: E402
 
 import gcs_io  # noqa: E402
+import league as lg  # noqa: E402
+import lineup  # noqa: E402
+import picks  # noqa: E402
 import title  # noqa: E402
+import war  # noqa: E402
 
 SHIFTS = np.arange(-20.0, 20.5, 1.0)        # points per week, the grid a player's marginal odds interpolate on
 NFL_LAST_WEEK = 17                           # the rest-of-season projection runs through the fantasy championship week
@@ -126,26 +130,136 @@ def league_summary(slug: str, teams: pl.DataFrame, meta: dict, live: dict, n_sim
             "top_heaviness": round(float(np.sort(base["p_title"])[-1] - np.sort(base["p_title"])[-2]), 3), "teams": out_teams}
 
 
+# ------------------------------------------------------------------------------ next season: dynasty-horizon title equity
+PICK_ROUNDS = (1, 2, 3)
+GAMES = 17.0
+EMPTY_TRADED = {"season": pl.Int64, "round": pl.Int64, "original_roster_id": pl.Int64, "owner_roster_id": pl.Int64}
+
+
+def sleeper_traded_picks(league_id: str) -> pl.DataFrame:
+    """Sleeper's traded-pick state: (season, round, original_roster_id, owner_roster_id)."""
+    import requests
+    rows = requests.get(f"https://api.sleeper.app/v1/league/{league_id}/traded_picks", headers=HEADERS, timeout=30).json() or []
+    return pl.DataFrame([{"season": int(r["season"]), "round": int(r["round"]), "original_roster_id": int(r["roster_id"]), "owner_roster_id": int(r["owner_id"])} for r in rows],
+                        schema=EMPTY_TRADED)
+
+
+def next_season_inputs(now_season: int) -> tuple[pl.DataFrame, dict[str, float]]:
+    """Every player's projected next-season rate and games (the newest in-season projection) and the
+    rookie-year points above replacement per game a pick of each tier is expected to add."""
+    paths = sorted(p for p in gcs_io.list_ml("inseason") if p.endswith("projections.parquet"))
+    proj = gcs_io.read_ml_parquet(*paths[-1].split("/")).select("player_id", "next_ppg_hat", "next_games_hat")
+    try:
+        _, meta = picks.build_from_lake(now_season, [now_season + 1])
+        rookie = dict(meta.get("rookie_par_pg") or {})
+    except Exception as e:  # noqa: BLE001
+        print("pick values unavailable, picks add nothing:", str(e)[:120], flush=True); rookie = {}
+    return proj, rookie
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'st' if n == 1 else 'nd' if n == 2 else 'rd' if n == 3 else 'th'}"
+
+
+def next_season_summary(teams: pl.DataFrame, meta: dict, live: dict, proj: pl.DataFrame, traded: pl.DataFrame, rookie_par_pg: dict[str, float],
+                        now_season: int, n_sims: int = 20_000, seed: int = 0) -> dict:
+    """Title equity NEXT season for every roster: the optimal lineup from each player's projected
+    next-season rate and games plus the rookies its picks are expected to bring (a pick's slot from
+    the original roster's current lineup rank, its rookie-year value from the pick curve), the
+    league's own format, a round-robin schedule (next season's is not drawn), a blank record; then
+    the same Monte Carlo as the rest-of-season lens and each player's and pick's marginal title odds.
+    Rough by design: it answers "who is set up for next year", not the week."""
+    spec = lg.LeagueSpec(name=meta["league"].get("name", "league"), teams=int(meta["league"]["teams"]), slots=dict(meta["league"]["slots"]),
+                         **({"eligibility": meta["league"]["eligibility"]} if meta["league"].get("eligibility") else {}))
+    rep = {k: float(v) for k, v in (meta.get("replacement_ppg") or {}).items()}
+    curve = lg.WinCurve.normal(float(meta["win_curve"].get("mean_points") or 0.0), float(meta["win_curve"]["sd_points"]))
+    rosters = sorted({int(r) for r in teams["roster_id"].to_list()})
+    per = teams.group_by("roster_id").agg(pl.col("lineup_ppg_now").first(), pl.col("team_name").first(), pl.col("is_owner").first())
+    now_rank = {int(r["roster_id"]): k + 1 for k, r in enumerate(sorted(per.to_dicts(), key=lambda z: -float(z["lineup_ppg_now"] or 0.0)))}
+    names = {int(r["roster_id"]): r["team_name"] for r in per.to_dicts()}
+    owner = {int(r["roster_id"]): bool(r["is_owner"]) for r in per.to_dicts()}
+    own = (teams.filter(pl.col("rostered")).join(proj, on="player_id", how="left")
+           .with_columns((pl.col("next_ppg_hat").fill_null(0.0) * pl.min_horizontal(pl.col("next_games_hat").fill_null(0.0), GAMES) / GAMES).alias("wk")))
+    pk = picks.owned_picks(traded, rosters, [now_season + 1], list(PICK_ROUNDS)) if rookie_par_pg else pl.DataFrame(schema=EMPTY_TRADED)
+    flex_rep = max([rep.get(q, 0.0) for q in ("RB", "WR")] or [0.0])
+    # the candidates of every roster: its players and the rookies its picks bring (FLEX-eligible, priced at the line plus the tier's rookie-year edge)
+    cands: dict[int, list[dict]] = {rid: [] for rid in rosters}
+    for x in own.iter_rows(named=True):
+        cands[int(x["roster_id"])].append({"kind": "player", "name": x["player_name"], "pos": x["position"], "wk": float(x["wk"]), "status": x.get("status") or "active"})
+    for x in pk.iter_rows(named=True):
+        tier = picks.projected_tier(now_rank.get(int(x["original_roster_id"]), len(rosters)), len(rosters))
+        edge = float(rookie_par_pg.get(f"{int(x['round'])}:{tier}", 0.0))
+        cands[int(x["owner_roster_id"])].append({"kind": "pick", "name": f"{int(x['season'])} {tier} {_ordinal(int(x['round']))}", "pos": "RB", "wk": flex_rep + edge,
+                                                "from": names.get(int(x["original_roster_id"])), "round": int(x["round"]), "tier": tier, "edge": round(edge, 2)})
+
+    def total(cs: list[dict]) -> float:
+        if not cs:
+            return 0.0
+        return float(lineup.optimal_lineup(np.array([c["wk"] for c in cs]), [c["pos"] for c in cs], spec, floor=rep)[0])
+
+    totals = [total(cands[rid]) for rid in rosters]
+    offset = war.lineup_offset(curve, totals)
+    mu = np.array(totals) + offset
+    weeks = max(int(live["settings"].get("playoff_week_start") or 15) - 1, 1)
+    season = title.Season(mu=mu, sd=float(meta["win_curve"]["sd_points"]), wins=np.zeros(len(rosters)), pf=np.zeros(len(rosters)),
+                          matchups=title.round_robin(len(rosters), weeks), playoff_teams=int(live["settings"]["playoff_teams"]))
+    base = title.simulate(season, n_sims=n_sims, seed=seed)
+    out = []
+    for i, rid in enumerate(rosters):
+        cs = cands[rid]
+        curve_i = title.title_curve(season, i, SHIFTS, n_sims=n_sims, seed=seed)
+        p0 = title.interp(curve_i, "p_title", 0.0)
+        players, pks = [], []
+        for j, c in enumerate(cs):
+            d_mu = totals[i] - total(cs[:j] + cs[j + 1:])
+            d_title = round(p0 - title.interp(curve_i, "p_title", -d_mu), 4)
+            if c["kind"] == "player":
+                players.append({"name": c["name"], "pos": c["pos"], "wk": round(c["wk"], 2), "d_mu": round(d_mu, 2), "d_title": d_title, "status": c["status"]})
+            else:
+                pks.append({"name": c["name"], "from": c["from"], "round": c["round"], "tier": c["tier"], "edge": c["edge"], "d_mu": round(d_mu, 2), "d_title": d_title})
+        players.sort(key=lambda z: -z["d_mu"]); pks.sort(key=lambda z: -z["d_mu"])
+        out.append({"rid": rid, "name": names.get(rid), "owner": owner.get(rid, False), "mu": round(float(mu[i]), 1), "lineup": round(totals[i], 1),
+                    "p_playoffs": round(float(base["p_playoffs"][i]), 4), "p_bye": round(float(base["p_bye"][i]), 4), "p_title": round(float(base["p_title"][i]), 4),
+                    "exp_wins": round(float(base["exp_wins"][i]), 2), "players": players, "picks": pks})
+    out.sort(key=lambda z: -z["p_title"])
+    return {"season": now_season + 1, "weeks": weeks, "n_picks": int(pk.height), "teams": out,
+            "lens": "next season from each player's projected rate and games, the rookies the roster's picks bring (slot from the original roster's current lineup rank), the league's format, a round-robin schedule and a blank record"}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
     ap.add_argument("--publish", action="store_true")
     ap.add_argument("--live-json", default=None, help="a saved dict league_id -> Sleeper live payload (offline development); otherwise fetched")
     ap.add_argument("--n-sims", type=int, default=20_000)
+    ap.add_argument("--no-next", action="store_true", help="skip the next-season title equity")
     args = ap.parse_args()
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     live_all = json.loads(Path(args.live_json).read_text(encoding="utf-8")) if args.live_json else {}
     leagues = []
-    for slug, (parts, teams, meta) in latest_team_views().items():
+    views = latest_team_views()
+    proj = rookie = None
+    now_season = 0
+    if not args.no_next and views:
+        now_season = max(int(next(x for x in parts if x.startswith("season=")).split("=")[1]) for parts, _, _ in views.values())
+        proj, rookie = next_season_inputs(now_season)
+        print(f"next season {now_season + 1}: projections for {proj.height} players; rookie edge per tier {rookie}", flush=True)
+    for slug, (parts, teams, meta) in views.items():
         lid = meta.get("league_id")
         if not lid:
             continue
         live = live_all.get(lid) or sleeper_live(lid)
         print(f"{slug}: view {'/'.join(parts[1:])}; {teams['roster_id'].n_unique()} rosters; weeks {live['settings'].get('last_scored_leg')}+1..{int(live['settings']['playoff_week_start']) - 1}", flush=True)
         s = league_summary(slug, teams, meta, live, n_sims=args.n_sims)
+        if proj is not None:
+            traded = pl.DataFrame(live_all.get(f"{lid}:traded_picks") or [], schema=EMPTY_TRADED) if args.live_json else sleeper_traded_picks(lid)
+            s["next_season"] = next_season_summary(teams, meta, live, proj, traded, rookie, now_season, n_sims=args.n_sims)
         leagues.append(s)
         with pl.Config(tbl_rows=14, tbl_width_chars=160):
             print(pl.DataFrame([{k: t[k] for k in ("name", "wins", "losses", "pf", "mu", "p_playoffs", "p_bye", "p_title", "exp_wins")} for t in s["teams"]]))
+            if "next_season" in s:
+                print(f"next season {s['next_season']['season']} ({s['next_season']['n_picks']} picks placed):")
+                print(pl.DataFrame([{k: t[k] for k in ("name", "lineup", "mu", "p_playoffs", "p_bye", "p_title", "exp_wins")} for t in s["next_season"]["teams"]]))
     summary = {"run_date": datetime.now(timezone.utc).date().isoformat(), "n_sims": args.n_sims, "shift_grid": [float(x) for x in SHIFTS], "leagues": leagues,
                "lens": "Monte Carlo of the remaining regular-season matchups from each roster's projected lineup points and the league's weekly spread; seeds by record then points for; Sleeper's default bracket, one week per round"}
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")

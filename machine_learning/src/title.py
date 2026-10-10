@@ -41,6 +41,18 @@ class Season:
         return len(self.mu)
 
 
+def round_robin(n: int, weeks: int) -> list[tuple[int, list[tuple[int, int]]]]:
+    """A schedule for a season not yet drawn (next season's title equity): the circle method, every
+    team once a week, an odd league giving one team a bye each week; repeats after n - 1 weeks."""
+    ids = list(range(n)) + ([-1] if n % 2 else [])
+    out = []
+    for w in range(weeks):
+        pairs = [(ids[i], ids[len(ids) - 1 - i]) for i in range(len(ids) // 2)]
+        out.append((w + 1, [(a, b) for a, b in pairs if a >= 0 and b >= 0]))
+        ids = [ids[0]] + [ids[-1]] + ids[1:-1]
+    return out
+
+
 def _seeds(wins: np.ndarray, pf: np.ndarray) -> np.ndarray:
     """(S, T) seed per team per simulation (0 = top): wins, then points for."""
     key = wins * 1e7 + pf

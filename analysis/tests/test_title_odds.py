@@ -47,3 +47,40 @@ def test_league_summary_ranks_teams_and_prices_players_and_targets_in_title_odds
     assert qb["name"] == "a1" and abs(qb["d_mu"] - 5.0) < 1e-9 and qb["d_title"] > rb["d_title"] >= 0.0   # 65 points over 13 weeks
     b = next(t for t in s["teams"] if t["name"] == "B")                                                  # x is a candidate in B's view, owned by C
     assert b["targets"][0]["name"] == "x" and b["targets"][0]["owned_by"] == "C" and b["targets"][0]["d_title"] >= 0.0 and len(a["curve"]["shift"]) == len(T.SHIFTS)
+
+
+def _next_inputs():
+    teams = pl.DataFrame({
+        "roster_id": [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4], "team_name": ["A"] * 3 + ["B"] * 3 + ["C"] * 3 + ["D"] * 3, "is_owner": [True] * 3 + [False] * 9,
+        "lineup_ppg_now": [130.0] * 3 + [120.0] * 3 + [110.0] * 3 + [100.0] * 3, "lineup_offset": [5.0] * 12,
+        "player_id": [f"p{i}" for i in range(12)], "player_name": [f"n{i}" for i in range(12)],
+        "position": ["QB", "RB", "WR"] * 4, "rostered": [True] * 12, "status": ["active"] * 12,
+    })
+    # next season: roster A's players project best, D's worst; p11 (D's WR) has no projection row
+    proj = pl.DataFrame({"player_id": [f"p{i}" for i in range(11)], "next_ppg_hat": [24.0, 16.0, 15.0, 20.0, 13.0, 12.0, 17.0, 11.0, 10.0, 14.0, 9.0],
+                         "next_games_hat": [16.0] * 11})
+    meta = {"win_curve": {"mean_points": 120.0, "sd_points": 20.0}, "league_id": "L", "display_name": "Toy",
+            "league": {"name": "toy", "teams": 4, "slots": {"QB": 1, "RB": 1, "WR": 1, "FLEX": 1}}, "replacement_ppg": {"QB": 12.0, "RB": 8.0, "WR": 8.0, "TE": 6.0}}
+    live = {"settings": {"playoff_teams": 4, "playoff_week_start": 6, "last_scored_leg": 4}, "standings": [], "matchups": {}}
+    traded = pl.DataFrame({"season": [2027], "round": [1], "original_roster_id": [4], "owner_roster_id": [1]}, schema=T.EMPTY_TRADED)   # A owns D's 2027 first
+    rookie = {"1:Early": 4.0, "1:Mid": 2.5, "1:Late": 1.5, "2:Early": 1.0, "2:Mid": 0.5, "2:Late": 0.3, "3:Early": 0.2, "3:Mid": 0.1, "3:Late": 0.0}
+    return teams, meta, live, proj, traded, rookie
+
+
+def test_next_season_title_equity_ranks_by_projected_lineups_and_places_the_picks():
+    teams, meta, live, proj, traded, rookie = _next_inputs()
+    s = T.next_season_summary(teams, meta, live, proj, traded, rookie, 2026, n_sims=3000, seed=2)
+    assert s["season"] == 2027 and s["weeks"] == 5 and s["n_picks"] == 12            # 4 rosters x 3 rounds
+    names = [t["name"] for t in s["teams"]]
+    assert names[0] == "A" and names[-1] == "D"                                         # best lineup first, blank records
+    assert abs(sum(t["p_title"] for t in s["teams"]) - 1.0) < 1e-3         # four decimals per team
+    a = next(t for t in s["teams"] if t["name"] == "A")
+    assert a["owner"] and len(a["players"]) == 3 and len(a["picks"]) == 4              # its own three plus D's first
+    stolen = next(p for p in a["picks"] if p["from"] == "D")
+    assert stolen["tier"] == "Early" and stolen["edge"] == 4.0 and stolen["round"] == 1  # D picks first from the worst lineup
+    assert all(p["d_title"] >= 0 for p in a["players"]) and a["players"][0]["name"] == "n0"   # the QB is the biggest marginal
+    d = next(t for t in s["teams"] if t["name"] == "D")
+    assert len(d["picks"]) == 2 and d["lineup"] < a["lineup"]
+    # no pick values: picks are left out entirely
+    s0 = T.next_season_summary(teams, meta, live, proj, traded, {}, 2026, n_sims=500, seed=2)
+    assert s0["n_picks"] == 0 and all(not t["picks"] for t in s0["teams"])

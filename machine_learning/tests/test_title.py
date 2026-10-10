@@ -37,3 +37,15 @@ def test_standings_to_date_count_and_the_curve_is_monotone_on_common_random_numb
     c = title.title_curve(s, team=3, shifts=np.array([-10.0, 0.0, 10.0, 20.0]), n_sims=4000, seed=3)
     assert np.all(np.diff(c["p_title"]) >= -1e-9) and c["p_title"][-1] > c["p_title"][0]
     assert abs(title.interp(c, "p_title", 0.0) - c["p_title"][1]) < 1e-12
+
+
+def test_round_robin_plays_every_team_once_a_week_and_gives_an_odd_league_a_bye():
+    for n in (10, 9):
+        sched = title.round_robin(n, 13)
+        assert len(sched) == 13 and sched[0][0] == 1
+        for _, pairs in sched:
+            seen = [t for p in pairs for t in p]
+            assert len(seen) == len(set(seen)) and len(pairs) == n // 2 and all(0 <= t < n for t in seen)
+    # every pair meets once in the first n - 1 weeks of an even league
+    met = {tuple(sorted(p)) for _, pairs in title.round_robin(6, 5) for p in pairs}
+    assert len(met) == 15
