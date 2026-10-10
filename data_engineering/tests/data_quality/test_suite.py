@@ -271,3 +271,14 @@ def test_the_model_feeds_must_have_their_current_season_partition():
     parts["bronze/nflverse/fantasy_rankings_history/"] = [("2026-10-06", "bronze/nflverse/fantasy_rankings_history/load_date=2026-10-06/data.parquet")]
     assert run(frames, parts, only="model_feeds")["passed"].all()
 
+
+
+def test_the_fftoday_history_must_hold_every_season_in_full():
+    frames, parts = healthy()
+    for s in range(2010, 2018):
+        frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
+    assert run(frames, parts, only="fftoday")["passed"].all()
+    frames["bronze/fftoday/projections/season=2013/data.parquet"] = pl.DataFrame({"week": list(range(1, 12)) * 160, "fft_id": [str(i) for i in range(1760)]})
+    del frames["bronze/fftoday/projections/season=2017/data.parquet"]
+    r = failed(run(frames, parts, only="fftoday"))["bronze.fftoday.history_complete"]
+    assert "2 of 8 seasons short" in r["observed"] and "2013: 1760 rows, 11 weeks" in r["detail"] and "2017: missing" in r["detail"]
