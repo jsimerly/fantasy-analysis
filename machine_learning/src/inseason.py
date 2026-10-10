@@ -488,15 +488,22 @@ def one_week_per_season(rows: pl.DataFrame, seed: int = 0) -> pl.DataFrame:
                 .sort("_r").unique(["player_id", "season"], keep="first", maintain_order=True).drop("_r"))
 
 
-def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None, max_rows: int | None = None, seed: int = 0) -> pl.DataFrame:
+def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None, max_rows: int | None = None, seed: int = 0,
+                    around_week: int | None = None) -> pl.DataFrame:
     """The in-context set for a size-limited estimator: optionally only the snapshots of some
     checkpoint weeks, then at most ``max_rows`` rows keeping the most recent seasons whole and a
-    random share of the oldest season that fits (the trees take everything: both None)."""
+    random share of the oldest season that fits (the trees take everything: both None).
+    ``around_week`` (relevance-first context, BACKLOG 36): the rows nearest that week across every
+    season come first, recency second -- a week-6 projection is read against week-5..7 snapshots of
+    all years before any older-season rows of other weeks."""
     out = rows
     if train_weeks is not None:
         out = out.filter(pl.col("week").is_in([int(w) for w in train_weeks]))
     if max_rows is None or out.height <= max_rows:
         return out
+    if around_week is not None:
+        return (out.with_columns((pl.col("week") - int(around_week)).abs().alias("_d"))
+                   .sort(["_d", "season"], descending=[False, True]).head(max_rows).drop("_d"))
     per = out.group_by("season").len().sort("season", descending=True)
     kept, budget = [], max_rows
     for s, n in zip(per["season"].to_list(), per["len"].to_list()):
@@ -509,16 +516,40 @@ def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None
     return pl.concat(kept) if kept else out.head(0)
 
 
+def bag_subset(rows: pl.DataFrame, max_rows: int | None, seed: int, keep_recent: int = 2) -> pl.DataFrame:
+    """One bag's in-context draw (context bagging, BACKLOG 36): the most recent ``keep_recent``
+    seasons whole, the rest of the budget a random sample of the older rows -- a different draw
+    per seed, so K bags between them read far more of the history than one context can hold."""
+    if max_rows is None or rows.height <= max_rows:
+        return rows
+    seasons = sorted({int(x) for x in rows["season"].unique().to_list()}, reverse=True)[:keep_recent]
+    recent = rows.filter(pl.col("season").is_in(seasons))
+    if recent.height >= max_rows:
+        return recent.sample(n=max_rows, seed=seed)
+    older = rows.filter(~pl.col("season").is_in(seasons))
+    return pl.concat([recent, older.sample(n=max_rows - recent.height, seed=seed)])
+
+
 class InSeasonModels:
     """Four regressors: ros_ppg (on rows that played again), ros_games, next_ppg (on rows that
     played next year), next_games. ``backend`` "xgb" (the trees, every snapshot) or "tabpfn" (the
     foundation model: in-context regression over a training set capped by ``max_train_rows`` and
-    optionally the checkpoint weeks ``train_weeks``, recent seasons first)."""
+    optionally the checkpoint weeks ``train_weeks``, recent seasons first).
+
+    Two ways past the context cap (BACKLOG 36): ``bags`` = K estimators per target on different
+    ``bag_subset`` draws, predictions averaged; ``focus_week`` = the estimators are fitted when a
+    week is predicted, on the context nearest that week (``training_subset(around_week=)``), one
+    set per week. Neither changes the trees (no cap)."""
 
     def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
                  tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None,
-                 next_one_per_season: bool = False, **params):
+                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, **params):
         self.device, self.seed = device, seed
+        self.bags, self.focus_week = max(int(bags), 1), bool(focus_week)
+        if self.bags > 1 and self.focus_week:
+            raise ValueError("bags and focus_week are two different contexts; pick one")
+        self._pool: dict[str, tuple[pl.DataFrame, str]] = {}
+        self._by_week: dict[tuple[str, int], list] = {}
         # the next-season label is the same on every checkpoint week's snapshot of a player-season, so four
         # snapshots are four votes for one outcome; this keeps one random week per player-season for the
         # next-season models (ROS labels differ by week and keep every snapshot)
@@ -551,19 +582,46 @@ class InSeasonModels:
         for name, (rows, target) in specs.items():
             if self.next_one_per_season and name.startswith("next_"):
                 rows = one_week_per_season(rows, self.seed)
-            rows = training_subset(rows, self.train_weeks, self.max_train_rows, self.seed)
+            if self.train_weeks is not None:
+                rows = rows.filter(pl.col("week").is_in(self.train_weeks))
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")
-            self.train_rows[name] = rows.height
-            self.models[name] = self._new().fit(feature_frame(rows, self.extra_features).to_numpy(), rows[target].to_numpy().astype(float))
+            if self.focus_week:                                   # fitted per predicted week, on the context nearest it
+                self._pool[name] = (rows, target)
+                self.train_rows[name] = min(rows.height, self.max_train_rows or rows.height)
+                continue
+            if self.bags > 1:
+                draws = [bag_subset(rows, self.max_train_rows, self.seed + b) for b in range(self.bags)]
+            else:
+                draws = [training_subset(rows, None, self.max_train_rows, self.seed)]
+            self.train_rows[name] = draws[0].height
+            self.models[name] = [self._fit_one(d, target) for d in draws]
         return self
+
+    def _fit_one(self, rows: pl.DataFrame, target: str):
+        return self._new().fit(feature_frame(rows, self.extra_features).to_numpy(), rows[target].to_numpy().astype(float))
+
+    def _estimators(self, name: str, snaps: pl.DataFrame) -> list:
+        if not self.focus_week:
+            return self.models[name]
+        weeks = snaps["week"].unique().to_list()
+        if len(weeks) != 1:
+            raise ValueError(f"focus_week predicts one week at a time, got weeks {sorted(weeks)}")
+        key = (name, int(weeks[0]))
+        if key not in self._by_week:
+            rows, target = self._pool[name]
+            self._by_week[key] = [self._fit_one(training_subset(rows, None, self.max_train_rows, self.seed, around_week=key[1]), target)]
+        return self._by_week[key]
+
+    def _predict(self, name: str, X: np.ndarray, snaps: pl.DataFrame) -> np.ndarray:
+        return np.mean([np.asarray(m.predict(X), dtype=float) for m in self._estimators(name, snaps)], axis=0)
 
     def predict(self, snaps: pl.DataFrame) -> pl.DataFrame:
         X = feature_frame(snaps, self.extra_features).to_numpy()
-        ros_g = np.clip(self.models["ros_games"].predict(X), 0, MAX_GAMES)
-        ros_p = np.clip(self.models["ros_ppg"].predict(X), 0, None)
-        nx_g = np.clip(self.models["next_games"].predict(X), 0, MAX_GAMES)
-        nx_p = np.clip(self.models["next_ppg"].predict(X), 0, None)
+        ros_g = np.clip(self._predict("ros_games", X, snaps), 0, MAX_GAMES)
+        ros_p = np.clip(self._predict("ros_ppg", X, snaps), 0, None)
+        nx_g = np.clip(self._predict("next_games", X, snaps), 0, MAX_GAMES)
+        nx_p = np.clip(self._predict("next_ppg", X, snaps), 0, None)
         return snaps.with_columns(
             pl.Series("ros_games_hat", ros_g), pl.Series("ros_ppg_hat", ros_p), pl.Series("ros_fpts_hat", ros_g * ros_p),
             pl.Series("next_games_hat", nx_g), pl.Series("next_ppg_hat", nx_p), pl.Series("next_fpts_hat", nx_g * nx_p),

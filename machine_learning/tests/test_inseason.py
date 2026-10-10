@@ -177,7 +177,7 @@ class TestExtras:
         wk, ss = _big()
         big = inseason.build_snapshots(wk, ss, weeks=[3, 8], contracts=_contracts())
         m = inseason.InSeasonModels(n_estimators=5, max_depth=2, extra_features=inseason.CONTRACT_SNAP_COLS).fit(big, as_of_season=2022)
-        assert m.models["ros_ppg"].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
+        assert m.models["ros_ppg"][0].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
 
 
 class TestTrainingSubset:
@@ -345,3 +345,61 @@ def test_fftoday_rows_become_consensus_rows_keyed_by_gsis():
     x = inseason.gsis_identity_rows(ids)
     assert x.columns == ["sleeper_id", "gsis_id"] and x["sleeper_id"].to_list() == x["gsis_id"].to_list() and x.height == 4
     assert inseason.fftoday_as_consensus(fft.head(0), ids).height == 0
+
+
+class TestContextLevers:
+    """Past the context cap (BACKLOG 36): bagging draws different contexts per estimator and averages;
+    focus_week fits per predicted week on the rows nearest that week."""
+
+    def test_bag_subset_keeps_the_recent_seasons_whole_and_varies_the_older_draw(self):
+        rows = pl.DataFrame({"season": [2020] * 50 + [2021] * 50 + [2022] * 30 + [2023] * 30, "week": [3] * 160, "x": list(range(160))})
+        a, b = inseason.bag_subset(rows, 100, seed=1), inseason.bag_subset(rows, 100, seed=2)
+        for d in (a, b):
+            assert d.height == 100 and d.filter(pl.col("season") >= 2022).height == 60      # 2022-23 whole, 40 of the 100 older rows
+        assert set(a.filter(pl.col("season") < 2022)["x"]) != set(b.filter(pl.col("season") < 2022)["x"])
+        assert inseason.bag_subset(rows, None, 1).height == 160 and inseason.bag_subset(rows, 40, 1).height == 40
+
+    def test_relevance_first_context_takes_the_nearest_weeks_then_recency(self):
+        rows = pl.DataFrame({"season": [2019, 2019, 2023, 2023, 2021, 2021], "week": [3, 9, 3, 9, 6, 13], "x": [1, 2, 3, 4, 5, 6]})
+        out = inseason.training_subset(rows, None, 3, around_week=9)
+        assert out["x"].to_list() == [4, 2, 5]            # week 9 of 2023 and 2019 first, then the nearest (week 6 of 2021)
+        assert inseason.training_subset(rows, None, 3).height == 3
+
+    def test_bags_average_their_estimators_and_focus_week_fits_per_week(self, monkeypatch):
+        wk, ss = _big()
+        big = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+        fits = []
+
+        class Fake:
+            def __init__(self):
+                self.c = len(fits); fits.append(self)
+
+            def fit(self, X, y):
+                self.n = len(X); return self
+
+            def predict(self, X):
+                return np.full(len(X), float(self.c % 2))              # alternating 0 / 1 across fits
+
+        import pytest
+        with pytest.raises(ValueError):
+            inseason.InSeasonModels(bags=2, focus_week=True)
+        m = inseason.InSeasonModels(bags=2, max_train_rows=40)
+        monkeypatch.setattr(m, "_new", lambda: Fake())
+        m.fit(big, as_of_season=2022)
+        assert all(len(v) == 2 for v in m.models.values()) and len(fits) == 8 and all(f.n == 40 for f in fits)
+        out = m.predict(big.filter(pl.col("season") == 2022).head(5))
+        assert out["ros_games_hat"].to_list() == [0.5] * 5                 # the mean of a 0-estimator and a 1-estimator
+        fits.clear()
+        f = inseason.InSeasonModels(focus_week=True, max_train_rows=40)
+        monkeypatch.setattr(f, "_new", lambda: Fake())
+        f.fit(big, as_of_season=2022)
+        assert not fits and set(f._pool) == {"ros_games", "ros_ppg", "next_games", "next_ppg"}   # nothing fitted until a week is asked for
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(4))
+        assert len(fits) == 4 and all(x.n == 40 for x in fits)
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(2))
+        assert len(fits) == 4                                              # the week's estimators are reused
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 8)).head(2))
+        assert len(fits) == 8
+        both = pl.concat([big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(2), big.filter((pl.col("season") == 2022) & (pl.col("week") == 8)).head(2)])
+        with pytest.raises(ValueError):
+            f.predict(both)                                                 # two weeks at once
