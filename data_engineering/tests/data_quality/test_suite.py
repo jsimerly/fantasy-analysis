@@ -111,9 +111,13 @@ def test_every_check_names_the_bug_it_guards_and_has_a_unique_dotted_name():
     assert all(len(c.guards) > 20 for c in SUITE) and all(c.severity in ("error", "warn") for c in SUITE)
 
 
-def test_known_open_failures_are_reported_as_warnings_with_the_note():
+def test_known_open_failures_are_reported_as_warnings_with_the_note(monkeypatch):
     frames, parts = healthy()
     frames["dim_league_settings"] = frames["dim_league_settings"].with_columns(pl.lit(None, dtype=pl.Utf8).alias("league_lineage_id"))
+    r = failed(run(frames, parts, only="league_settings.lineage"))["dim.league_settings.lineage_assigned"]
+    assert r["severity"] == "error" and r["effective_severity"] == "error" and not r["known_open"]     # the note came off 2026-10-10
+    check = next(c for c in SUITE if c.name == "dim.league_settings.lineage_assigned")
+    monkeypatch.setattr(check, "known_open", "PR #12 carries the fix")
     r = failed(run(frames, parts, only="league_settings.lineage"))["dim.league_settings.lineage_assigned"]
     assert r["severity"] == "error" and r["effective_severity"] == "warn" and "PR #12" in r["known_open"]
     assert summarize(run(frames, parts, only="league_settings.lineage"))["failed_errors"] == 0
@@ -153,7 +157,7 @@ def test_the_sparse_gsis_crosswalk():
     pm = frames["dim_players_master"]
     frames["dim_players_master"] = pm.with_columns(pl.when(pl.int_range(pl.len()) < 300).then(None).otherwise(pl.col("gsis_id")).alias("gsis_id"))
     r = failed(run(frames, parts, only="gsis_coverage"))["dim.players_master.gsis_coverage_of_priced"]
-    assert "25%" in r["observed"] and r["effective_severity"] == "warn" and r["known_open"]
+    assert "25%" in r["observed"] and r["effective_severity"] == "error" and not r["known_open"]       # an error again since the 2026-10-10 rebuild
 
 
 def test_the_league_dim_oscillation_and_the_frozen_rollover():
