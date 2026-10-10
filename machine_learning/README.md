@@ -182,7 +182,11 @@ level; the change from this season's rate; opportunities per game × points per 
 `--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
 cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
-cohort (mean difference, standard error, t, cohorts won) and prints the verdict. **Acceptance rule
+cohort (mean difference, standard error, t, cohorts won) and prints the verdict. `--save-cohorts`
+also keeps the run's scored cohort frames (`experiments/cohorts/`), and `--rescore RUN` scores
+them again without the GPU under a value-side change (`--walk-scale`: a walk-forward per-position
+scale from the cohorts complete by each cohort; `--fixed-scale`; `--top-n`), saves the result as
+a run and pairs it with the source. **Acceptance rule
 (owner, 2026-10-06): ordering and error are co-primaries.** A variant is adopted when it improves
 either `spearman_war_top` (how well projected WAR orders the WAR the top-150 projected players
 actually delivered) or `mae_war_top` (the wins error on the same players) past |t| = 2.4 with the
