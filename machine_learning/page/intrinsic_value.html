@@ -100,6 +100,9 @@
   .perf .lead { font-size: 13.5px; margin: 0 0 12px; max-width: 96ch; }
 .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 0 0 14px; }
 .hero .tile { padding: 12px 14px; }
+.hero.top { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.hero.top .tile { border-color: var(--accent); }
+.hero.top .n { font-size: 34px; }
 .tile .n { font-size: 26px; font-weight: 700; line-height: 1.1; margin: 2px 0 4px; }
 .tile .n small { font-size: 13px; font-weight: 500; color: var(--muted); }
 .tile .t { font-size: 12.5px; color: var(--muted); }
@@ -1083,32 +1086,44 @@
     const ins = P.inseason, v = P.value, c = P.career_eval, e = P.experiments;
     // the story first: what the model does for the team, in numbers a visitor can read; the method cards follow
     const pctf = x => x == null ? '–' : Math.round(x * 100) + '%';
-    const tiles = [];
+    const top = [], tiles = [];
+    const mk0 = P.market, ov0 = mk0 && mk0.overall && mk0.overall.length ? mk0.overall.slice().sort((a, b) => b.horizon - a.horizon)[0] : null;
+    const sw0 = ov0 && mk0.swap_overall ? mk0.swap_overall.find(r => r.variant === ov0.variant && r.horizon === ov0.horizon) : null;
+    const cohortsTxt = esc((mk0 && mk0.meta || {}).cohorts || '');
+    if (sw0 && sw0.pairs) top.push({ h: 'The swap test: trades the model would have made', n: `${pctf(sw0.win_rate)} <small>won · ${sw0.gain_mean >= 0 ? '+' : ''}${Number(sw0.gain_mean).toFixed(2)} wins per swap</small>`,
+      t: `every February ${cohortsTxt}, each player the model called rich was paired with the closest-priced player it called cheap (${sw0.pairs} same-price swaps). Three years later the player bought out-delivered the one sold in ${pctf(sw0.win_rate)} of them. A manager following the model made these trades at zero cost in market value.` });
+    if (ov0 && ov0.cheap_gap_real != null) top.push({ h: 'The mispricing is real, and it is on the Players tab today', n: `+${f1(ov0.cheap_gap_real)} <small>ranks better · ${f1(ov0.rich_gap_real)} worse</small>`,
+      t: `players the model called cheap against the market went on to finish ${f1(ov0.cheap_gap_real)} ranks better than the market had them; the ones it called rich finished ${f1(Math.abs(ov0.rich_gap_real))} ranks worse. That gap is the Mispricing column: buy the first group, sell the second.` });
     if (ins && ins.ros && ins.ros.length) {
       const w = ins.ros[0], last = ins.ros[ins.ros.length - 1];
       const beats = ins.ros.every(r => r['ros|model'] > r['ros|ktc']);
       tiles.push({ h: 'Rest of this season', n: `${f3(w['ros|model'])} <small>vs market ${f3(w['ros|ktc'])}</small>`,
         t: `rank agreement with what players actually averaged from week ${w.W} on; ${beats ? 'ahead of the market at every checkpoint' : 'vs the market by week'} (${f3(last['ros|model'])} vs ${f3(last['ros|ktc'])} at week ${last.W})` });
     }
-    const mk0 = P.market, ov0 = mk0 && mk0.overall && mk0.overall.length ? mk0.overall.slice().sort((a, b) => b.horizon - a.horizon)[0] : null;
-    const sw0 = ov0 && mk0.swap_overall ? mk0.swap_overall.find(r => r.variant === ov0.variant && r.horizon === ov0.horizon) : null;
-    if (ov0) {
-      tiles.push({ h: `${ov0.horizon} years out`, n: `${f3(ov0.rho_model)} <small>vs market ${f3(ov0.rho_ktc)}</small>`,
-        t: `rank agreement with the wins ${ov0.n} priced players then delivered, cohorts ${esc((mk0.meta || {}).cohorts || '')}: projected at the time, scored years later` });
-      if (ov0.cheap_gap_real != null) tiles.push({ h: 'The mispricing is real', n: `+${f1(ov0.cheap_gap_real)} <small>ranks</small>`,
-        t: `players the model called cheap finished that many ranks better than the market had them; the ones it called rich finished ${f1(ov0.rich_gap_real)} worse` });
-      if (sw0 && sw0.pairs) tiles.push({ h: 'The swap test', n: `${pctf(sw0.win_rate)} <small>won</small>`,
-        t: `${sw0.pairs} same-price swaps the model would have made ${esc((mk0.meta || {}).cohorts || '')}: the player bought out-delivered the one sold by ${sw0.gain_mean >= 0 ? '+' : ''}${Number(sw0.gain_mean).toFixed(2)} wins on average` });
-    }
+    if (ov0) tiles.push({ h: `${ov0.horizon} years out`, n: `${f3(ov0.rho_model)} <small>vs market ${f3(ov0.rho_ktc)}</small>`,
+      t: `rank agreement with the wins ${ov0.n} priced players then delivered, cohorts ${cohortsTxt}: projected at the time, scored years later` });
     if (c && c.mae && c.mae.length) {
-      const r3 = c.mae.find(r => r.horizon === 3) || c.mae[c.mae.length - 1];       // three years out: the span the market test uses; five years out the carry-forward baseline is a straw man
+      const r3 = c.mae.find(r => r.horizon === 3) || c.mae[c.mae.length - 1];       // three years out: the span the market test uses
       tiles.push({ h: `Career projection, ${r3.horizon} years ahead`, n: `−${Math.abs(r3['model_%_vs_carry']).toFixed(0)}% <small>error</small>`,
         t: `vs assuming a player repeats his last season; −${Math.abs(r3['model_%_vs_decay']).toFixed(0)}% vs an age-decay curve, over ${Number(r3.n_total).toLocaleString()} player-seasons since ${c.start_season}` });
     }
-    if (tiles.length) parts.push(`<div class="hero">${tiles.map(x => `<div class="card tile"><div class="h">${x.h}</div><div class="n">${x.n}</div><div class="t">${x.t}</div></div>`).join('')}</div>`);
+    const tile = x => `<div class="card tile"><div class="h">${x.h}</div><div class="n">${x.n}</div><div class="t">${x.t}</div></div>`;
+    if (top.length) parts.push(`<div class="hero top">${top.map(tile).join('')}</div>`);
+    if (tiles.length) parts.push(`<div class="hero">${tiles.map(tile).join('')}</div>`);
+    // the swaps themselves: named, dated, scored
+    const named = (mk0 && mk0.top_swaps || []).filter(r => r.gain != null).sort((a, b) => b.gain - a.gain);
+    if (named.length && sw0) {
+      const byC = (mk0.swap_by_cohort || []).filter(r => r.variant === sw0.variant && r.horizon === sw0.horizon).sort((a, b) => a.cohort - b.cohort);
+      const byP = (mk0.swap_by_buy_pos || []).filter(r => r.variant === sw0.variant && r.horizon === sw0.horizon);
+      const bestP = byP.length ? byP.slice().sort((a, b) => b.win_rate - a.win_rate)[0] : null;
+      const sg2 = x => (x >= 0 ? '+' : '') + Number(x).toFixed(2);
+      parts.push(`<div class="card"><h3>The swaps, by name</h3><div class="k">Each pair: two players priced within 15% of each other on KTC that February, the model at least 10 ranks apart on them. "Delivered" is realized wins above replacement over the next three seasons. The best ${Math.min(8, named.length)} of ${sw0.pairs}; the worst are in the table further down, because a 73% win rate means one in four went the other way.</div>` +
+        tbl(['February', 'Sold', 'KTC', 'Delivered', 'Bought', 'KTC', 'Delivered', 'Gain (wins)'], named.slice(0, 8).map(r => [r.cohort, esc(r.sell) + ' (' + esc(r.sell_pos) + ')', r.sell_ktc, f3(r.sell_real), esc(r.buy) + ' (' + esc(r.buy_pos) + ')', r.buy_ktc, f3(r.buy_real), sg2(r.gain)])) +
+        `<div class="k" style="margin-top:8px"><b>Consistent, not lucky:</b> ${byC.map(r => `${r.cohort}: ${pctf(r.win_rate)} of ${r.pairs}`).join(' · ')}.${bestP ? ` Buying a ${bestP.buy_pos} won ${pctf(bestP.win_rate)} of the time (${sg2(bestP.gain_mean)} wins per swap)${bestP.buy_pos === 'RB' ? ', the market under-prices productive backs' : ''}.` : ''}</div></div>`);
+    }
     parts.push(`<div class="card"><h3>What this does for the team</h3><ul class="usecase">
+      <li><b>Trades, today.</b> The Players tab's Mispricing column is this signal live: market price against the model's value within position. The Rosters tab's trade finder turns it into packages that raise this roster's wins now and later, priced the way KTC's calculator would so the other side sees a fair offer.</li>
       <li><b>Every player priced in wins, for this league.</b> Not points: wins above a freely available replacement, on this league's own lineup and scoring, this season at full weight and later seasons discounted. Two players with the same points are worth different wins in different leagues.</li>
-      <li><b>Trades.</b> The Players tab shows where the market price sits against our value within each position; the Rosters tab's trade finder builds packages that raise this roster's wins now and later, and prices every package the way KTC's calculator would.</li>
       <li><b>Championships, not just wins.</b> Title odds from a simulation of the rest of the season show which player actually moves this roster's chance of the title, and the next-season lens shows who is set up for next year, picks included.</li>
       <li><b>Picks and rookies.</b> Draft picks are priced in the same wins (a claim on the player taken at that slot), so a pick and a player compare on one scale.</li>
       <li><b>Timing.</b> The projections refresh weekly after the Monday games, so the rest-of-season view moves with the season instead of waiting for it to end.</li>
