@@ -111,7 +111,7 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
-    ap.add_argument("--no-tail-cache", action="store_true", help="--current: recompute the career tail even when _cache/career_tail has it for this key")
+    ap.add_argument("--no-tail-cache", action="store_true", help="recompute the career tail even when _cache/career_tail has it for this key (the --current run and every backtest cohort)")
     ap.add_argument("--sigma", choices=["band"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
@@ -289,7 +289,10 @@ def main() -> None:
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(base, starters, seasons=list(range(T - 5, T)))
-        tail, sigma, survival, tail_model = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target)
+        # the career tail of a cohort is the same for every in-season variant (its groups do not touch it): cached across the
+        # backtests of a day unless the unified path needs the model object or --no-tail-cache says so
+        tail, sigma, survival, tail_model = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target,
+                                                     cache_dir=None if (args.snapshot_weeks or args.no_tail_cache) else TAIL_CACHE_DIR)
         rookie_tbl = inseason.rookie_tail_table(base, H, through=T - 1)
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
