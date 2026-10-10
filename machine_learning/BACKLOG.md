@@ -1519,7 +1519,9 @@ t = 1.45) stays a tie.
     the page's discount / years against the market's effective horizon (the ten-horizon pooled
     model + a 10 % rate values years 6-10 more than the market does; test 15-20 % or a 5-year
     default on the market backtest); (3) the page: make "vs position" the default sort for the
-    Players table's mispricing columns and label the pooled column as cross-position. Advice
+    Players table's mispricing columns and label the pooled column as cross-position -- DONE
+    v47 (2026-10-10 03:00): the within-position gap is now the `Mispricing` column, the pooled
+    one is `All positions` with a header hint and the explainer names the quarterback lean. Advice
     given tonight: buy productive backs and prime (27-29) quarterbacks, sell young hyped
     receivers, pick within position; the title lens is position-agnostic.
 
