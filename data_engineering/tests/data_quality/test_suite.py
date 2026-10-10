@@ -68,6 +68,8 @@ def healthy() -> tuple[dict, dict]:
     # bronze feeds
     for prefix in ("bronze/ktc/dynasty/daily_load/", "bronze/ktc/redraft/daily_load/", "bronze/ktc/devy/daily_load/", "bronze/fantasycalc/values/daily/", "bronze/sleeper/drafts/drafts/", "bronze/nflverse/contracts/"):
         parts[prefix] = [(TODAY.isoformat(), prefix + "today")]
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity", "fantasy_rankings_history"):   # the model feeds: not landed yet (known open)
+        parts[f"bronze/nflverse/{ds}/"] = []
     frames["bronze/ktc/dynasty/daily_load/today"] = pl.DataFrame({"playerName": ["a"] * 500, "playerID": list(range(500)), "sf_value": [1.0] * 500, "oneqb_value": [1.0] * 500})
     frames["bronze/fantasycalc/values/daily/today"] = pl.DataFrame({"n_qb": [2] * 400 + [1] * 400, "n_teams": [12] * 800, "ppr": [1] * 800, "value": [1] * 800, "sleeper_id": ["1"] * 800})
     frames["bronze/sleeper/drafts/drafts/today"] = pl.DataFrame({"league_id": [lg for lg, _, _ in LEAGUES], "season": ["2026"] * 2, "status": ["complete"] * 2})
@@ -109,9 +111,13 @@ def test_every_check_names_the_bug_it_guards_and_has_a_unique_dotted_name():
     assert all(len(c.guards) > 20 for c in SUITE) and all(c.severity in ("error", "warn") for c in SUITE)
 
 
-def test_known_open_failures_are_reported_as_warnings_with_the_note():
+def test_known_open_failures_are_reported_as_warnings_with_the_note(monkeypatch):
     frames, parts = healthy()
     frames["dim_league_settings"] = frames["dim_league_settings"].with_columns(pl.lit(None, dtype=pl.Utf8).alias("league_lineage_id"))
+    r = failed(run(frames, parts, only="league_settings.lineage"))["dim.league_settings.lineage_assigned"]
+    assert r["severity"] == "error" and r["effective_severity"] == "error" and not r["known_open"]     # the note came off 2026-10-10
+    check = next(c for c in SUITE if c.name == "dim.league_settings.lineage_assigned")
+    monkeypatch.setattr(check, "known_open", "PR #12 carries the fix")
     r = failed(run(frames, parts, only="league_settings.lineage"))["dim.league_settings.lineage_assigned"]
     assert r["severity"] == "error" and r["effective_severity"] == "warn" and "PR #12" in r["known_open"]
     assert summarize(run(frames, parts, only="league_settings.lineage"))["failed_errors"] == 0
@@ -151,7 +157,7 @@ def test_the_sparse_gsis_crosswalk():
     pm = frames["dim_players_master"]
     frames["dim_players_master"] = pm.with_columns(pl.when(pl.int_range(pl.len()) < 300).then(None).otherwise(pl.col("gsis_id")).alias("gsis_id"))
     r = failed(run(frames, parts, only="gsis_coverage"))["dim.players_master.gsis_coverage_of_priced"]
-    assert "25%" in r["observed"] and r["effective_severity"] == "warn" and r["known_open"]
+    assert "25%" in r["observed"] and r["effective_severity"] == "error" and not r["known_open"]       # an error again since the 2026-10-10 rebuild
 
 
 def test_the_league_dim_oscillation_and_the_frozen_rollover():
@@ -245,3 +251,23 @@ def test_never_shrinks_uses_the_previous_run():
     frames["fact_asset_values"] = frames["fact_asset_values"].head(100)
     r = failed(run(frames, parts, previous=prev, only="never_shrinks"))["drift.fact_asset_values.never_shrinks"]
     assert "shrank" in r["observed"]
+
+
+def test_the_coming_weeks_projections_must_be_in_the_season_partition():
+    frames, parts = healthy()
+    frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [1, 2, 3, 4, 5] * 400, "player_id": [str(i) for i in range(2000)]})
+    r = failed(run(frames, parts, only="sleeper_projections"))["bronze.sleeper_projections.coming_week_present"]
+    assert "week 6 has 0 projections" in r["observed"] and r["effective_severity"] == "warn"    # known open until the backfill
+    frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})
+    assert run(frames, parts, only="sleeper_projections")["passed"].all()
+
+
+def test_the_model_feeds_must_have_their_current_season_partition():
+    frames, parts = healthy()
+    r = failed(run(frames, parts, only="model_feeds"))["bronze.nflverse.model_feeds_current_season"]
+    assert "nextgen_stats_receiving season=2026" in r["observed"] and r["effective_severity"] == "warn"   # known open until the deploy
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity"):
+        parts[f"bronze/nflverse/{ds}/"] = [("2026", f"bronze/nflverse/{ds}/season=2026/data.parquet")]
+    parts["bronze/nflverse/fantasy_rankings_history/"] = [("2026-10-06", "bronze/nflverse/fantasy_rankings_history/load_date=2026-10-06/data.parquet")]
+    assert run(frames, parts, only="model_feeds")["passed"].all()
+

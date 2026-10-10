@@ -108,3 +108,23 @@ def test_pooled_models_keep_the_band_too():
     m.feature_frame = lambda df: pl.DataFrame({"x": [0.0] * df.height})
     out = m.predict(_df())
     assert out["h2_ppg_q20"][0] == 12.0 - 1.8 and out["h2_games_q80"][0] == 15.2
+
+
+def test_inseason_value_band_sigma_prices_each_players_own_spread_on_the_career_spans():
+    import pytest
+    import value
+    snaps = pl.DataFrame({"player_id": ["a", "b"], "position": ["WR", "WR"], "age_at_season": [25.0, 25.0], "is_rookie": [False, False], "prev_ppg": [12.0, 12.0], "prev_games": [15, 15],
+                          "ros_ppg_hat": [12.0, 12.0], "ros_games_hat": [10.0, 10.0], "next_ppg_hat": [12.0, 12.0], "next_games_hat": [15.0, 15.0]})
+    tail = pl.DataFrame({"player_id": ["a", "b"], "h3_ppg_hat": [11.0, 11.0], "h3_games_hat": [14.0, 14.0],
+                         "h3_ppg_q20": [8.0, 10.5], "h3_ppg_q50": [11.0, 11.0], "h3_ppg_q80": [14.0, 11.5], "h3_games_q20": [11.0, 11.0], "h3_games_q80": [16.0, 16.0]})
+    sig = {1: {"__all__": 2.0}, 3: {"__all__": 3.0}}
+    dict_way = inseason.inseason_value(snaps, tail, {"WR": 8.0}, sig, [1, 2, 3], 0.2)
+    band_way = inseason.inseason_value(snaps, tail, {"WR": 8.0}, sig, [1, 2, 3], 0.2, sigma_mode="band")
+    a, b = band_way.row(0, named=True), band_way.row(1, named=True)
+    assert abs(a["h3_ppg_sigma"] - 6.0 / inseason.BAND_TO_SIGMA) < 1e-9 and b["h3_ppg_sigma"] == inseason.SIGMA_FLOOR     # wide band, narrow band floored
+    assert abs(a["h3_vorp_hat"] - float(value.expected_excess([11.0], [6.0 / inseason.BAND_TO_SIGMA], [8.0])[0]) * 14.0) < 1e-9
+    assert a["h3_vorp_hat"] > b["h3_vorp_hat"]                                                   # the same point, more upside priced for the wider band
+    assert a["h3_vorp_hat"] != dict_way.row(0, named=True)["h3_vorp_hat"]
+    assert a["vorp_ros"] == dict_way.row(0, named=True)["vorp_ros"] and a["vorp_next"] == dict_way.row(0, named=True)["vorp_next"]   # in-season spans keep the dict
+    with pytest.raises(ValueError):
+        inseason.inseason_value(snaps, tail, {"WR": 8.0}, sig, [1, 2, 3], 0.2, sigma_mode="refit")

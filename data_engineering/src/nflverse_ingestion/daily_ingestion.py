@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import partial
 import os
 import sys
 from typing import Dict, List, Union
@@ -89,6 +90,24 @@ DATASETS_CONFIG = {
         'start_season': 2016,
         'schedule': SCHEDULE_DAILY
     },
+    # the receiving and rushing slices of Next Gen Stats (the loader's default is passing: quarterbacks
+    # only, which is what 'nextgen_stats' holds): separation, cushion, share of intended air yards, YAC
+    # over expected; rushing efficiency, yards over expected, stacked boxes. 2016 on, player-week rows
+    # keyed by player_gsis_id. The daily reconcile backfills every season once these entries exist.
+    'nextgen_stats_receiving': {
+        'loader': partial(nfl.load_nextgen_stats, stat_type='receiving'),
+        'folder': 'nextgen_stats_receiving',
+        'seasonal': True,
+        'start_season': 2016,
+        'schedule': SCHEDULE_DAILY
+    },
+    'nextgen_stats_rushing': {
+        'loader': partial(nfl.load_nextgen_stats, stat_type='rushing'),
+        'folder': 'nextgen_stats_rushing',
+        'seasonal': True,
+        'start_season': 2016,
+        'schedule': SCHEDULE_DAILY
+    },
     'ftn_charting': {
         'loader': nfl.load_ftn_charting, 
         'folder': 'ftn_charting', 
@@ -112,11 +131,26 @@ DATASETS_CONFIG = {
         'seasonal': False,
         'schedule': SCHEDULE_TUESDAY
     },
-    'ff_opportunity': {
-        'loader': nfl.load_ff_opportunity, 
-        'folder': 'fantasy_opportunity', 
+    # the FantasyPros expert-consensus rankings HISTORY nflverse keeps (every weekly scrape since 2019-12:
+    # consensus rank, the experts' spread (sd), best and worst, by page type / position): a consensus with a
+    # disagreement measure for the model's consensus group; one refreshed blob a week (~1.9M rows)
+    'ff_rankings_history': {
+        'loader': partial(nfl.load_ff_rankings, 'all'),
+        'folder': 'fantasy_rankings_history',
         'seasonal': False,
         'schedule': SCHEDULE_TUESDAY
+    },
+    # nflverse's expected fantasy points (ff_opportunity): per player-week, every pass / rush / reception
+    # with its expected completions, yards, touchdowns and fantasy points from play-level models, 2006 on,
+    # keyed by gsis player_id; actual minus expected to date is the luck / regression signal (the
+    # opportunity feature group). Was a weekly current-season snapshot under `fantasy_opportunity`
+    # (load_date partitions, 2025-10 on, left in place); now the seasonal history, reconciled daily.
+    'ff_opportunity': {
+        'loader': partial(nfl.load_ff_opportunity, stat_type='weekly'),
+        'folder': 'ff_opportunity',
+        'seasonal': True,
+        'start_season': 2006,
+        'schedule': SCHEDULE_DAILY
     },
     'ff_player_ids': {
         'loader': nfl.load_ff_playerids, 

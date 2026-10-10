@@ -26,6 +26,7 @@ Leakage rules (enforced here, not left to the caller):
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Iterable
 
 import numpy as np
@@ -133,9 +134,16 @@ class _TabPFN:
     work at prediction time. Missing values pass through as NaN. Sample weights are not supported
     by the model and are ignored (``weight`` variants are an xgboost-only experiment)."""
 
-    def __init__(self, device: str = "cpu", seed: int = 0, params: dict | None = None):
+    def __init__(self, device: str = "cpu", seed: int = 0, params: dict | None = None,
+                 want_quantiles: Iterable[float] | None = None):
         self.device, self.seed, self.params = device, seed, dict(params or {})
         self.model = None
+        # one forward pass serves the point and its bands: with want_quantiles set, ``predict``
+        # asks the model for mean + these quantiles together and memoises the answer for the
+        # last X, so the ``predict_quantiles`` that follows on the same rows is free (the forward
+        # pass over the in-context training set is the whole cost of a TabPFN predict)
+        self.want_quantiles = tuple(float(q) for q in want_quantiles) if want_quantiles else None
+        self._memo: tuple[tuple, np.ndarray, np.ndarray] | None = None
 
     def fit(self, X, y, sample_weight=None):
         import os
@@ -157,12 +165,29 @@ class _TabPFN:
         return self
 
     def predict(self, X):
-        return np.asarray(self.model.predict(np.asarray(X, dtype=np.float32)), dtype=float)
+        X = np.asarray(X, dtype=np.float32)
+        if self.want_quantiles:
+            return self._point_and_bands(X)[0]
+        return np.asarray(self.model.predict(X), dtype=float)
 
     def predict_quantiles(self, X, qs) -> np.ndarray:
         """(n, len(qs)) quantiles of the predictive distribution (TabPFN returns one per row for free)."""
-        out = self.model.predict(np.asarray(X, dtype=np.float32), output_type="quantiles", quantiles=[float(q) for q in qs])
+        X, qs = np.asarray(X, dtype=np.float32), tuple(float(q) for q in qs)
+        if self.want_quantiles and qs == self.want_quantiles:
+            return self._point_and_bands(X)[1]
+        out = self.model.predict(X, output_type="quantiles", quantiles=list(qs))
         return np.column_stack([np.asarray(a, dtype=float) for a in out])
+
+    def _point_and_bands(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Mean and ``want_quantiles`` of the predictive distribution from one forward pass,
+        memoised for the last X (keyed on its shape and bytes)."""
+        key = (X.shape, hashlib.sha1(np.ascontiguousarray(X).tobytes()).hexdigest())
+        if self._memo is None or self._memo[0] != key:
+            out = self.model.predict(X, output_type="main", quantiles=list(self.want_quantiles))
+            mean = np.asarray(out["mean"], dtype=float)
+            bands = np.column_stack([np.asarray(a, dtype=float) for a in out["quantiles"]])
+            self._memo = (key, mean, bands)
+        return self._memo[1], self._memo[2]
 
 
 class _Blend:
@@ -259,7 +284,7 @@ class HorizonModels:
 
     def _new(self):
         if self.backend == "tabpfn":
-            return _TabPFN(self.device, self.seed, self.tabpfn_params)
+            return _TabPFN(self.device, self.seed, self.tabpfn_params, want_quantiles=self.range_quantiles)
         if self.backend == "blend":
             return _Blend([self._xgb(), _TabPFN(self.device, self.seed, self.tabpfn_params)])
         return self._xgb()
@@ -526,15 +551,20 @@ class HorizonModels:
         as_of = as_of_season if as_of_season is not None else last_complete_season(train)
         cut = as_of - holdout
         tmp = HorizonModels(self.horizons, self.device, self.seed, **self._kw()).fit(train, as_of_season=cut)
-        sigma: dict[int, dict[str, float]] = {}
-        for k in self.horizons:
-            rows = train.filter(
-                pl.col(f"h{k}_observable") & pl.col(f"h{k}_played")
-                & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of)
-            )
-            if rows.height == 0:
+        # ONE prediction over the union of the holdout rows, then the per-horizon residuals from it. A
+        # prediction is row-wise (the context is the training set), so this equals predicting each
+        # horizon's rows separately -- which, with pooled horizons, cost H predictions of an H-fold
+        # expanded frame: the sigma stage was most of a six-hour production run (BACKLOG 36).
+        conds = {k: (pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
+                 for k in self.horizons}
+        union = train.filter(pl.any_horizontal([c for c in conds.values()]))
+        for k, c in conds.items():
+            if union.filter(c).height == 0:
                 raise ValueError(f"horizon {k}: no holdout outcomes between {cut} and {as_of}")
-            pred = tmp.predict(rows).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
+        pred_all = tmp.predict(union)
+        sigma: dict[int, dict[str, float]] = {}
+        for k, c in conds.items():
+            pred = pred_all.filter(c).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
             per_pos = {pos: float(s) for pos, s in pred.group_by("position").agg(pl.col("_r").std()).iter_rows()
                        if s is not None}
             per_pos["__all__"] = float(pred["_r"].std())

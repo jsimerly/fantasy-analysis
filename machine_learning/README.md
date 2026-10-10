@@ -137,7 +137,9 @@ at the page's rate next to KTC's tier prices and wins per 1,000 KTC. BACKLOG ite
 ## Weekly refresh (Cloud Run)
 
 `scripts/weekly_refresh.py` is the one scheduled job: it re-projects the season in progress
-(`backtest_inseason.py --current`), rebuilds WAR for every league the owner is in
+(`backtest_inseason.py --current`; the career tail and its sigma come from `_cache/career_tail/`
+while their key holds -- the visible rows, the configuration, the modelling code -- so a run
+between completed seasons is the in-season stage alone; `--no-tail-cache` recomputes), rebuilds WAR for every league the owner is in
 (`build_war.py --all-leagues --teams`), rebuilds the analysis summaries the page embeds (draft-slot
 standings and the trade log, `analysis/`, best-effort, so the page carries the lake's newest
 standings; `--skip analysis` leaves the previous ones) and exports the page data to
@@ -180,7 +182,11 @@ level; the change from this season's rate; opportunities per game × points per 
 `--weight ppg|ppg2` puts relevance weights on the training rows; `--fixed-scale QB=0.8` tests a
 cross-position scale; `--realized-replacement` scores against another yardstick. Every run also
 writes its per-cohort rows (`experiments/runs/`), and `--paired A B` compares two runs cohort by
-cohort (mean difference, standard error, t, cohorts won) and prints the verdict. **Acceptance rule
+cohort (mean difference, standard error, t, cohorts won) and prints the verdict. `--save-cohorts`
+also keeps the run's scored cohort frames (`experiments/cohorts/`), and `--rescore RUN` scores
+them again without the GPU under a value-side change (`--walk-scale`: a walk-forward per-position
+scale from the cohorts complete by each cohort; `--fixed-scale`; `--top-n`), saves the result as
+a run and pairs it with the source. **Acceptance rule
 (owner, 2026-10-06): ordering and error are co-primaries.** A variant is adopted when it improves
 either `spearman_war_top` (how well projected WAR orders the WAR the top-150 projected players
 actually delivered) or `mae_war_top` (the wins error on the same players) past |t| = 2.4 with the

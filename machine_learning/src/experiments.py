@@ -125,6 +125,90 @@ def git_commit() -> str | None:
         return None
 
 
+def score_cohort(cohort: pl.DataFrame, cfg: "ExperimentConfig", H: list[int], T: int, fit_scores: dict | None = None) -> dict:
+    """One cohort's metrics from its scored frame (projection, market, realized per player): the
+    ledger row of ``run_experiment`` and of ``rescore`` alike."""
+    fit_scores = fit_scores or {}
+    obs = cohort.filter(pl.col("realized_iv").is_not_null())
+    priced = obs.filter(pl.col("ktc_value").is_not_null())
+    row = {"name": cfg.name, "cohort": T, "n_all": obs.height, "n_priced": priced.height}
+    # position shares of projected vs realized WAR on the observable cohort (cross-position calibration)
+    if "realized_war" in obs.columns and obs["realized_war"].sum() > 0 and obs["war"].sum() > 0:
+        g = obs.group_by("position").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+        tp, tr = g["p"].sum(), g["r"].sum()
+        err = 0.0
+        for pos, p_, r_ in g.iter_rows():
+            row[f"share_proj_{pos}"], row[f"share_real_{pos}"] = p_ / tp, r_ / tr
+            err += abs(p_ / tp - r_ / tr)
+        row["share_abs_err"] = err
+    if obs.height:
+        row["spearman_iv_vs_realized_all"] = value.spearman(obs["iv"].to_numpy(), obs["realized_iv"].to_numpy())
+        # ---- primary, market-free: projected WAR vs realized WAR
+        pw, rw = obs["war"].to_numpy().astype(float), obs["realized_war"].to_numpy().astype(float)
+        row["spearman_war_all"] = value.spearman(pw, rw)
+        row["mae_war_all"] = float(np.mean(np.abs(rw - pw)))
+        row["bias_war_all"] = float(np.mean(rw - pw))
+        row["top_decile_war_all"] = top_decile_precision(pw, rw)
+        top = obs.sort("war", descending=True).head(cfg.top_n)            # the players a manager would actually weigh
+        if top.height >= 20:
+            tw, tr = top["war"].to_numpy().astype(float), top["realized_war"].to_numpy().astype(float)
+            row["spearman_war_top"] = value.spearman(tw, tr)
+            row["mae_war_top"] = float(np.mean(np.abs(tr - tw)))
+            row["bias_war_top"] = float(np.mean(tr - tw))
+        prior = obs.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
+        t12 = prior.filter(pl.col("_pr") <= 12)
+        if t12.height:
+            row["bias_war_top12"] = float((t12["realized_war"].to_numpy() - t12["war"].to_numpy()).mean())
+    if priced.height:
+        iv, kt, rz = (priced[c].to_numpy().astype(float) for c in ("iv", "ktc_value", "realized_iv"))
+        row.update({"spearman_iv_vs_realized": value.spearman(iv, rz), "spearman_ktc_vs_realized": value.spearman(kt, rz),
+                    "top_decile_iv": top_decile_precision(iv, rz), "top_decile_ktc": top_decile_precision(kt, rz)})
+        row.update(market_edge(iv, kt, rz))
+    for k in H:
+        o = cohort.filter(pl.col(f"h{k}_observable"))
+        if o.height:
+            row[f"mae_h{k}"] = float(np.mean(np.abs(o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float))))
+    row.update(fit_scores)
+    for k in (1, max(H)):                               # the train-test gap: out-of-sample minus in-sample season-points error
+        if f"mae_h{k}" in row and f"mae_h{k}_train" in row:
+            row[f"gap_h{k}"] = row[f"mae_h{k}"] - row[f"mae_h{k}_train"]
+    row.update(range_scores(cohort, H))
+    # magnitude bias (realized - projected season points, + = model too low): everyone, and prior top-12 by position
+    prior = cohort.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
+    for k in sorted({1, max(H)}):
+        o = prior.filter(pl.col(f"h{k}_observable"))
+        if o.height:
+            res = o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float)
+            top = o["_pr"].to_numpy() <= 12
+            row[f"bias_all_h{k}"] = float(res.mean())
+            row[f"bias_top12_h{k}"] = float(res[top].mean()) if top.any() else None
+    return row
+
+
+def summarize(per_cohort: pl.DataFrame, cfg: "ExperimentConfig", groups, cols) -> dict:
+    """The ledger summary of a run: the configuration, then every metric's mean over cohorts."""
+    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_", "share_", "gap_"))]
+    # warn when market context is missing entirely (the primary metrics never need it)
+    summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
+               "horizon": max(cfg.horizons), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
+               "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
+               "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
+               "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
+               "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
+               "target": cfg.target, "weight": cfg.weight or "",
+               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else "") + (" range" if cfg.range_quantiles else ""),
+               "draft_rows": cfg.draft_rows, "snapshot_weeks": cfg.snapshot_weeks,
+               "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
+    for c in metric_cols:
+        summary[c] = float(per_cohort[c].mean())
+    for c in ("spearman_war_top", "mae_war_top"):          # cohort-to-cohort spread: the stability read
+        if c in per_cohort.columns and per_cohort[c].drop_nulls().len() >= 2:
+            summary[f"{c}_sd"] = float(per_cohort[c].drop_nulls().std())
+    if "spearman_iv_vs_realized" in summary and "spearman_ktc_vs_realized" in summary:
+        summary["iv_minus_ktc"] = summary["spearman_iv_vs_realized"] - summary["spearman_ktc_vs_realized"]
+    return summary
+
+
 def run_experiment(
     matrix: pl.DataFrame, cfg: ExperimentConfig, ctx: fg.Context,
     rep_for: Callable[[int], dict[str, float]],
@@ -181,81 +265,9 @@ def run_experiment(
               f"(fit + spread {t_fit:.0f}s, predict + score {time.perf_counter() - t_cohort - t_fit:.0f}s; {len(H)} horizons, {cfg.backend})", flush=True)
         if collect is not None:
             collect.append(cohort.with_columns(pl.lit(T).alias("cohort"), pl.lit(cfg.name).alias("variant")))
-        obs = cohort.filter(pl.col("realized_iv").is_not_null())
-        priced = obs.filter(pl.col("ktc_value").is_not_null())
-        row = {"name": cfg.name, "cohort": T, "n_all": obs.height, "n_priced": priced.height}
-        # position shares of projected vs realized WAR on the observable cohort (cross-position calibration)
-        if "realized_war" in obs.columns and obs["realized_war"].sum() > 0 and obs["war"].sum() > 0:
-            g = obs.group_by("position").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
-            tp, tr = g["p"].sum(), g["r"].sum()
-            err = 0.0
-            for pos, p_, r_ in g.iter_rows():
-                row[f"share_proj_{pos}"], row[f"share_real_{pos}"] = p_ / tp, r_ / tr
-                err += abs(p_ / tp - r_ / tr)
-            row["share_abs_err"] = err
-        if obs.height:
-            row["spearman_iv_vs_realized_all"] = value.spearman(obs["iv"].to_numpy(), obs["realized_iv"].to_numpy())
-            # ---- primary, market-free: projected WAR vs realized WAR
-            pw, rw = obs["war"].to_numpy().astype(float), obs["realized_war"].to_numpy().astype(float)
-            row["spearman_war_all"] = value.spearman(pw, rw)
-            row["mae_war_all"] = float(np.mean(np.abs(rw - pw)))
-            row["bias_war_all"] = float(np.mean(rw - pw))
-            row["top_decile_war_all"] = top_decile_precision(pw, rw)
-            top = obs.sort("war", descending=True).head(cfg.top_n)            # the players a manager would actually weigh
-            if top.height >= 20:
-                tw, tr = top["war"].to_numpy().astype(float), top["realized_war"].to_numpy().astype(float)
-                row["spearman_war_top"] = value.spearman(tw, tr)
-                row["mae_war_top"] = float(np.mean(np.abs(tr - tw)))
-                row["bias_war_top"] = float(np.mean(tr - tw))
-            prior = obs.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
-            t12 = prior.filter(pl.col("_pr") <= 12)
-            if t12.height:
-                row["bias_war_top12"] = float((t12["realized_war"].to_numpy() - t12["war"].to_numpy()).mean())
-        if priced.height:
-            iv, kt, rz = (priced[c].to_numpy().astype(float) for c in ("iv", "ktc_value", "realized_iv"))
-            row.update({"spearman_iv_vs_realized": value.spearman(iv, rz), "spearman_ktc_vs_realized": value.spearman(kt, rz),
-                        "top_decile_iv": top_decile_precision(iv, rz), "top_decile_ktc": top_decile_precision(kt, rz)})
-            row.update(market_edge(iv, kt, rz))
-        for k in H:
-            o = cohort.filter(pl.col(f"h{k}_observable"))
-            if o.height:
-                row[f"mae_h{k}"] = float(np.mean(np.abs(o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float))))
-        row.update(fit_scores)
-        for k in (1, max(H)):                               # the train-test gap: out-of-sample minus in-sample season-points error
-            if f"mae_h{k}" in row and f"mae_h{k}_train" in row:
-                row[f"gap_h{k}"] = row[f"mae_h{k}"] - row[f"mae_h{k}_train"]
-        row.update(range_scores(cohort, H))
-        # magnitude bias (realized - projected season points, + = model too low): everyone, and prior top-12 by position
-        prior = cohort.filter(pl.col("games") >= 8).with_columns(pl.col("ppg").rank(descending=True).over("position").alias("_pr"))
-        for k in sorted({1, max(H)}):
-            o = prior.filter(pl.col(f"h{k}_observable"))
-            if o.height:
-                res = o[f"h{k}_fpts"].to_numpy().astype(float) - o[f"h{k}_fpts_hat"].to_numpy().astype(float)
-                top = o["_pr"].to_numpy() <= 12
-                row[f"bias_all_h{k}"] = float(res.mean())
-                row[f"bias_top12_h{k}"] = float(res[top].mean()) if top.any() else None
-        rows.append(row)
+        rows.append(score_cohort(cohort, cfg, H, T, fit_scores))
     per_cohort = pl.DataFrame(rows)
-    metric_cols = [c for c in per_cohort.columns if c.startswith(("spearman", "top_decile", "mae_", "bias_", "edge_", "share_", "gap_"))]
-    # warn when market context is missing entirely (the primary metrics never need it)
-    summary = {"name": cfg.name, "groups": ",".join(g.name for g in groups), "n_features": len(cols),
-               "horizon": max(H), "cohorts": f"{min(cfg.cohorts)}-{max(cfg.cohorts)}", "n_cohorts": len(cfg.cohorts),
-               "discount_rate": cfg.discount_rate, "params": repr(cfg.params) if cfg.params else "", "calibrate": cfg.calibrate,
-               "quantile_sigma": cfg.quantile_sigma, "position_scale": cfg.position_scale,
-               "replacement": cfg.replacement if not cfg.realized_replacement else f"{cfg.replacement}/{cfg.realized_replacement}",
-               "fixed_scale": ",".join(f"{k}={v:g}" for k, v in cfg.fixed_scale.items()) if cfg.fixed_scale else "",
-               "target": cfg.target, "weight": cfg.weight or "",
-               "backend": cfg.backend + ("(" + ",".join(f"{k}={v}" for k, v in cfg.tabpfn_params.items()) + ")" if cfg.tabpfn_params else "") + (" stacked" if cfg.stacked else "") + (f" cap={cfg.cap}" if cfg.cap != "30+" else "") + (" range" if cfg.range_quantiles else ""),
-               "draft_rows": cfg.draft_rows, "snapshot_weeks": cfg.snapshot_weeks,
-               "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": git_commit()}
-    for c in metric_cols:
-        summary[c] = float(per_cohort[c].mean())
-    for c in ("spearman_war_top", "mae_war_top"):          # cohort-to-cohort spread: the stability read
-        if c in per_cohort.columns and per_cohort[c].drop_nulls().len() >= 2:
-            summary[f"{c}_sd"] = float(per_cohort[c].drop_nulls().std())
-    if "spearman_iv_vs_realized" in summary and "spearman_ktc_vs_realized" in summary:
-        summary["iv_minus_ktc"] = summary["spearman_iv_vs_realized"] - summary["spearman_ktc_vs_realized"]
-    return per_cohort, summary
+    return per_cohort, summarize(per_cohort, cfg, groups, cols)
 
 
 # ------------------------------------------------------------------------------ ledger
@@ -269,6 +281,7 @@ LEDGER_COLS = ["timestamp", "name", "groups", "n_features", "horizon", "cohorts"
                "ppg_cover_2080", "ppg_pinball", "ppg_skew",
                # the overfitting reads: in-sample error and the train-test gap (season points), cohort spread of the co-primaries
                "mae_h1_train", "gap_h1", "spearman_war_top_sd", "mae_war_top_sd"]
+LEDGER_COLS = list(dict.fromkeys(LEDGER_COLS))   # a column listed twice made append_result raise AFTER an hour of GPU (2026-10-09 20:22); unique, order kept
 
 
 IN_SAMPLE_ROWS = 2000
@@ -336,8 +349,10 @@ def range_scores(cohort: pl.DataFrame, horizons: list[int]) -> dict:
 
 
 def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
-    row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c)
-                                           for c in LEDGER_COLS + sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h", "share_proj_", "share_real_")))])
+    # the per-horizon extras (mae_h3, bias_all_h5, ...) ride along by prefix; a fixed column that shares a prefix
+    # (mae_h1_train) must not be listed twice -- that duplicate raised AFTER an hour of GPU on 2026-10-09
+    extras = sorted(k for k in summary if k.startswith(("mae_h", "bias_all_h", "bias_top12_h", "share_proj_", "share_real_")) and k not in LEDGER_COLS)
+    row = pl.DataFrame([summary]).select([pl.col(c) if c in summary else pl.lit(None).alias(c) for c in LEDGER_COLS + extras])
     return row if ledger is None or ledger.height == 0 else pl.concat([ledger, row], how="diagonal_relaxed")
 
 
@@ -372,6 +387,103 @@ def load_run(ref: str) -> pl.DataFrame:
         raise FileNotFoundError(f"no per-cohort results for {ref!r}")
     tail = paths[-1].split("/")[-3:]
     return gcs_io.read_ml_parquet(*tail)
+
+
+# ------------------------------------------------------------------------------ rescoring
+COHORTS_PREFIX = ("experiments", "cohorts")
+SCALE_COLS = ("iv", "war", "par")
+
+
+def save_cohorts(name: str, frames: list[pl.DataFrame], timestamp: str) -> str:
+    """Persist a run's scored cohort frames (every projected player with his market and realized
+    value) next to its per-cohort rows, so value-side questions -- a positional scale, another
+    top-N -- are answered by ``rescore`` without the GPU."""
+    stamp = str(timestamp).replace(":", "-")
+    return gcs_io.write_ml_parquet(pl.concat(frames, how="diagonal"), *COHORTS_PREFIX, f"{name}_{stamp}.parquet")
+
+
+def load_cohorts(ref: str) -> pl.DataFrame:
+    """``name`` (latest) or ``name@timestamp``, as ``load_run``."""
+    paths = run_paths(ref, gcs_io.list_ml(*COHORTS_PREFIX))
+    if not paths:
+        raise FileNotFoundError(f"no cohort frames for {ref!r} (run with --save-cohorts)")
+    return gcs_io.read_ml_parquet(*paths[-1].split("/")[-3:])
+
+
+def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float = 0.6, hi: float = 1.6) -> dict[str, float]:
+    """Per-position value scale for cohort ``T`` from the cohorts whose outcomes are complete by
+    then (cohort + max(H) <= T): realized WAR over projected WAR by position on their observable
+    rows, clipped to [lo, hi]. Empty when no earlier cohort is complete (scale 1)."""
+    done = cohorts.filter((pl.col("cohort") + max(H) <= T) & pl.col("realized_iv").is_not_null())
+    if done.height == 0:
+        return {}
+    g = done.group_by("position").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    return {pos: float(min(hi, max(lo, r_ / p_))) for pos, p_, r_ in g.iter_rows() if p_ and p_ > 0}
+
+
+BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
+SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain (career.predict's quantile floor)
+
+
+def apply_sigma_mode(f: pl.DataFrame, H: list[int], sigma_mode: str | None) -> pl.DataFrame:
+    """The spread the value construction prices upside with: ``None`` keeps the frame's
+    ``h{k}_ppg_sigma`` (the per-position holdout sigma); ``"band"`` takes each player's own from
+    the run's 20/80 band (items 6 / 36b: width / 1.68, floored at 1 ppg) where a horizon has one;
+    ``"none"`` drops the spread (plain clipped excess)."""
+    if not sigma_mode:
+        return f
+    if sigma_mode == "none":
+        return f.drop([c for c in f.columns if c.endswith("_ppg_sigma")])
+    if sigma_mode != "band":
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'none'")
+    cols = []
+    for k in H:
+        lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
+        if lo in f.columns and hi in f.columns:
+            cols.append(((pl.col(hi) - pl.col(lo)) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma"))
+    return f.with_columns(cols)
+
+
+def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
+            src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
+            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None) -> tuple[pl.DataFrame, dict]:
+    """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
+    multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
+    ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
+    with ``rep_for(T)`` and ``curve``), or just ``cfg.top_n``. ``src_per_cohort`` (the original
+    run's rows) carries the in-sample scores the frames do not hold, so the train-test gap columns
+    survive. Returns (per_cohort, summary) as ``run_experiment`` does; save with ``save_run`` and
+    compare with ``paired``."""
+    H = list(cfg.horizons)
+    if sigma_mode and rep_for is None:
+        raise ValueError("a sigma_mode rebuilds value and WAR: rep_for (and curve) are needed")
+    rows = []
+    for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
+        f = cohorts.filter(pl.col("cohort") == T)
+        if sigma_mode:
+            import war as _war
+            from league import WinCurve, OWNER_CURVE_FALLBACK
+            rep = rep_for(T)
+            f = apply_sigma_mode(f, H, sigma_mode)
+            f = value.intrinsic_value(f, rep, H, cfg.discount_rate)
+            f = _war.wins_above_replacement(f, rep, curve or WinCurve.normal(*OWNER_CURVE_FALLBACK), _war.career_components(H), cfg.discount_rate)
+        scales = dict(fixed_scale or {})
+        if walk_scale:
+            scales.update(walk_forward_scales(cohorts, T, H))
+        if scales:
+            sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
+            f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
+        fit = {}
+        if src_per_cohort is not None and T in src_per_cohort["cohort"].to_list():
+            r0 = src_per_cohort.filter(pl.col("cohort") == T).to_dicts()[0]
+            fit = {k: v for k, v in r0.items() if k.endswith("_train") and v is not None}
+        row = score_cohort(f, cfg, H, T, fit)
+        for pos, v in scales.items():
+            row[f"scale_{pos}"] = v
+        rows.append(row)
+    per_cohort = pl.DataFrame(rows)
+    groups = fg.resolve(cfg.groups)
+    return per_cohort, summarize(per_cohort, cfg, groups, fg.feature_columns(groups))
 
 
 def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:

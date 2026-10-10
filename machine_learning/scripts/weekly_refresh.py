@@ -36,7 +36,7 @@ STEPS = ["inseason", "war", "analysis", "export"]
 # the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
-                       inseason_backend="tabpfn"),
+                       inseason_backend="tabpfn", target="blend"),   # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
 }
 
 
@@ -85,6 +85,7 @@ def main() -> None:
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
+    ap.add_argument("--sigma", choices=["band"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
@@ -94,7 +95,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)

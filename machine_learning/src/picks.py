@@ -47,6 +47,23 @@ def realized_war_by_player(season_fact: pl.DataFrame, rep: pl.DataFrame, drafted
     return drafted.join(agg, on="player_id", how="left").with_columns(pl.col("war").fill_null(0.0), pl.col("war_disc").fill_null(0.0))
 
 
+def rookie_year_par_by_tier(season_fact: pl.DataFrame, rep: pl.DataFrame, drafted: pl.DataFrame, by_tier: pl.DataFrame) -> dict[str, float]:
+    """Points above replacement per game in the ROOKIE season, expected per league pick tier
+    (``"round:tier"``): the same log-log curve on the NFL pick as the career wins, fitted on each
+    drafted player's first season (a player with no rookie season scores zero), averaged over the
+    tier's observed NFL picks. What a pick adds to next season's lineup, for the title lens."""
+    d = (season_fact.filter(pl.col("position").is_in(POSITIONS))
+         .join(drafted.select("player_id", "nfl_class"), on="player_id", how="inner")
+         .filter(pl.col("season") == pl.col("nfl_class"))
+         .join(rep, on=["season", "position"], how="left")
+         .with_columns(pl.max_horizontal(pl.col("ppg") - pl.col("rep"), 0.0).fill_null(0.0).alias("par_pg")))
+    per = drafted.join(d.select("player_id", "par_pg"), on="player_id", how="left").with_columns(pl.col("par_pg").fill_null(0.0))
+    if per.height < 10:
+        return {}
+    a, b = fit_pick_curve(per, "par_pg")
+    return {f"{int(rnd)}:{tier}": float(np.mean(expected_war(np.asarray(picks), a, b))) for rnd, tier, picks, _ in by_tier.select("round", "tier", "nfl_picks", "n").iter_rows()}
+
+
 def fit_pick_curve(df: pl.DataFrame, col: str = "war_disc") -> tuple[float, float]:
     """log(wins + FLOOR) = a + b·log(pick), least squares over every drafted player."""
     x = np.log(df["nfl_pick"].to_numpy().astype(float))
@@ -155,5 +172,7 @@ def build_from_lake(now_season: int, seasons: list[int], rate: float = 0.2, firs
     day = ktc["valuation_date"].max()
     prices = ktc.filter(pl.col("valuation_date") == day).select("season", "round", "tier", pl.col("value").alias("ktc"))
     tab = pick_table(by_tier, a, b, seasons, now_season, rate, prices)
-    return tab, {"a": a, "b": b, "n_players": per.height, "classes": [first_class, last_class], "n_rookie_picks": rk.height, "ktc_date": str(day)}
+    rookie = rookie_year_par_by_tier(sf, rep, drafted_all.filter((pl.col("nfl_class") >= first_class) & (pl.col("nfl_class") <= now_season - 1)), by_tier)
+    return tab, {"a": a, "b": b, "n_players": per.height, "classes": [first_class, last_class], "n_rookie_picks": rk.height, "ktc_date": str(day),
+                 "rookie_par_pg": rookie}
 

@@ -59,3 +59,20 @@ def test_projected_tier_puts_the_worst_lineup_early():
     assert picks.projected_tier(10, 10) == "Early" and picks.projected_tier(1, 10) == "Late" and picks.projected_tier(5, 10) == "Mid"
     assert picks.projected_tier(12, 12) == "Early" and picks.projected_tier(1, 12) == "Late"
 
+
+
+def test_rookie_year_par_per_tier_falls_with_the_pick():
+    import numpy as np
+    import polars as pl
+    import picks
+    rng = np.random.default_rng(0)
+    n = 120
+    drafted = pl.DataFrame({"player_id": [f"p{i}" for i in range(n)], "nfl_pick": [i + 1 for i in range(n)], "nfl_class": [2015] * n, "position": ["WR"] * n})
+    # rookie-season ppg falls with the pick; a few never play (no rookie row)
+    rows = [{"player_id": f"p{i}", "season": 2015, "position": "WR", "games": 15, "ppg": max(0.0, 16.0 - 0.1 * i + rng.normal(0, 1))} for i in range(n) if i % 17 != 3]
+    sf = pl.DataFrame(rows)
+    rep = pl.DataFrame({"season": [2015], "position": ["WR"], "rep": [8.0]})
+    by_tier = pl.DataFrame({"round": [1, 1, 2], "tier": ["Early", "Late", "Mid"], "nfl_picks": [[1, 5, 9], [25, 30, 35], [60, 70, 80]], "n": [3, 3, 3]})
+    out = picks.rookie_year_par_by_tier(sf, rep, drafted, by_tier)
+    assert set(out) == {"1:Early", "1:Late", "2:Mid"} and out["1:Early"] > out["1:Late"] > out["2:Mid"] >= 0.0
+    assert picks.rookie_year_par_by_tier(sf.head(0), rep, drafted.head(3), by_tier) == {}

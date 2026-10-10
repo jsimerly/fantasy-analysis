@@ -176,3 +176,82 @@ def test_in_sample_scores_and_the_gap_use_the_training_rows_only():
     t = _paired_table(-0.5, 3.0)
     t = pl.concat([t, pl.DataFrame({"metric": ["gap_h1", "mae_h1_train"], "a": [12.0, 20.0], "b": [25.0, 8.0], "diff_b_minus_a": [13.0, -12.0], "se": [1.0, 1.0], "t": [13.0, -12.0], "b_wins": [8, 0], "cohorts": [8, 8]})])
     assert "train-test gap h1 A 12.0 vs B 25.0" in ex.verdict(t)
+
+
+def test_ledger_columns_are_unique_and_append_result_takes_a_full_summary():
+    import collections
+    assert not [c for c, n in collections.Counter(ex.LEDGER_COLS).items() if n > 1]
+    ledger = pl.DataFrame(schema={c: pl.Utf8 for c in ex.LEDGER_COLS})
+    out = ex.append_result(ledger, {c: None for c in ex.LEDGER_COLS} | {"name": "x", "mae_h1_train": 1.0, "gap_h1": 2.0})
+    assert out.height == 1 and out["name"][0] == "x"
+
+
+
+class TestRescore:
+    """Saved cohort frames scored again without the GPU: identical as is, scaled on request, and a
+    walk-forward positional scale only from cohorts whose outcomes are complete."""
+
+    def _run(self):
+        import numpy as np
+        H = [1, 2]
+        m = _matrix(H)
+        ctx = fg.Context(depth=pl.DataFrame(), injury=pl.DataFrame(), weeks=pl.DataFrame())
+        cfg = ex.ExperimentConfig(name="t", groups=["base", "career"], horizons=H, cohorts=[2020, 2021], params={"n_estimators": 10, "max_depth": 2})
+        rng = np.random.default_rng(1)
+
+        def market_for(cohort, T):
+            return cohort.with_columns(pl.Series("ktc_value", [float(rng.integers(500, 9999)) if i % 2 else None for i in range(cohort.height)]))
+
+        got = []
+        per_cohort, summary = ex.run_experiment(m, cfg, ctx, rep_for=lambda T: {"QB": 12.0, "RB": 9.0, "WR": 8.0, "TE": 7.0}, market_for=market_for, collect=got)
+        return cfg, H, per_cohort, pl.concat(got, how="diagonal")
+
+    def test_rescoring_as_is_reproduces_the_run_rows(self):
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        assert frames["cohort"].unique().sort().to_list() == [2020, 2021] and frames["variant"].unique().to_list() == ["t"]
+        again, summary = ex.rescore(frames, cfg, src_per_cohort=per_cohort)
+        for c in ("n_all", "spearman_war_top", "mae_war_top", "mae_h1", "mae_h1_train", "gap_h1", "share_abs_err", "spearman_iv_vs_realized"):
+            assert c in again.columns, c
+            assert again[c].to_list() == pytest.approx(per_cohort[c].to_list()), c
+        assert summary["name"] == "t" and summary["cohorts"] == "2020-2021" and "spearman_war_top" in summary
+
+    def test_fixed_scale_moves_the_position_share_and_marks_the_rows(self):
+        cfg, H, per_cohort, frames = self._run()
+        scaled, _ = ex.rescore(frames, cfg, fixed_scale={"QB": 0.5})
+        assert scaled["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert (scaled["share_proj_QB"] < per_cohort["share_proj_QB"]).all()
+        assert scaled["scale_QB"].to_list() == [0.5, 0.5]
+
+    def test_walk_forward_scale_uses_only_cohorts_complete_by_then(self):
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        assert ex.walk_forward_scales(frames, 2020, H) == {} and ex.walk_forward_scales(frames, 2021, H) == {}     # 2020 + 2 > 2021
+        ws = ex.walk_forward_scales(frames, 2022, H)                                                               # 2020 is complete by 2022
+        done = frames.filter((pl.col("cohort") == 2020) & pl.col("realized_iv").is_not_null())
+        g = done.group_by("position").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+        assert ws and set(ws) == {pos for pos, p_, _ in g.iter_rows() if p_ > 0}
+        for pos, p_, r_ in g.iter_rows():
+            if p_ > 0:
+                assert ws[pos] == pytest.approx(min(1.6, max(0.6, r_ / p_)))
+        walked, _ = ex.rescore(frames, cfg, walk_scale=True)
+        assert "scale_QB" not in walked.columns or walked["scale_QB"].null_count() == walked.height      # nothing complete: unscaled
+
+    def test_band_sigma_prices_each_players_own_spread(self):
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        rep = {"QB": 12.0, "RB": 9.0, "WR": 8.0, "TE": 7.0}
+        wide = frames.with_columns([(pl.col(f"h{k}_ppg_hat") - 3.0).alias(f"h{k}_ppg_q20") for k in H]
+                                   + [(pl.col(f"h{k}_ppg_hat") + 3.0).alias(f"h{k}_ppg_q80") for k in H])
+        f = ex.apply_sigma_mode(wide, H, "band")
+        assert f["h1_ppg_sigma"].to_list() == pytest.approx([6.0 / ex.BAND_TO_SIGMA] * f.height)      # width / 1.68
+        narrow = ex.apply_sigma_mode(wide.with_columns(pl.col("h1_ppg_hat").alias("h1_ppg_q20"), pl.col("h1_ppg_hat").alias("h1_ppg_q80")), H, "band")
+        assert narrow["h1_ppg_sigma"].to_list() == [ex.SIGMA_FLOOR] * f.height                         # never certain
+        assert "h1_ppg_sigma" not in ex.apply_sigma_mode(wide, H, "none").columns
+        assert ex.apply_sigma_mode(wide, H, None).equals(wide)
+        band, _ = ex.rescore(wide, cfg, sigma_mode="band", rep_for=lambda T: rep)
+        none, _ = ex.rescore(wide, cfg, sigma_mode="none", rep_for=lambda T: rep)
+        assert band["n_all"].to_list() == none["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert (band["bias_war_all"] < none["bias_war_all"]).all()      # upside priced: projected WAR higher, realized - projected lower
+        with pytest.raises(ValueError):
+            ex.rescore(wide, cfg, sigma_mode="band")                     # a rebuild needs the replacement levels

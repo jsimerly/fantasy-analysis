@@ -52,3 +52,22 @@ class TestRegistry:
     def test_contracts_is_a_weekly_snapshot(self):
         cfg = mod.DATASETS_CONFIG["contracts"]
         assert cfg["seasonal"] is False and cfg["schedule"] == mod.SCHEDULE_TUESDAY and cfg["folder"] == "contracts"
+
+
+class TestNextGenSlices:
+    def test_receiving_and_rushing_are_their_own_seasonal_datasets(self):
+        # the loader's default slice is passing (quarterbacks); receivers and rushers need their own calls
+        for slice_ in ("receiving", "rushing"):
+            cfg = mod.DATASETS_CONFIG[f"nextgen_stats_{slice_}"]
+            assert cfg["loader"].keywords == {"stat_type": slice_}
+            assert cfg["seasonal"] is True and cfg["start_season"] == 2016 and cfg["folder"] == f"nextgen_stats_{slice_}"
+        assert "stat_type" not in getattr(mod.DATASETS_CONFIG["nextgen_stats"]["loader"], "keywords", {})
+
+    def test_expected_points_is_a_seasonal_dataset_from_2006(self):
+        cfg = mod.DATASETS_CONFIG["ff_opportunity"]
+        assert cfg["loader"].keywords == {"stat_type": "weekly"} and cfg["seasonal"] is True and cfg["start_season"] == 2006
+
+    def test_rankings_history_is_the_all_file_refreshed_weekly(self):
+        cfg = mod.DATASETS_CONFIG["ff_rankings_history"]
+        assert cfg["loader"].args == ("all",) and cfg["seasonal"] is False and cfg["schedule"] == mod.SCHEDULE_TUESDAY
+

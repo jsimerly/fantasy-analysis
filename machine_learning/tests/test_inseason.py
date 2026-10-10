@@ -228,3 +228,97 @@ class TestModels:
         wk, ss = _big()
         snaps = inseason.baselines(inseason.build_snapshots(wk, ss, weeks=[3]))
         assert snaps["bl_blend_ppg"].null_count() == 0
+
+
+class TestUsageRoleScheduleGroups:
+    """BACKLOG 37: the usage (Next Gen + snaps), role (recency + status) and schedule groups."""
+
+    def test_usage_weights_next_gen_by_targets_and_attempts_and_skips_the_season_row(self):
+        rec = pl.DataFrame({"season": [2025] * 3, "season_type": ["REG"] * 3, "week": [0, 1, 2], "player_gsis_id": ["g1"] * 3,
+                            "targets": [20, 5, 15], "avg_separation": [9.9, 2.0, 4.0], "avg_cushion": [9.9, 6.0, 6.0], "percent_share_of_intended_air_yards": [50.0, 30.0, 40.0],
+                            "avg_intended_air_yards": [9.9, 10.0, 12.0], "avg_yac_above_expectation": [9.9, 1.0, -1.0], "catch_percentage": [99.0, 80.0, 60.0]})
+        rush = pl.DataFrame({"season": [2025] * 2, "season_type": ["REG"] * 2, "week": [1, 2], "player_gsis_id": ["g2"] * 2, "rush_attempts": [10, 30],
+                             "efficiency": [4.0, 3.0], "rush_yards_over_expected_per_att": [1.0, 0.0], "percent_attempts_gte_eight_defenders": [20.0, 40.0], "avg_time_to_los": [2.8, 2.6]})
+        status = pl.DataFrame({"season": [2025] * 4, "week": [1, 2, 3, 4], "gsis_id": ["g1"] * 4, "status": ["played"] * 4, "offense_pct": [0.5, 0.6, 0.8, 0.9]})
+        u = inseason.usage_features(rec, rush, status, week=3)
+        g1 = u.filter(pl.col("player_id") == "g1").to_dicts()[0]
+        assert abs(g1["ng_sep"] - (5 * 2.0 + 15 * 4.0) / 20) < 1e-9 and abs(g1["ng_air_share"] - 35.0) < 1e-9     # week 0 skipped
+        assert abs(g1["sn_pct_td"] - (0.5 + 0.6 + 0.8) / 3) < 1e-9 and g1["sn_trend"] == 0.0                     # week 4 excluded
+        g2 = u.filter(pl.col("player_id") == "g2").to_dicts()[0]
+        assert abs(g2["ng_rush_eff"] - (10 * 4.0 + 30 * 3.0) / 40) < 1e-9 and g2["ng_sep"] is None
+
+    def test_role_windows_and_the_trailing_run_of_played_weeks(self):
+        wk = pl.DataFrame({"player_id": ["p"] * 6, "season": [2025] * 6, "week": [1, 2, 3, 4, 5, 6], "fpts": [10.0, 12.0, 8.0, 20.0, 30.0, 99.0],
+                           "targets": [5, 5, 5, 10, 10, 99], "rush_att": [0] * 6, "rec": [3, 3, 3, 7, 7, 99]})
+        status = pl.DataFrame({"season": [2025] * 7, "week": [1, 2, 3, 4, 5, 6, 7], "gsis_id": ["p"] * 7,
+                               "status": ["played", "injured_out", "bye", "played", "played", "played", "played"], "offense_pct": [None] * 7})
+        r = inseason.role_features(wk, status, week=5).to_dicts()[0]
+        assert r["last1_fpts"] == 30.0 and abs(r["last5_ppg"] - 16.0) < 1e-9 and abs(r["last3_targets_pg"] - 25 / 3) < 1e-9
+        assert abs(r["tgt_trend"] - (25 / 3 - 7.0)) < 1e-9
+        assert r["games_since_return"] == 2 and r["missed_last3"] == 0 and r["td_injured_weeks"] == 1    # byes neutral, week 6+ unseen
+        r3 = inseason.role_features(wk, status, week=3).to_dicts()[0]
+        assert r3["games_since_return"] == 0 and r3["missed_last3"] == 1
+
+    def test_schedule_uses_only_played_games_for_opponent_strength(self):
+        sch = pl.DataFrame({"season": [2025] * 5, "game_type": ["REG"] * 5, "week": [1, 2, 3, 4, 5],
+                            "home_team": ["A", "B", "A", "C", "A"], "away_team": ["B", "C", "C", "A", "B"],
+                            "home_score": [30, 20, None, None, None], "away_score": [10, 20, None, None, None]})
+        s = inseason.schedule_features(sch, week=2, last_week=5)
+        a = s.filter(pl.col("team") == "A").to_dicts()[0]
+        assert a["sch_games_left"] == 3                        # weeks 3, 4, 5
+        assert abs(a["sch_opp_pd_next"] - 0.0) < 1e-9          # next: C, who drew in week 2
+        assert abs(a["sch_opp_pd"] - ((0.0 + 0.0 + -10.0) / 3)) < 1e-9    # C, C, B (B: lost by 20 in week 1, drew week 2 -> -10 per game)
+        assert a["sch_bye_ahead"] == 0
+        c = s.filter(pl.col("team") == "C").to_dicts()[0]
+        assert c["sch_games_left"] == 2 and c["sch_bye_ahead"] == 1       # no week-5 game
+
+    def test_groups_are_registered_and_build_snapshots_joins_them(self):
+        assert set(inseason.EXTRA_GROUPS) >= {"usage", "role", "schedule"}
+        assert inseason.extra_columns(["role"]) == inseason.ROLE_COLS
+
+    def test_opportunity_expected_points_to_date_and_the_luck_signal(self):
+        ffo = pl.DataFrame({"season": [2025] * 4, "week": [1, 2, 3, 4], "player_id": ["g"] * 4,
+                            "total_fantasy_points_exp": [10.0, 12.0, 14.0, 99.0], "total_fantasy_points": [15.0, 12.0, 10.0, 99.0],
+                            "pass_fantasy_points_exp": [0.0] * 4, "rush_fantasy_points_exp": [2.0, 2.0, 2.0, 9.0], "rec_fantasy_points_exp": [8.0, 10.0, 12.0, 9.0],
+                            "total_touchdown_exp": [0.5, 0.5, 0.5, 9.0], "total_touchdown": [1, 0, 0, 9], "total_yards_gained_exp": [60.0, 70.0, 80.0, 9.0],
+                            "rec_attempt": [6, 8, 10, 9], "rec_air_yards": [60.0, 80.0, 100.0, 9.0]})
+        o = inseason.opportunity_features(ffo, week=3).to_dicts()[0]
+        assert abs(o["op_xfp_pg"] - 12.0) < 1e-9 and abs(o["op_rec_xfp_pg"] - 10.0) < 1e-9 and abs(o["op_xfp_last3"] - 12.0) < 1e-9
+        assert abs(o["op_fp_oe_pg"] - 1 / 3) < 1e-9 and abs(o["op_td_oe_pg"] - (1 - 1.5) / 3) < 1e-9       # +1 point and -0.5 TD of luck over three games
+        assert abs(o["op_targets_pg"] - 8.0) < 1e-9 and abs(o["op_x_yards_pg"] - 70.0) < 1e-9 and o["op_xfp_trend"] == 0.0
+        assert "opportunity" in inseason.EXTRA_GROUPS and inseason.extra_columns(["opportunity"]) == inseason.OPP_COLS
+
+    def test_consensus_is_the_coming_weeks_projection_and_the_record_against_it(self):
+        proj = pl.DataFrame({"season": [2025] * 6, "week": [1, 2, 3, 4, 4, 4], "player_id": ["s1"] * 4 + ["s2", "s3"], "position": ["WR"] * 5 + ["RB"],
+                             "pts_ppr": [10.0, 12.0, 14.0, 20.0, 25.0, 9.0], "rec_tgt": [6.0, 8.0, 10.0, 11.0, 9.0, 2.0], "rec_td": [0.4, 0.5, 0.6, 0.9, 0.7, 0.1],
+                             "rush_td": [0.0] * 6, "pass_td": [0.0] * 6, "rec_yd": [60.0, 70.0, 80.0, 90.0, 95.0, 10.0]})
+        xwalk = pl.DataFrame({"sleeper_id": ["s1", "s2", "s3", "s9"], "gsis_id": ["g1", "g2", "g3", None]})
+        wk = pl.DataFrame({"player_id": ["g1"] * 4, "season": [2025] * 4, "week": [1, 2, 3, 4], "fpts_ppr_nflverse": [15.0, 15.0, 15.0, 99.0],
+                           "rec_tds": [1, 1, 1, 9], "rush_tds": [0, 0, 0, 0], "pass_tds": [0, 0, 0, 0]})
+        c = {r["player_id"]: r for r in inseason.consensus_features(proj, xwalk, wk, week=3).to_dicts()}
+        g1 = c["g1"]
+        assert g1["cs_next_ppr"] == 20.0 and g1["cs_next_rank_pos"] == 2.0                       # week 4: s2 (25) ranks first among WRs
+        assert abs(g1["cs_td_mean"] - 12.0) < 1e-9 and abs(g1["cs_beat_td"] - 3.0) < 1e-9       # weeks 1-3 only; beat the consensus by 3
+        assert abs(g1["cs_next_vs_td"] - 5.0) < 1e-9 and g1["cs_has"] == 1.0
+        assert g1["cs_next_tgt"] == 11.0 and g1["cs_next_rec_yd"] == 90.0 and abs(g1["cs_td_tgt"] - 8.0) < 1e-9      # the coming week's line; targets to date
+        assert abs(g1["cs_td_xtd"] - 0.5) < 1e-9 and abs(g1["cs_td_luck"] - 0.5) < 1e-9                              # a touchdown a game against 0.5 expected
+        assert c["g3"]["cs_next_rank_pos"] == 1.0 and c["g3"]["cs_td_mean"] is None             # the only RB; no projections before week 4
+        assert "g9" not in c and inseason.extra_columns(["consensus"]) == inseason.CONSENSUS_COLS
+        assert inseason.extra_columns(["consensus_line"]) == inseason.CONSENSUS_LINE_COLS and "cs_next_tgt" not in inseason.CONSENSUS_COLS
+
+    def test_preseason_adp_prefers_mfl_by_id_and_falls_back_to_ffc_by_name(self):
+        xwalk = pl.DataFrame({"mfl_id": ["m1", "m2", None], "gsis_id": ["g1", "g2", "g3"], "name": ["Josh Allen", "Bijan Robinson", "Ja'Marr Chase Jr."], "position": ["QB", "RB", "WR"]})
+        mfl = pl.DataFrame({"season": [2024, 2024], "ext_id": ["m1", "m2"], "adp": [12.5, 2.0]})
+        ffc = pl.DataFrame({"season": [2024, 2010, 2010], "name": ["Josh Allen", "Ja'Marr Chase", "Bijan Robinson"], "position": ["QB", "WR", "RB"], "adp": [99.0, 30.0, 1.0]})
+        ps = {(r["player_id"], r["season"]): r for r in inseason.preseason_features(mfl, ffc, xwalk).to_dicts()}
+        assert ps[("g1", 2024)]["ps_adp"] == 12.5                     # 2024 has MFL: the FFC 99.0 for Allen is ignored
+        assert ps[("g2", 2024)]["ps_adp_pos_rank"] == 1.0 and ps[("g1", 2024)]["ps_adp_pos_rank"] == 1.0   # ranks within position
+        assert ps[("g3", 2010)]["ps_adp"] == 30.0 and ps[("g2", 2010)]["ps_adp"] == 1.0                   # 2010: FFC by name (suffix dropped)
+        assert all(r["ps_drafted"] == 1.0 for r in ps.values()) and inseason.extra_columns(["preseason"]) == inseason.PRESEASON_COLS
+
+    def test_one_week_per_season_keeps_a_single_snapshot_per_player_season(self):
+        rows = pl.DataFrame({"player_id": ["a"] * 4 + ["b"] * 2, "season": [2024] * 4 + [2024, 2023], "week": [3, 6, 9, 13, 3, 6]})
+        out = inseason.one_week_per_season(rows, seed=1)
+        assert out.height == 3 and out.select("player_id", "season").n_unique() == 3 and set(out.columns) == {"player_id", "season", "week"}
+        assert inseason.one_week_per_season(rows, seed=1).equals(out)      # seeded: the same draw each time
+

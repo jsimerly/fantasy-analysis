@@ -113,6 +113,25 @@ def rosters_one_per_lineage(ctx):
     return x.ok(f"one league per lineage in the snapshot ({per.height} lineages)", 0)
 
 
+@check("bronze.sleeper_projections.coming_week_present", "bronze/sleeper/projections", "error",
+       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it",
+       known_open="the dataset lands with the deploy of sleeper-incremental-projections and the PROJ_SEASONS=2018-2025 backfill (BACKLOG 38); until then there is nothing to check")
+def projections_fresh(ctx):
+    if ctx.nfl_phase() == "offseason":
+        return x.ok("offseason: not enforced")
+    season = ctx.nfl_season()
+    try:
+        pj = ctx.blob(f"bronze/sleeper/projections/season={season}/data.parquet")
+    except Exception:  # noqa: BLE001
+        return x.fail(f"no projections partition for {season}")
+    wk = _current_week(ctx) or 0
+    have = sorted(pj["week"].unique().to_list())
+    n_next = pj.filter(pl.col("week") == wk + 1).height
+    if n_next < 1500:
+        return x.fail(f"week {wk + 1} has {n_next} projections (weeks present {have[:3]}..{have[-1:]}), need 1500+", n_next)
+    return x.ok(f"week {wk + 1} has {n_next:,} projections", n_next)
+
+
 @check("bronze.sleeper_transactions.in_season_activity", "bronze/sleeper/transactions/transactions/daily", "warn",
        "transactions silently stopped at leg 14 of 2025 (incremental fetched weeks=[1] once complete); trades missing = picks and players mis-owned")
 def txn_activity(ctx):
@@ -152,6 +171,21 @@ def drafts_current(ctx):
     return x.ok("every current league has its season's draft", 0)
 
 
+@check("bronze.nflverse.model_feeds_current_season", "bronze/nflverse", "error",
+       "the in-season feature groups (usage, opportunity, consensus) read these feeds; a season partition that never lands means the Monday model silently runs without them",
+       known_open="nextgen_stats_receiving / nextgen_stats_rushing / ff_opportunity (seasonal) and fantasy_rankings_history land with the deploy of PR #34's nflverse config and the daily reconcile (BACKLOG 37-38)")
+def model_feeds(ctx):
+    season = ctx.nfl_season()
+    missing = []
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity"):
+        parts = ctx.partitions(f"bronze/nflverse/{ds}/", key="season")
+        if not any(v == str(season) for v, _ in parts):
+            missing.append(f"{ds} season={season}")
+    if not ctx.partitions("bronze/nflverse/fantasy_rankings_history/"):
+        missing.append("fantasy_rankings_history")
+    return x.fail(f"missing feeds: {missing}", len(missing)) if missing else x.ok("every model feed has its current-season partition", 0)
+
+
 @check("bronze.nflverse_contracts.snapshot_fresh", "bronze/nflverse/contracts", "warn", "the Over The Cap snapshot refreshes on Tuesdays; a stale one means fact_player_contract_season stops moving")
 def contracts_fresh(ctx):
     return x.partition_fresh(ctx.partitions("bronze/nflverse/contracts/"), ctx.today, 10, "contracts")
@@ -163,16 +197,14 @@ def pm_unique(ctx):
     return x.unique_key(ctx.table("dim_players_master"), ["player_key"])
 
 
-@check("dim.players_master.unique_gsis", "dim_players_master", "error", "two Sleeper players on one gsis_id double-join nflverse stats",
-       known_open="first run 2026-10-09: 7 gsis_ids shared, 6 by Sleeper's inactive Duplicate Player placeholders and one real conflict (Isaiah Searight / Quinnen Williams on 00-0035718); dim_player_master should drop the placeholders; BACKLOG 34")
+@check("dim.players_master.unique_gsis", "dim_players_master", "error", "two Sleeper players on one gsis_id double-join nflverse stats")
 def pm_unique_gsis(ctx):
     pm = ctx.table("dim_players_master").filter(pl.col("gsis_id").is_not_null() & (pl.col("gsis_id").str.strip_chars() != ""))
     return x.unique_key(pm.with_columns(pl.col("gsis_id").str.strip_chars()), ["gsis_id"])
 
 
 @check("dim.players_master.gsis_coverage_of_priced", "dim_players_master", "error",
-       "gsis_id is set for a third of players, so an id-only KTC->nflverse join reached 62 of 307 priced players and skewed the market-trends read (2026-10-09)",
-       known_open="BACKLOG 33: fill gsis_id in the master from nflverse ids; market_trends uses a name fallback meanwhile")
+       "gsis_id is set for a third of players, so an id-only KTC->nflverse join reached 62 of 307 priced players and skewed the market-trends read (2026-10-09)")
 def pm_gsis_coverage(ctx):
     sf = _ktc_sf(ctx)
     latest = sf.filter(pl.col("valuation_date") == sf["valuation_date"].max()).filter(pl.col("ktc_value") >= 1000)
@@ -233,8 +265,7 @@ def ls_scd2(ctx):
     return x.scd2(ctx.table("dim_league_settings"), ["league_id"], "valid_from", "valid_to", "is_current")
 
 
-@check("dim.league_settings.lineage_assigned", "dim_league_settings", "error", "the settings rows of the current leagues carry no lineage (found 2026-10-09 by this suite's first run)",
-       known_open="the current (2026) leagues' settings rows have league_lineage_id null; dim_league_settings_scd2 needs the same lineage chaining dim_leagues_meta got in PR #12")
+@check("dim.league_settings.lineage_assigned", "dim_league_settings", "error", "the settings rows of the current leagues carry no lineage (found 2026-10-09 by this suite's first run)")
 def ls_lineage(ctx):
     return x.not_null(ctx.table("dim_league_settings").filter(pl.col("is_current")), ["league_lineage_id"])
 
@@ -381,7 +412,7 @@ def _ledger_with_league(ctx: Context) -> pl.DataFrame:
 
 
 @check("fact.roster_membership.scd2", "fact_roster_membership", "error", "the ownership ledger: an asset is held by one franchise of a lineage at a time, intervals never overlap",
-       known_open="first run 2026-10-09: 88 overlapping intervals (two franchises holding the same player or pick at once, most for a day or two at a transaction boundary, a few for months, e.g. player 11370 in lineage ...304 2026-06-30 to 08-24); BACKLOG 34")
+       known_open="after the 2026-10-10 rebuild 6 overlapping intervals remain, all draft picks (the same pick booked twice at a transaction boundary, e.g. 2023:1:1); the player overlaps are gone. Was 88 on the first run 2026-10-09 (two franchises holding the same player or pick at once, most for a day or two at a transaction boundary, a few for months, e.g. player 11370 in lineage ...304 2026-06-30 to 08-24); BACKLOG 34")
 def rm_scd2(ctx):
     return x.scd2(_ledger_with_league(ctx), ["lineage", "asset_type", "asset_id"], "valid_from", "valid_to", "is_current")
 

@@ -59,6 +59,9 @@ jobs:
             ["sleeper-incremental-transactions"]="sleeper_ingestion.daily.incremental_transactions:512Mi:1:30m"
             ["sleeper-incremental-players"]="sleeper_ingestion.daily.incremental_players:512Mi:1:30m"
             ["sleeper-incremental-users"]="sleeper_ingestion.daily.incremental_users:512Mi:1:30m"
+            # Sleeper's weekly projections (the consensus feature group): the current season rebuilt daily;
+            # the one-time backfill is `--update-env-vars PROJ_SEASONS=2018-2025` on a manual execution
+            ["sleeper-incremental-projections"]="sleeper_ingestion.daily.incremental_projections:512Mi:1:30m"
             ["sleeper-commissioner-adjustments"]="sleeper_ingestion.historical.commissioner_adjustments:512Mi:1:30m"
             ["sleeper-league-lineage"]="sleeper_ingestion.historical.league_lineage_ingestion:512Mi:1:30m"
             ["sleeper-league-transactions"]="sleeper_ingestion.historical.league_transactions_ingestion:512Mi:1:30m"
@@ -117,6 +120,9 @@ jobs:
             # cfbd-backfill (CFBD_SEASONS=last, key from Secret Manager "cfbd-api-key", set below) then
             # silver-fact-college-player-season (reads bronze/cfbd + silver fact_player_season for the crosswalk)
             ["cfbd-backfill"]="cfbd_ingestion.backfill:1Gi:1:45m"
+            # average draft position by season (FFC 2009+, MFL 2011+): yearly, run by hand after Labor Day
+            # (ADP_SEASONS=current) or once with ADP_SEASONS=2009-2026 for the backfill; the model's preseason group
+            ["adp-yearly"]="adp_ingestion.backfill:512Mi:1:30m"
             ["silver-fact-college-player-season"]="silver_fantasy.fact_college_player_season:2Gi:1:30m"
             # standalone daily job (not in the DAG): in-season FantasyPros projection capture;
             # self-gates to the NFL season, triggered by its own scheduler (below).

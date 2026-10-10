@@ -1130,6 +1130,16 @@ t = 1.45) stays a tie.
     in-season model (0.572-0.621). If (2) wins, the page's seasons two and on, next season and
     the rookie tail all come from one model, and the hand-made bridges between them go away.
     Build after the draft-row and blend verdicts; it needs the GPU for every test.
+    **Step (1) verdict, 2026-10-10 04:58 (`tabpfn35_set_stacked_snap_w`: week-9 snapshot rows from
+    2010, 23.7k pooled rows, 3 h 04 m, paired vs `tabpfn35_set_stacked_w_c`): NO.** Ordering
+    0.630 vs 0.620 (t = +1.2, 3 of 8 cohorts), wins error 0.526 vs 0.513 (t = -2.4, worse in 7
+    of 8), top-12 bias -0.112 vs -0.041 (the model reads prior stars higher still), position-share
+    error 0.123 vs 0.119; the train-test gap goes 13.4 -> 20.3 pts because a snapshot row's target
+    contains the weeks already in the row (the in-sample score is not comparable, the out-of-sample
+    one is). Snapshot rows as training augmentation do not help the season-end projection; the
+    owner's fuzzing concern (item 40) was the right instinct. Step (2), the in-season use,
+    is the `inseason_unified.log` run that started 04:58 (next|unified vs next|model at weeks
+    3 / 6 / 9 / 13, cohorts 2021-); recorded below when it lands.
 
 33. **How the market prices over time: the edges in the pricing community itself (owner,
     2026-10-09).** `analysis/market_trends.py`, on KTC's daily SF history 2020-2026 (players
@@ -1264,9 +1274,325 @@ t = 1.45) stays a tie.
       only the newest season's league; check `bronze.sleeper_rosters.one_league_per_lineage`.
       The ledger repairs itself on the next silver run after the merge (the overlap check's
       known_open note comes off then).
+    **Verified on the ledger rebuilt in memory with the fix** (not written to the lake; the DAG
+    does that after the merge): intervals 7,542 -> 6,372, overlapping stints 88 -> 5, interval
+    boundaries in September at most 57 a day (was 250+); the 2026 season's mean weekly move
+    0.94 % (was 1.72 %; 2025 = 0.99 %), the September weeks 1.3 / 1.9 / 2.6 % (were 7.5 / 10.5 /
+    9.3 %), 06-30 0.2 % (was 4.1 %), 08-11 3.0 % (was 4.5 %: a real trade week, partly). The Team
+    value summary on the page was republished from that rebuilt ledger (run_date 2026-10-09).
     Also closed from BACKLOG 34: the settings dim's lineage (`utils.chain_lineage`, shared with
     dim_leagues_meta) and the players master's gsis_id (the bridge's id was lost to a same-named
     Sleeper column -- the real cause of the 18 % coverage in item 33 -- and the "Duplicate
     Player" placeholders / shared ids are nulled, `dedupe_gsis`). The three dims rebuild on the
     next DAG run; their known_open notes come off once the suite passes on the rebuilt lake.
 
+36. **Accuracy programme for the Monday-night refresh (owner, 2026-10-09: "I'm okay with long runs
+    ... as long as we aren't exceeding 8 hours ... #1 prio is model perf").** The weekly refresh
+    runs after Monday Night Football so the career projections move weekly; speed is not a goal,
+    an 8-hour budget is. The binding constraint for TabPFN is context, not time: the in-season
+    model has 199k snapshot rows but holds 50k in 16 GB (also the model's pretraining limit).
+    Levers, each through the harness under the co-primary rule, in order:
+    1. *Ensemble size* (`--tabpfn-params n_estimators=32`; production = the library default) on
+       the career and the in-season model. Zero code; `chain_accuracy.sh` (scratchpad) is
+       written, queued only on the owner's word.
+    2. *Context bagging*: K models on different 50k-row draws of the snapshots, averaged; uses
+       all the data despite the VRAM cap at K x the cost. Needs `InSeasonModels(bags=K)`.
+    3. *Relevance-first context*: for a week-w projection fill the context with weeks w +- 1
+       across seasons first, then recent seasons, instead of the four checkpoint weeks recent
+       seasons first. Needs `training_subset(around_week=)`.
+    4. *The unified model* (item 32, queued): what makes the career projection itself move
+       week to week. Draft rows and the blend target (items 30 / 26) are queued ahead of it.
+    5. *Full-precision inference* (`inference_precision=float32`): doubles the cost, sometimes
+       tightens the tails; low expected gain, in the chain.
+    Not worth the hours: more checkpoint weeks (the week is a feature), speed-only changes
+    (caching the career tail, a 20k cap) -- unless the budget is exceeded. **Where the first
+    production run's hours went (py-spy on the live process, 2026-10-09 14:00, 4.5 h in):**
+    still in the career tail's `estimate_sigma`, which fits a SECOND complete pooled 3.5 model
+    (as of 2022) and predicts the 2023-25 holdout rows for all ten horizons, each predict a full
+    8-member pass over the context -- then the production predictions with the quantile bands,
+    then the in-season stage. Pooled 10 horizons x stacked x range x the sigma refit is roughly
+    three model builds; GPU-bound (cuda synchronize, the v3.5 forward), not stuck. Two
+    accuracy-neutral cuts for the weekly run: (a) sigma and the career tail depend only on the
+    completed seasons, so cache both per season and config (identical every week until the
+    season completes) -- the weekly run becomes the in-season stage alone (~1.5 h); (b) sigma
+    from the fitted model's own quantile spread instead of a holdout refit (TabPFN gives the
+    predictive distribution; the refit exists for the trees' sake) -- test that the WAR
+    pricing is unchanged before switching. **Found and fixed the same afternoon (py-spy
+    locals: the loop was on horizon 8 of 10 at 15:20):** `estimate_sigma` predicted the holdout
+    rows once PER HORIZON, and with pooled horizons every prediction expands the frame H-fold,
+    so the sigma stage was H x H = 100 horizon-predictions of the 8-member ensemble over a 60k
+    context instead of 10. It now predicts the union of the holdout rows once and takes each
+    horizon's residuals from that frame -- row-wise identical (spec-tested against the
+    per-horizon loop), about ten times cheaper. The running production job kept the old code
+    (restarting would not have finished sooner); every later run has the fix. **Second cut
+    (2026-10-10 02:40):** the production predictions ran TWO forward passes per estimator and
+    horizon frame, one for the point (`predict`) and one for the bands (`predict_quantiles`);
+    the TabPFN wrapper now asks the model for mean + the wanted quantiles together
+    (`output_type="main"`, the same one pass) and memoises the answer for the last X, so the
+    bands that follow on the same rows are free -- the predict stage halves, outputs unchanged
+    (spec-tested: one call per estimator per frame; other quantiles or new rows still ask).
+    **Third cut, the weekly cache (2026-10-10 03:30, item (a) above):** `backtest_inseason.py
+    --current` keeps the capped career tail and sigma under `_cache/career_tail/<key>/`
+    (`tail_cache.py`): the key hashes every row the tail can see (seasons up to the as-of
+    season plus training snapshots; the in-progress season's partial rows are left out), the
+    configuration, the polars version and the modelling modules' bytes, so a lake restatement,
+    a code change or a completed season misses and recomputes, and a Monday run in between
+    is the in-season stage alone. `--no-tail-cache` forces the recompute. Spec-tested with a
+    fake model (hit on the in-progress season moving, miss on a completed row changing). The
+    first production run after this writes the cache; time that run end to end before the
+    weekly task is scheduled.
+    **Scheduling catch:** the lake sees Monday's stats only after the Tuesday 10:00 UTC DAG
+    (nflverse posts overnight), so the weekly refresh should trigger Tuesday ~08:00 local
+    (Task Scheduler weekly task on the chain pattern) and finishes by mid-afternoon. **Hardware:**
+    more VRAM would be an accuracy lever (context), a faster GPU only a time one; a Vertex H100
+    per run is the cheap way to a bigger context if bagging (2) does not close the gap.
+
+37. **In-season feature groups: usage, role, schedule (owner, 2026-10-09: recency the model cannot
+    build itself, role signals, the schedule ahead; "the model should find richer recency right?"
+    -- only from columns it is handed).** Three optional in-season groups in `inseason.py`, joined
+    per snapshot week like team / contract (`--inseason-groups usage,role,schedule`):
+    - *usage*: Next Gen Stats to date, weighted by targets / attempts (receiving: separation,
+      cushion, share of intended air yards, depth of target, YAC over expected, catch rate;
+      rushing: efficiency, yards over expected per attempt, stacked-box rate, time to the line)
+      and snap share to date with its three-week trend. The lake held the passing slice of Next
+      Gen only; the receiving and rushing slices are now their own nflverse datasets (2016 on,
+      backfilled by the daily reconcile after the merge); `--ngs-dir` reads the slices pulled
+      locally until then.
+    - *role*: recency windows beyond the three-game form (last game, last five, the last three
+      games' targets and touches per game against the season rate) and the status table (games
+      since returning from a missed week with byes neutral, misses in the last three weeks,
+      injured and dnp weeks to date).
+    - *schedule*: from the schedules' own scores, the remaining opponents' point differential
+      per game to date (mean and the next opponent's), games left, a bye still ahead. Nothing
+      from the future: opponent strength is their games <= the snapshot week.
+    **The funnel (owner's idea, adjusted to the trees):** (1) the in-season backtest on the trees,
+    CPU, minutes per run, against a fresh trees baseline -- drop the flat groups; (2) 3.5 at
+    reduced scope (two cohorts, two weeks, three horizons); (3) the full 3.5 paired run under the
+    co-primary rule for adoption. **Stage 1 (trees, 2026-10-09 12:57-12:59, 30 s a run; mean rank
+    correlation over cohorts 2021-24, weeks 3 / 6 / 9 / 13):** base next-season 0.546 / 0.559 /
+    0.582 / 0.596, ROS 0.793 / 0.773 / 0.750 / 0.696. *usage*: next 0.544 / 0.560 / 0.586 /
+    **0.609**, ROS 0.799 / 0.776 / 0.754 / 0.704 -- better at every ROS week and +0.013 next at
+    week 13, with Next Gen covering 13 % of training rows (2016 on) -> KEEP. *role*: next 0.538 /
+    0.563 / 0.586 / 0.600, ROS 0.793 / 0.780 / 0.753 / 0.699 -- marginal, positive from week 6
+    -> keep with usage. *schedule*: next 0.541 / 0.556 / 0.579 / 0.595, ROS 0.796 / 0.775 /
+    0.750 / 0.695 -> flat, DROP. All three: next 0.537 / 0.560 / 0.584 / 0.605, ROS 0.798 /
+    0.780 / 0.757 / 0.702 = usage + role. **Stage 2 queued** (`chain_stage2.sh`, Task Scheduler
+    ClaudeStage2, waits for the unified chain): 3.5 in-season at cohorts 2023-24, weeks 6 / 13,
+    three horizons -- base, usage, usage + role; **2b** (`chain_stage2b.sh`, ClaudeStage2b) usage +
+    role + opportunity. *opportunity* (nflverse ff_opportunity expected fantasy points to date:
+    per game overall / by phase, last-three and trend, actual minus expected for points and
+    touchdowns, expected yards, targets, air yards; 2006 on = 71 % of training rows; the lake
+    entry was a current-season weekly snapshot, now the seasonal history) on the trees: next
+    0.550 / 0.564 / 0.584 / 0.596, ROS 0.795 / 0.775 / 0.749 / 0.697 -- a little early-season
+    signal (expected points stabilise before actual points), flat late. usage + role +
+    opportunity: next 0.545 / 0.569 / 0.586 / 0.608, ROS 0.800 / 0.778 / 0.753 / 0.705 -- the
+    best combination at every rest-of-season week. Next group in the funnel: the free "advanced usage" sources
+    beyond Next Gen (FTN charting via play-by-play, PFR advanced stats = one loader), then team
+    *change* features (new QB, play-caller, line turnover). PFF stays out (no legitimate feed).
+
+38. **Consensus as an input the model learns to trust or beat (owner, 2026-10-09: "a model that
+    learns to trust consensus vs when our signal beats it is actually BRILLIANT ... we may even be
+    able to beat ROS projections too").** The idea: hand the model a projection provider's
+    point-in-time view as columns next to our usage, role, opportunity and career columns, and let
+    the in-context model learn from past seasons when the consensus was right and when rows that
+    looked like this one beat it -- stacking, learned in context, no hand-tuned blend.
+    **Data.** Sleeper's projections endpoint (`api.sleeper.app/projections/nfl/<season>/<week>`,
+    Rotowire-sourced, the full slate of ~3,100 players a week, 2018 on, keyed by Sleeper
+    player_id = our player_key; a season-level endpoint too, no as-of for past seasons). Pulled
+    2018-2026 locally for the prototype (505k rows; `--proj-dir`); the bronze ingestion
+    (`bronze/sleeper/projections/season=<Y>`, rebuilt daily for the current season so every
+    Monday's view is captured, backfilled once) is next. FantasyPros stays the consensus of
+    record for the live week but its history is survivorship-biased before 2020 (its CLAUDE.md).
+    **The group** (`consensus`, `inseason.consensus_features`): the coming week's projected PPR
+    points and rank within the position, the mean projection over the weeks so far, the player's
+    PPR rate to date minus that mean (beating the consensus), the coming projection minus his
+    rate, a has-projection flag (null before 2018). Sleeper id -> gsis through
+    `fantasy_player_ids`.
+    **Stage 1 (trees, 2026-10-09 14:40; ROS / next-season rank correlation, weeks 3 / 6 / 9 /
+    13):** base ROS 0.793 / 0.773 / 0.750 / 0.696, next 0.546 / 0.559 / 0.582 / 0.596.
+    *consensus*: ROS **0.806 / 0.787 / 0.760 / 0.708**, next 0.550 / 0.558 / 0.588 / 0.597 --
+    the largest single-group gain of the day, with 2018+ = a third of the training rows. The
+    provider's own coming-week projection as a ranking: ROS 0.774 / 0.766 / 0.728 / 0.671, next
+    0.547 / 0.566 / 0.576 / 0.564; its mean to date: ROS 0.783 / 0.758 / 0.703 / 0.640. So the
+    model with the consensus inside it out-ranks the consensus by 0.02-0.04 on rest of season
+    and by 0.03-0.04 on next season from week 9 (the week-3 and week-6 next-season reads are a
+    wash). Caveat: the provider's weekly number targets one game, not the rest of season; a true
+    ROS projection history does not exist in our data, so "beats ROS projections" is not yet the
+    claim -- "beats the provider's point-in-time view" is. *All four groups* (usage, role,
+    opportunity, consensus): ROS 0.807 / 0.793 / 0.758 / 0.715, next 0.552 / 0.565 / 0.595 /
+    0.607 -- the best model at every week on both reads. **Stage 2c queued** (ClaudeStage2c,
+    after 2b): consensus alone and all four on 3.5 at the stage-2 scope. **The bronze ingestion** is in
+    (`sleeper-incremental-projections`, DAG bronze tier, `PROJ_SEASONS=2018-2025` for the
+    backfill; check `bronze.sleeper_projections.coming_week_present`).
+    **The projected stat line** (owner: "projected yards + tds ... could be slightly more
+    valuable"): its own group `consensus_line` (the coming week's projected attempts, yards,
+    touchdowns, targets, receptions by phase; targets and carries expected to date; expected
+    touchdowns to date and the player's actual rate minus it = touchdown luck through the
+    provider's eyes). Trees: alone next 0.552 / 0.570 / 0.582 / 0.600, ROS 0.803 / 0.783 / 0.755
+    / 0.702 -- as good as the points group on ROS and better early on next season (+0.011 at
+    week 6); with the points group next 0.546 / 0.564 / 0.582 / 0.592, ROS 0.808 / 0.786 / 0.756
+    / 0.706 -- not additive on the trees (the line sums to the points). Both go to stage 2; 3.5
+    may use the shape where the trees could not.
+    **Before 2018 (owner: "we can definitely get prior to 2018 right?").** Sleeper's endpoint
+    serves empty shells before 2018. What exists: (1) *ADP*, the preseason consensus with no
+    survivorship: Fantasy Football Calculator's public API (12-team; standard 2009-2011, PPR
+    2012 on; ~200 players and 300-1,300 drafts a year) and MyFantasyLeague's ADP export (2011
+    on; 320-460 players, 2,000-9,000 drafts a year; MFL ids, which `fantasy_player_ids` maps to
+    gsis) -- pulled locally (`adp/ffc.parquet`, `adp/mfl.parquet`); a preseason-consensus group
+    for the snapshot AND a career feature (every season since 2009) is next. (2) *FantasyPros
+    weekly projections 2012 on* through the owner's scraper, BUT its history is
+    survivorship-biased (only players still in their database render) and that is a LEAK, not
+    just noise: a consensus column present only for players who went on to long careers encodes
+    the future; usable only where coverage is complete (2022 on). (3) *Wayback captures* of
+    weekly projection pages (ESPN's old tool 2016-2019 confirmed; others untested, the CDX index
+    is slow): point-in-time and unbiased but a scraping project per site. (4) Paid vendors
+    (FantasyData, Sportradar) sell projection history to 2009; not pursued. **The ADP group on the
+    trees** (`preseason`: the pick, the rank within the position, a drafted flag; 5,993
+    player-seasons 2009-2026, MFL by id where a season has it, FFC by name otherwise): alone ROS
+    0.809 / 0.780 / 0.758 / 0.702 (base 0.793 / 0.773 / 0.750 / 0.696; the preseason view
+    matters most at week 3, +0.016), next-season flat; all five groups ROS **0.811 / 0.797 /
+    0.761 / 0.708**, next 0.555 / 0.562 / 0.596 / 0.605 -- the best rest-of-season model at every
+    week but the last. Stage 2d (ClaudeStage2d, after 2c): all five on 3.5. **Next:** the bronze
+    ingestion for ADP (yearly, both sources) and ADP as a career feature (every season since
+    2009, for the career model's own harness); the provider's
+    ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
+    consensus for the live week once its backfill runs (owner's call).
+
+39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
+    by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
+    number 32.8?").** Not the exact-number memorisation -- neither the trees nor an in-context
+    model treats 32.8 as special -- but the replication is real: the four checkpoint snapshots of
+    one player-season carry the SAME next-season label, so one outcome gets four votes, and a
+    rich feature set lets the model over-trust those near-identical rows. `InSeasonModels(
+    next_one_per_season=True)` (`--inseason-next-one-per-season`) keeps one random snapshot week
+    per player-season for the next-season models (ROS labels differ by week and keep every
+    snapshot). Trees: base 0.546 / 0.559 / 0.582 / 0.596 -> 0.549 / 0.558 / 0.580 / 0.597 (a
+    wash on a quarter of the rows); all five groups 0.555 / 0.562 / 0.596 / 0.605 -> **0.554 /
+    0.577 / 0.606 / 0.607** (+0.015 at week 6, +0.010 at week 9). Stage 2e (ClaudeStage2e, after
+    2d): all five with the option on 3.5. The unified model's snapshot rows (item 32) have the
+    same shape (every horizon label repeated per snapshot week) and get the same option next.
+    **Stage 2 trimmed (15:35, owner: "our scheduled test runs are going to be way off"):** the
+    eight 3.5 runs queued through the afternoon (usage; usage + role; + opportunity; consensus;
+    all four; all five; all five deduped) would have been ~14 h; the trees had answered the
+    single-group questions, so one chain of three remains -- base, all five, all five with the
+    dedupe (~4.5 h, after the unified chain). Every queued run uses the one-pass sigma.
+    Fuzzing (1 % noise) is not the remedy: it regularises gradient-trained nets, blurs tree
+    splits a little, and only degrades an in-context model's signal; what matters is that a
+    repeated outcome counts once, and the harness's train-test gap (`gap_h1`) is the detector.
+
+40. **Title odds: the championship lens next to WAR (owner, 2026-10-09: "maximize our
+    championship odds, not our win rate ... it does show up as important in leagues where they
+    are top heavy").** `machine_learning/src/title.py`: a Monte Carlo of the remaining
+    regular-season matchups from each roster's projected lineup points (the roster view the page
+    already uses, plus the league's curve offset) and the league's weekly spread, seeded by record
+    then points for, Sleeper's default bracket one week per round (4 teams: two rounds; 6: byes
+    for the top two, 3v6 / 4v5, then 1 v the 4/5 winner and 2 v the 3/6 winner) -> each team's
+    chance of the playoffs, a bye and the title, expected wins and seed; `title_curve` repeats it
+    on common random numbers over a grid of weekly-point shifts for one team, which is what a
+    player's marginal title odds interpolate on (a player's weekly lineup points = his `m_par_1`
+    lineup gain over his projected games, spread over the NFL weeks left). `analysis/title_odds.py`
+    builds the season per league from the latest `war/league=<slug>/.../teams.parquet` +
+    `meta.json` and Sleeper live (records, points for, every week's matchups, the playoff format)
+    and publishes `backtests/title_odds/run_date=<d>/summary.json`: per league, the teams ranked
+    by title odds with their curve, each rostered player's d_title / d_playoffs beside his ROS
+    wins, the trade targets by what they add in title odds, and a top-heaviness read (the gap
+    between the first and second title favourites). The export carries it as `title_odds`; the
+    Rosters tab shows it beside WAR (the standings table's playoffs / bye / title columns, the
+    selected team's title curve, a title-odds column per rostered player and per trade target,
+    the record and odds in the team head). WAR stays the dynasty currency: for seasons two
+    through ten the standings are unknown and a win's title value is the same for everyone.
+    **First run (2026-10-09, week-4 roster views, 20k seasons):** Stuck in High School is the
+    top-heavy one -- Timmy Becker (4-0, 687 pf) 45.6 % title, the owner (2-2) 14.9 %, Piroozi
+    13.0 %; Football Guys of Indianapolis -- the owner (4-0) 35.8 %, Ack 20.1 %, Canales 15.0 %;
+    Sigma Chi -- Hagen (4-0) 32.6 %, the owner (4-0) 25.1 %, Woody 10.8 %. In Stuck a point a
+    week on the owner's lineup is worth about 0.7 points of title odds; Jaxon Smith-Njigba would
+    add 7.0 points of title odds to that roster against 0.88 rest-of-season wins. **Next:** rerun
+    after each production refresh (the week-5 views land with tonight's export); a title
+    objective in the trade builder; the bye and the seed tiebreak by division where a league
+    uses one; dynasty-horizon title equity (next season's odds from projected standings) as a
+    second lens. **Next-season lens built 2026-10-10 (owner: "consider picks and what not as well;
+    these models don't need to be perfect, just enough to give me an idea"):**
+    `title_odds.next_season_summary` simulates NEXT season per league from each roster's optimal
+    lineup over every player's projected next-season rate and games (the in-season projection's
+    `next_*` columns) plus the rookies its next-year picks bring (Sleeper's traded-pick state ->
+    `picks.owned_picks`; a pick's slot tier from the original roster's current lineup rank; its
+    rookie-year edge from `picks.rookie_year_par_by_tier`, the pick curve fitted on first seasons:
+    0.46 ppg above the line for an early first, 0.25 mid, 0.14 late, 0.1 and under for seconds and
+    thirds -- rookies rarely move next year's title, their value is the years after), the league's
+    own format, a round-robin schedule (`title.round_robin`) and a blank record. Each player's and
+    pick's marginal next-season title odds come off the same curve. On the Rosters tab: title
+    next-year in the team head, a Title-next column in the players table, a next-season card
+    with the projected standings and the roster's picks. Rough by design.
+
+41. **Production switched to TabPFN 3.5 (2026-10-09, week 5).** `weekly_refresh.py --preset
+    production` (3.5, the full feature set, stacked, pooled horizons 1-10, quantile bands,
+    in-season on 3.5) ran 09:29 -> 19:16 (9 h 47 m: the sigma loop's H-squared predictions,
+    since fixed, plus the quantile pass over the ten-horizon frame, fixed 2026-10-10) and wrote
+    `inseason/season=2026/week=5/run_date=2026-10-09` (474 players, 345 priced, rank agreement
+    with KTC 0.927), the three league roster views, the trade and draft-slot reports; the export
+    carries the Market tab, the Season column, the week-5 title odds, team value and the
+    performance tab pinned to the 2026-10-07 3.5 market backtest (the production backtest was cut
+    for time). Page v46 published 19:20. The Monday-night job is this preset, after the Tuesday
+    DAG, with the career tail and sigma cached per season once item 36 lands.
+
+42. **Positional calibration (owner, 2026-10-09 evening: "why is like every WR over rated?").** The
+    pooled mispricing column carries a positional lean: tonight's run gives quarterbacks 36-47 %
+    of league WAR against the market's 17 % in the roster views, so every receiver reads rich in
+    the pooled ranking while the within-position column is flat (+5 to +8 % median at every
+    position). On the 2020-22 market-backtest cohorts (364 priced, three-year realized WAR): QB
+    delivered 27 % of value (market 27 %, model 33 %), RB 27 % (market 20 %, model 21 %), TE
+    12 % (15 %, 13 %), WR 34 % (38 %, 33 %). So the model over-weights quarterbacks by ~6 points
+    on a three-year window and more on ten pooled horizons (long QB careers at the page's default
+    discount), the market over-weights receivers (and under-24 receivers finished 12-13 ranks
+    worse than priced) and under-weights backs. **Next:** (1) a positional-share calibration in
+    the harness as a reported metric (projected vs realized share by position per cohort) and as
+    an optional correction (scale PAR by position to the realized share on the training
+    cohorts; `HorizonModels.calibrate` has the per-position hook); (2) the far-horizon default:
+    the page's discount / years against the market's effective horizon -- CHECKED 2026-10-10
+    03:30 on the week-5 export (the page default is 20 %, not 10 %): rate 10-35 % and 3-10 years
+    leave the agreement with KTC at 0.927 everywhere and only move the QB share between 33 %
+    (three years undiscounted) and 38 % (ten years at 10 %), so the lean is in the projections
+    and the replacement line, not the horizon; the lever is (1), tested offline: harness runs
+    with `--save-cohorts` keep their scored cohort frames and `run_experiment.py --rescore RUN
+    --walk-scale` (or `--fixed-scale QB=0.82`) scores them again with a walk-forward per-position
+    scale from the cohorts complete by each cohort, saved as a run and paired with the source,
+    no GPU (queued on the morning chain behind the residual rematch); (3) the page: make "vs position" the default sort for the
+    Players table's mispricing columns and label the pooled column as cross-position -- DONE
+    v47 (2026-10-10 03:00): the within-position gap is now the `Mispricing` column, the pooled
+    one is `All positions` with a header hint and the explainer names the quarterback lean. Advice
+    given tonight: buy productive backs and prime (27-29) quarterbacks, sell young hyped
+    receivers, pick within position; the title lens is position-agnostic.
+
+43. **Draft rows: NO on the career model (2026-10-09 22:38, paired on the fresh 3.5 set + stacked
+    baseline `_c`, 8 cohorts 2015-22, horizon 3).** With one pre-NFL row per drafted player
+    (item 30) the top-150 ordering falls 0.620 -> 0.585 (t = -7.3, 0 of 8 cohorts better), the
+    wins error rises 0.513 -> 0.553 (t = +4.9, worse in 8 of 8), the top-12 bias deepens -0.04
+    -> -0.14 (the stars under-projected more), all-player ordering -0.009. The fit read is
+    unchanged (in-sample h1 error 20.2 vs 20.0 points, train-test gap 13.4 vs 13.7), so it is
+    not overfitting: the draft rows' sparse features and zero-production targets pull the prior
+    for young players down. The hand-made rookie tail stays. The draft rows remain available
+    (`--draft-rows`) for the unified / snapshot tests but are off the production path.
+    *The market backtest read (01:15, 2020-22 cohorts, 366 priced):* the draft-rows model
+    0.699 vs KTC 0.669 against the candidate's 0.695 vs 0.673; mispricing edge 0.399 vs 0.368,
+    cheap-side wins per 1,000 KTC 0.258 vs 0.248, error 0.486 vs 0.491, bias 0.114 vs 0.143 --
+    a mild plus on the priced pool, against a decisive minus on the harness (eight cohorts,
+    2015-22). The co-primary rule is the harness; the market read is the tie-break and there is
+    no tie. NO stands; the rookie-tail question goes to the unified model (item 32).
+
+44. **Blend target: ADOPT over the level target on the 3-year window (2026-10-10 00:43, paired
+    on the fresh `_c` baseline, 8 cohorts).** Level + residual averaged (item 26's "blend"):
+    top-150 ordering 0.621 vs 0.620 (tie, t = +0.2), wins error **0.502 vs 0.513** (t = +3.5,
+    better in 7 of 8), all-player ordering 0.626 vs 0.623 (t = +5.2, 8 of 8), top decile +0.010,
+    train-test gap 13.0 vs 13.4 points (less overfit; in-sample error 20.6 vs 20.2, i.e. less
+    memorisation), top-12 bias flips from -0.04 (stars under) to +0.05 (stars slightly over).
+    Co-primary rule: ordering tie, error gain above the line -> ADOPT. Context: the pure residual
+    target's 10-07 run (`tabpfn35_set_stacked_res_w`, valid regime) sits at 0.628 / 0.499, so the
+    residual alone may be at least as good as the blend; **next:** a fresh residual run under
+    the regime stamp paired against the blend (one hour), then the production preset takes
+    whichever wins (`--target residual|blend`); the blend's market backtest (01:53, 364 priced, 2020-22):
+    blend 0.696 vs KTC 0.673, level 0.695, residual 0.692 -- a tie on ordering; the blend has the
+    lowest error (0.488 vs 0.491 / 0.494), the level the best mispricing edge (0.368 vs 0.364 /
+    0.339), the residual the heaviest bias (+0.23 vs +0.14 / +0.19); tiers alike. Harness ADOPT +
+    market tie -> **the production preset's target is `blend` from 2026-10-10** (one line in
+    `weekly_refresh.py`, reversible), pending the residual rematch; the distribution metrics need `--range` on the harness
+    runs (the after-prod chain ran without it, so pinball / coverage / skew are null tonight).
