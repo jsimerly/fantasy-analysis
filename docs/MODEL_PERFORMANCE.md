@@ -31,22 +31,21 @@ idea tried, adopted or rejected, is in the project's journal with its numbers.
 **The headline: the swap test.** Every February from 2020 to 2022, each player the model called rich
 was paired with the closest-priced player it called cheap: two players within 15 % of each other on
 KTC, the model at least ten ranks apart on them. That is a trade a manager could have made at zero cost
-in market value. Three years later, **the player bought out-delivered the one sold in 73 % of the 66
-pairs, by 0.46 wins per swap on average**, and the rate held every year (73 %, 71 %, 74 %). Buying a
-running back won 89 % of the time (+1.18 wins per swap): the market under-prices productive backs.
+in market value. Three seasons later, **the player bought had scored 196 more fantasy points than the
+one sold, on average, over the 66 pairs**: 104 more above a replacement-level player at his position,
+and ahead in 82 % of the swaps. In the model's own unit, wins, 73 % of swaps won, +0.46 wins each, and
+the rate held every year (73 %, 71 %, 74 %). Buying a running back won 89 % of the time: the market
+under-prices productive backs.
 
-| February | Sold (KTC) | Delivered | Bought (KTC) | Delivered | Gain |
+| February | Sold (KTC) | Points, 3 seasons | Bought (KTC) | Points, 3 seasons | Gain |
 | --- | --- | --- | --- | --- | --- |
-| 2021 | Elijah Moore, WR (5,112) | 0.00 | Derrick Henry, RB (4,974) | 3.16 | +3.16 wins |
-| 2022 | Garrett Wilson, WR (6,178) | 0.55 | Christian McCaffrey, RB (5,622) | 3.48 | +2.93 |
-| 2020 | J.K. Dobbins, RB (7,015) | 0.04 | Derrick Henry, RB (7,003) | 2.73 | +2.69 |
-| 2020 | Tee Higgins, WR (6,591) | 0.98 | Travis Kelce, TE (6,924) | 3.04 | +2.06 |
-| 2021 | Terry McLaurin, WR (5,019) | 0.86 | Travis Kelce, TE (4,900) | 2.69 | +1.83 |
-| 2021 | Brandon Aiyuk, WR (4,555) | 0.85 | Josh Jacobs, RB (4,661) | 2.62 | +1.77 |
+| 2021 | Elijah Moore, WR (5,112) | 289 | Derrick Henry, RB (4,974) | 703 | +414 points (+3.2 wins) |
+| 2022 | Garrett Wilson, WR (6,178) | 541 | Christian McCaffrey, RB (5,622) | 712 | +171 (+2.9) |
+| 2020 | J.K. Dobbins, RB (7,015) | 237 | Derrick Henry, RB (7,003) | 794 | +557 (+2.7) |
+| 2020 | Tee Higgins, WR (6,591) | 527 | Travis Kelce, TE (6,924) | 892 | +365 (+2.1) |
 
-"Delivered" is wins above replacement over the following three seasons. One in four swaps went the
-other way (the worst: Saquon Barkley for Matthew Stafford in 2021, −2.7 wins), which is what a 73 %
-win rate means.
+Points are this league's scoring over the three seasons after the swap. One in four swaps went the
+other way (the worst: Saquon Barkley for Matthew Stafford in 2021), which is what a 73 % win rate means.
 
 **And it is actionable today.** Players the model called cheap against the market went on to finish
 **12.9 ranks better** than the market had them; the ones it called rich finished **10.6 ranks worse**.
