@@ -1510,7 +1510,19 @@ t = 1.45) stays a tie.
     after each production refresh (the week-5 views land with tonight's export); a title
     objective in the trade builder; the bye and the seed tiebreak by division where a league
     uses one; dynasty-horizon title equity (next season's odds from projected standings) as a
-    second lens.
+    second lens. **Next-season lens built 2026-10-10 (owner: "consider picks and what not as well;
+    these models don't need to be perfect, just enough to give me an idea"):**
+    `title_odds.next_season_summary` simulates NEXT season per league from each roster's optimal
+    lineup over every player's projected next-season rate and games (the in-season projection's
+    `next_*` columns) plus the rookies its next-year picks bring (Sleeper's traded-pick state ->
+    `picks.owned_picks`; a pick's slot tier from the original roster's current lineup rank; its
+    rookie-year edge from `picks.rookie_year_par_by_tier`, the pick curve fitted on first seasons:
+    0.46 ppg above the line for an early first, 0.25 mid, 0.14 late, 0.1 and under for seconds and
+    thirds -- rookies rarely move next year's title, their value is the years after), the league's
+    own format, a round-robin schedule (`title.round_robin`) and a blank record. Each player's and
+    pick's marginal next-season title odds come off the same curve. On the Rosters tab: title
+    next-year in the team head, a Title-next column in the players table, a next-season card
+    with the projected standings and the roster's picks. Rough by design.
 
 41. **Production switched to TabPFN 3.5 (2026-10-09, week 5).** `weekly_refresh.py --preset
     production` (3.5, the full feature set, stacked, pooled horizons 1-10, quantile bands,
