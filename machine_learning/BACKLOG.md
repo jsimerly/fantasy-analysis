@@ -1526,9 +1526,15 @@ t = 1.45) stays a tie.
     the harness as a reported metric (projected vs realized share by position per cohort) and as
     an optional correction (scale PAR by position to the realized share on the training
     cohorts; `HorizonModels.calibrate` has the per-position hook); (2) the far-horizon default:
-    the page's discount / years against the market's effective horizon (the ten-horizon pooled
-    model + a 10 % rate values years 6-10 more than the market does; test 15-20 % or a 5-year
-    default on the market backtest); (3) the page: make "vs position" the default sort for the
+    the page's discount / years against the market's effective horizon -- CHECKED 2026-10-10
+    03:30 on the week-5 export (the page default is 20 %, not 10 %): rate 10-35 % and 3-10 years
+    leave the agreement with KTC at 0.927 everywhere and only move the QB share between 33 %
+    (three years undiscounted) and 38 % (ten years at 10 %), so the lean is in the projections
+    and the replacement line, not the horizon; the lever is (1), tested offline: harness runs
+    with `--save-cohorts` keep their scored cohort frames and `run_experiment.py --rescore RUN
+    --walk-scale` (or `--fixed-scale QB=0.82`) scores them again with a walk-forward per-position
+    scale from the cohorts complete by each cohort, saved as a run and paired with the source,
+    no GPU (queued on the morning chain behind the residual rematch); (3) the page: make "vs position" the default sort for the
     Players table's mispricing columns and label the pooled column as cross-position -- DONE
     v47 (2026-10-10 03:00): the within-position gap is now the `Mispricing` column, the pooled
     one is `All positions` with a header hint and the explainer names the quarterback lean. Advice
