@@ -355,3 +355,63 @@ class TestSigmaOnePass:
             rows = df.filter(pl.col(f"h{k}_observable") & pl.col(f"h{k}_played") & ((pl.col("season") + k) > cut) & ((pl.col("season") + k) <= as_of))
             pred = tmp.predict(rows).with_columns((pl.col(f"h{k}_ppg_hat") - pl.col(f"h{k}_ppg")).alias("_r"))
             assert abs(sigma[k]["__all__"] - float(pred["_r"].std())) < 1e-6
+
+
+class TestOnePassBands:
+    """With range quantiles wanted, a TabPFN estimator serves the point and its bands from one forward pass."""
+
+    class _Fake:
+        calls: list = []
+
+        def __init__(self, **kw):
+            pass
+
+        def fit(self, X, y):
+            return self
+
+        def predict(self, X, output_type="mean", quantiles=None):
+            TestOnePassBands._Fake.calls.append(output_type)
+            mean = np.arange(len(X), dtype=float) + 1.0
+            if output_type == "mean":
+                return mean
+            qs = [mean + q for q in quantiles]
+            if output_type == "quantiles":
+                return qs
+            return {"mean": mean, "median": mean, "mode": mean, "quantiles": qs}
+
+    def _install(self, monkeypatch):
+        import sys, types
+        self._Fake.calls = []
+        monkeypatch.setitem(sys.modules, "tabpfn", types.SimpleNamespace(TabPFNRegressor=self._Fake))
+
+    def test_wrapper_memoises_the_last_x(self, monkeypatch):
+        self._install(monkeypatch)
+        t = career._TabPFN("cpu", 0, {}, want_quantiles=(0.2, 0.5, 0.8)).fit(np.zeros((3, 2)), np.zeros(3))
+        X = np.ones((4, 2))
+        assert t.predict(X).tolist() == [1.0, 2.0, 3.0, 4.0]
+        bands = t.predict_quantiles(X, (0.2, 0.5, 0.8))
+        assert bands.shape == (4, 3) and bands[0].tolist() == [1.2, 1.5, 1.8]
+        assert self._Fake.calls == ["main"]                                     # point + bands: one pass
+        t.predict(np.ones((4, 2)) * 2)
+        assert self._Fake.calls == ["main", "main"]                             # new rows: a new pass
+        t.predict_quantiles(np.ones((4, 2)) * 2, (0.1, 0.9))
+        assert self._Fake.calls == ["main", "main", "quantiles"]                # other quantiles: asked directly
+        plain = career._TabPFN("cpu", 0, {}).fit(np.zeros((3, 2)), np.zeros(3))
+        plain.predict(X); plain.predict_quantiles(X, (0.5,))
+        assert self._Fake.calls[-2:] == ["mean", "quantiles"]                   # nothing wanted: the old two calls
+
+    def test_horizon_models_pass_the_range_quantiles_to_tabpfn(self, monkeypatch):
+        self._install(monkeypatch)
+        m = career.HorizonModels([1], backend="tabpfn", range_quantiles=(0.2, 0.5, 0.8))
+        assert m._new().want_quantiles == (0.2, 0.5, 0.8)
+        assert career.HorizonModels([1], backend="tabpfn")._new().want_quantiles is None
+        n = 30
+        ppg = np.linspace(2, 12, n)
+        df = pl.DataFrame({"player_id": [f"p{i}" for i in range(n)], "season": [2020] * n, "position": ["WR"] * n, "age_at_season": [25.0] * n,
+                           "ppg": ppg, "games": [15] * n, "fpts": ppg * 15, "h1_observable": [True] * n, "h1_played": [True] * n,
+                           "h1_ppg": ppg + 1.0, "h1_games": [14] * n, "h1_fpts": (ppg + 1.0) * 14})
+        m.fit(df)
+        self._Fake.calls = []
+        out = m.predict(df)
+        assert {"h1_ppg_hat", "h1_games_hat", "h1_ppg_q20", "h1_ppg_q50", "h1_ppg_q80", "h1_games_q50"} <= set(out.columns)
+        assert self._Fake.calls == ["main", "main"]                             # ppg + games, one pass each (was four)
