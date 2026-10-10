@@ -41,4 +41,4 @@ Two distinct jobs live here:
 - **Rate:** Sleeper asks for < 1000 req/min. The REST wrappers in `api/` don't rate-limit; the
   crawlers do (steady limiter + 429/5xx backoff).
 
-Tests: [tests/sleeper/](../../../tests/sleeper/).
+Tests: [tests/sleeper/](../../tests/sleeper/).

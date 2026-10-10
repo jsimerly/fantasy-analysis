@@ -11,6 +11,9 @@ notebooks import from it.
 | `market_trends.py` | how the KTC market prices over time: seasonality, momentum, the age discount vs realized WAR, the pick cycle, big-game and injury reactions (`--publish` for a page tab); tests in `tests/test_market_trends.py` |
 | `title_odds.py` | title odds per league: a Monte Carlo of the rest of the season (playoffs / bye / title per roster, each player's marginal title odds) and the next-season lens (projected lineups + the rookies each roster's picks bring, round-robin schedule); `--publish` feeds the page's Rosters tab; tests in `tests/test_title_odds.py` |
 | `team_value.py` | the team-value data prep (weekly grid, startup-ramp trim, power / value series, calendar, owner colors) + the summary the page's **Team value** tab reads (`--publish`); tests in `tests/test_team_value.py` |
+| `trades.py`, `trade_report.py` | the leagues' trading priced at the trade date and N years after (KTC's own calculator for packages); the report behind the page's **Trades** tab (`--publish`); tests in `tests/test_trades.py` |
+| `pick_slots.py`, `pick_slots_report.py` | expected draft slot of every team's future pick from its record so far; the report behind the **Draft slots** tab (`--publish`) |
+| `tests/` | the analysis spec suite; runs on the machine_learning venv (`machine_learning/.venv/Scripts/python.exe -m pytest analysis/tests -q` from the repo root); not in CI |
 | `02_team_value_over_time.ipynb` | per-league team value/power timelines with league-event overlays (a thin matplotlib client of `team_value.py`) |
 | `01_player_pick_trends.ipynb` | player/pick value trends |
 | `ad_hoc_exp.ipynb` | scratch experiments |
@@ -66,6 +69,6 @@ export (`machine_learning/scripts/export_projections.py`) picks up the newest
   reaches a third of KTC's priced pool; `market_trends.ktc_crosswalk` adds a name + position fallback
   (most recent namesake). Use it for any KTC-wide read.
 
-See [../data_engineering/silver_fantasy/CLAUDE.md](../data_engineering/silver_fantasy/CLAUDE.md) for the
-facts these loaders read, and [../data_engineering/ktc_ingestion/CLAUDE.md](../data_engineering/ktc_ingestion/CLAUDE.md)
+See [../data_engineering/src/silver_fantasy/CLAUDE.md](../data_engineering/src/silver_fantasy/CLAUDE.md) for the
+facts these loaders read, and [../data_engineering/src/ktc_ingestion/CLAUDE.md](../data_engineering/src/ktc_ingestion/CLAUDE.md)
 for the value source.

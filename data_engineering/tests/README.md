@@ -1,6 +1,6 @@
 # ETL / Ingestion unit tests
 
-Unit tests for the pipelines under `data_engineering/`. They are **spec tests**:
+Unit tests for the pipelines under `data_engineering/src/`. They are **spec tests**:
 each one asserts the *intended* behavior. They were written first to document a
 batch of real bugs (red), which have since been fixed — the suite is now fully
 green and acts as a regression guard. See "Bugs this suite locked down" below.
@@ -8,33 +8,30 @@ green and acts as a regression guard. See "Bugs this suite locked down" below.
 ## Running
 
 ```bash
-# one-time: install test deps into your venv
-pip install -r tests/requirements-dev.txt
+# from data_engineering/ (one uv project; `uv sync` once)
+uv run pytest -ra
 
-# run everything from the repo root
-pytest
+# or the folder's own venv
+.venv/Scripts/python.exe -m pytest tests -q
 
 # a single pipeline / file
-pytest tests/sleeper
-pytest tests/silver_fantasy/test_dim_league_settings_scd2.py -v
+uv run pytest tests/sleeper
+uv run pytest tests/silver_fantasy/test_dim_league_settings_scd2.py -v
 ```
 
 ## How it works
 
-The ingestion scripts are not importable packages — they rely on a runtime
-`sys.path.insert(...)` and bare imports (`from utils import ...`,
-`from api.draft import ...`), and several packages reuse module names
-(two `utils.py`, two `daily_ingestion.py`). To import them cleanly:
+The packages under `src/` are imported by their real names (`from silver_fantasy.utils
+import ...`, `from sleeper_ingestion.api.draft import ...`): pytest's
+`pythonpath = ["src"]` in `pyproject.toml` puts them on the path, and
+`--import-mode=importlib` keeps a test dir named like a package (two `utils.py`,
+two `daily_ingestion.py`) from shadowing it. No loader shim, no `sys.path` edits.
 
-- **`tests/de_loader.py`** — `load_de_module(relpath, pkg_dir)` loads one script
-  with its package root temporarily on `sys.path`, evicting colliding modules
-  first so the bare imports resolve to the right package.
-- **`conftest.py`** (repo root) — installs lightweight stubs for `gql` and
-  `nflreadpy` (imported at load time but never exercised in unit tests) and puts
-  the repo root on `sys.path`.
-- **`tests/conftest.py`** — the `fake_gcs` fixture patches
-  `polars.read_parquet` / `DataFrame.write_parquet` with an in-memory dict, so
-  any code that round-trips through `gs://` paths reads/writes locally.
+- **`tests/conftest.py`** — installs lightweight stubs for `gql` and `nflreadpy`
+  (imported at load time but never exercised in unit tests), and its `fake_gcs`
+  fixture patches `polars.read_parquet` / `DataFrame.write_parquet` with an
+  in-memory dict, so any code that round-trips through `gs://` paths reads/writes
+  locally.
 
 No network or GCS access is required; everything is mocked.
 

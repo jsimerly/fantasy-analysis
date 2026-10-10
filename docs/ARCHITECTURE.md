@@ -164,9 +164,9 @@ slots** (expected slot of every pick) · **Team value** (KTC power rankings over
 | `machine_learning/` | the model, the harness, the weekly refresh, the exports | [machine_learning/CLAUDE.md](../machine_learning/CLAUDE.md), [README.md](../machine_learning/README.md), [BACKLOG.md](../machine_learning/BACKLOG.md) |
 | `analysis/` | analysis scripts the page embeds + notebooks | [analysis/CLAUDE.md](../analysis/CLAUDE.md) |
 | `orchestration/` | the daily Workflow DAG and its deploy | [orchestration/CLAUDE.md](../orchestration/CLAUDE.md) |
-| `tests/` | the DE spec suite | [tests/README.md](../tests/README.md) |
-| `.github/workflows/` | deploys on push to main | — |
-| `alembic/` | a local relational mirror (secondary) | — |
+| `data_engineering/tests/`, `machine_learning/tests/`, `analysis/tests/` | the three spec suites (synthetic fixtures, no GCS) | [data_engineering/tests/README.md](../data_engineering/tests/README.md) |
+| `.github/workflows/` | tests on every push; deploys of each project on push to main | — |
+| `docs/` | this overview | — |
 
 ## Glossary
 
@@ -193,4 +193,4 @@ slots** (expected slot of every pick) · **Team value** (KTC power rankings over
 - **A data bug is half fixed without a data-quality check** (`data_engineering/src/data_quality/`).
 - **Long GPU runs are detached** (a `.cmd` wrapper + a one-shot Task Scheduler task), never a shell child.
 - **The owner merges PRs**; check `gh pr view` before pushing to an old PR branch.
-- **Tests:** root `.venv` for the DE suite, `machine_learning/.venv` for the ML suite; both green before a push.
+- **Tests:** each project runs its own suite from its own folder and venv (`python -m pytest tests -q`); all green before a push.
