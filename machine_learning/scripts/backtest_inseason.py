@@ -119,6 +119,7 @@ def main() -> None:
     ap.add_argument("--inseason-next-one-per-season", action="store_true", help="the next-season models see one random snapshot week per player-season (a repeated label counts once)")
     ap.add_argument("--adp-dir", default=None, help="a directory with mfl.parquet / ffc.parquet (average draft position pulled locally) for the preseason group, instead of the lake")
     ap.add_argument("--proj-dir", default=None, help="a directory with weekly.parquet (Sleeper weekly projections pulled locally) for the consensus group, instead of the lake")
+    ap.add_argument("--no-fftoday", action="store_true", help="consensus group: leave out FFToday's 2010-2017 weekly projections (bronze/fftoday/projections), the history before Sleeper")
     ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
     ap.add_argument("--ngs-dir", default=None, help="a directory with receiving.parquet / rushing.parquet (Next Gen Stats pulled locally) for the usage group, instead of the lake")
     ap.add_argument("--inseason-train-weeks", default="", help="snapshot weeks the in-season model trains on, e.g. 3,6,9,13 (default: all for xgb, the checkpoint weeks for tabpfn)")
@@ -195,6 +196,17 @@ def main() -> None:
     if "consensus" in is_groups or "consensus_line" in is_groups:
         proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
         xw_ids = ids.select("sleeper_id", "gsis_id")
+        if not args.no_fftoday:
+            try:
+                fft = inseason.fftoday_as_consensus(gcs_io.read_lake_prefix(inseason.FFT_PATH), ids, base)
+            except Exception as e:  # noqa: BLE001
+                print("FFToday rows unavailable:", str(e)[:120], flush=True); fft = None
+            if fft is not None and fft.height:
+                have = set(int(x) for x in proj["season"].unique().to_list())
+                fft = fft.filter(~pl.col("season").is_in(sorted(have)))                 # Sleeper wins where both exist
+                print(f"consensus before Sleeper: FFToday {fft['season'].min()}..{fft['season'].max()}, {fft.height:,} player-weeks matched to gsis", flush=True)
+                proj = pl.concat([proj.with_columns(pl.col("player_id").cast(pl.Utf8)), fft.with_columns(pl.col("player_id").cast(pl.Utf8))], how="diagonal")
+                xw_ids = pl.concat([xw_ids.with_columns(pl.col("sleeper_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)), inseason.gsis_identity_rows(ids)], how="vertical")
     if "preseason" in is_groups:
         if args.adp_dir:
             mfl, ffc = pl.read_parquet(f"{args.adp_dir}/mfl.parquet"), pl.read_parquet(f"{args.adp_dir}/ffc.parquet")

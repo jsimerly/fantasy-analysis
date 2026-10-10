@@ -93,6 +93,7 @@ CONSENSUS_LINE_COLS = [f"cs_next_{v}" for v in CS_LINE.values()] + ["cs_td_tgt",
 CONSENSUS_FIRST_SEASON = 2018
 PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
 FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
+FFT_PATH = "bronze/fftoday/projections"                   # FFToday 2010-2017 weekly projections (season partitions): the consensus before 2018
 # preseason - the preseason consensus with no survivorship: average draft position (MyFantasyLeague 2011 on
 #             by MFL id, Fantasy Football Calculator 2009 on by name, 12-team drafts): the pick, the rank within
 #             the position that year, and a drafted flag (0 = not taken that year, null before 2009)
@@ -230,6 +231,50 @@ def consensus_features(proj: pl.DataFrame, xwalk: pl.DataFrame, wk: pl.DataFrame
                             (pl.col("_td_atd") - pl.col("cs_td_xtd")).alias("cs_td_luck"),      # touchdowns per game above what the provider expected
                             pl.lit(1.0).alias("cs_has")))
     return out.drop("_td_ppr", "_td_atd").unique(["player_id", "season"], keep="first", maintain_order=True)
+
+
+PPR = {"pass_yd": 0.04, "pass_td": 4.0, "pass_int": -2.0, "rush_yd": 0.1, "rush_td": 6.0, "rec": 1.0, "rec_yd": 0.1, "rec_td": 6.0}   # nflverse fpts_ppr
+
+
+def _norm_name(c: str) -> pl.Expr:
+    return (pl.col(c).cast(pl.Utf8).str.to_lowercase().str.replace_all(r"[^a-z ]", "").str.replace_all(r"\b(jr|sr|ii|iii|iv)\b", "")
+            .str.strip_chars().str.replace_all(r"\s+", " "))
+
+
+def fftoday_as_consensus(fft: pl.DataFrame, ids: pl.DataFrame, season_fact: pl.DataFrame | None = None) -> pl.DataFrame:
+    """FFToday's weekly projections in the shape ``consensus_features`` reads, keyed by gsis: ``player_id``
+    is the gsis_id matched by normalised name + position (a name shared by two players of a position is
+    settled by who has a season row that year, else dropped); ``pts_ppr`` from the stat line on nflverse's
+    PPR scoring (FFToday's own points are a standard-scoring number). Feed these rows beside Sleeper's with
+    the crosswalk extended by ``gsis_identity_rows``."""
+    if fft is None or fft.height == 0:
+        return pl.DataFrame(schema={"season": pl.Int64, "week": pl.Int64, "player_id": pl.Utf8, "position": pl.Utf8, "pts_ppr": pl.Float64})
+    cand = (ids.with_columns(_norm_name("name").alias("_n"), pl.col("position").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"))
+               .filter(pl.col("player_id").is_not_null() & (pl.col("player_id") != "")).select("_n", "position", "player_id").unique())
+    f = (fft.with_columns(_norm_name("player").alias("_n"), pl.col("position").cast(pl.Utf8), pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
+            .join(cand, on=["_n", "position"], how="inner"))
+    n_per = f.group_by("season", "week", "_n", "position").agg(pl.col("player_id").n_unique().alias("_k"))
+    f = f.join(n_per, on=["season", "week", "_n", "position"], how="left")
+    if season_fact is not None and season_fact.height:
+        played = season_fact.select(pl.col("player_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64)).unique().with_columns(pl.lit(True).alias("_played"))
+        f = f.join(played, on=["player_id", "season"], how="left").with_columns(pl.col("_played").fill_null(False))
+        f = f.filter((pl.col("_k") == 1) | pl.col("_played"))
+        n_per = f.group_by("season", "week", "_n", "position").agg(pl.col("player_id").n_unique().alias("_k2"))
+        f = f.join(n_per, on=["season", "week", "_n", "position"], how="left").filter(pl.col("_k2") == 1).drop("_k2", "_played")
+    else:
+        f = f.filter(pl.col("_k") == 1)
+    pts = sum((pl.col(c).cast(pl.Float64, strict=False).fill_null(0.0) * w for c, w in PPR.items() if c in f.columns), pl.lit(0.0))
+    line = [c for c in CS_LINE if c in f.columns]
+    return (f.with_columns(pts.alias("pts_ppr"))
+             .select("season", "week", "player_id", "position", "pts_ppr", *line)
+             .unique(["season", "week", "player_id"], keep="first", maintain_order=True))
+
+
+def gsis_identity_rows(ids: pl.DataFrame) -> pl.DataFrame:
+    """(sleeper_id, gsis_id) rows where the Sleeper id IS the gsis id, so rows keyed by gsis (FFToday) pass
+    ``consensus_features``' crosswalk join untouched."""
+    g = ids.select(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars()).filter(pl.col("gsis_id").is_not_null() & (pl.col("gsis_id") != "")).unique()
+    return g.select(pl.col("gsis_id").alias("sleeper_id"), "gsis_id")
 
 
 def preseason_features(mfl: pl.DataFrame | None, ffc: pl.DataFrame | None, xwalk: pl.DataFrame) -> pl.DataFrame:
