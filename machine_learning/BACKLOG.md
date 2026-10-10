@@ -1458,6 +1458,12 @@ t = 1.45) stays a tie.
     ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
     consensus for the live week once its backfill runs (owner's call).
 
+    **FFToday backfill DONE 2026-10-10 11:21 (owner's go 10:20):** `bronze/fftoday/projections/season=2010..2017`,
+    2,726-2,916 rows a season, 17 weeks each, with the stat line and injury tags; DQ check
+    `bronze.fftoday.history_complete`. Next: map `fft_id` -> gsis (name + team + season via the nflverse
+    rosters) and feed the consensus group's 2010-2017 rows from it so the in-season model's labelled weeks
+    double; trees screen first (CPU), then the 3.5 stage.
+
 39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
     by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
     number 32.8?").** Not the exact-number memorisation -- neither the trees nor an in-context
