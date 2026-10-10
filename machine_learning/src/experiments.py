@@ -421,17 +421,52 @@ def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float =
     return {pos: float(min(hi, max(lo, r_ / p_))) for pos, p_, r_ in g.iter_rows() if p_ and p_ > 0}
 
 
+BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
+SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain (career.predict's quantile floor)
+
+
+def apply_sigma_mode(f: pl.DataFrame, H: list[int], sigma_mode: str | None) -> pl.DataFrame:
+    """The spread the value construction prices upside with: ``None`` keeps the frame's
+    ``h{k}_ppg_sigma`` (the per-position holdout sigma); ``"band"`` takes each player's own from
+    the run's 20/80 band (items 6 / 36b: width / 1.68, floored at 1 ppg) where a horizon has one;
+    ``"none"`` drops the spread (plain clipped excess)."""
+    if not sigma_mode:
+        return f
+    if sigma_mode == "none":
+        return f.drop([c for c in f.columns if c.endswith("_ppg_sigma")])
+    if sigma_mode != "band":
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'none'")
+    cols = []
+    for k in H:
+        lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
+        if lo in f.columns and hi in f.columns:
+            cols.append(((pl.col(hi) - pl.col(lo)) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma"))
+    return f.with_columns(cols)
+
+
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
-            src_per_cohort: pl.DataFrame | None = None) -> tuple[pl.DataFrame, dict]:
+            src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
+            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
-    multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), or just
-    ``cfg.top_n``. ``src_per_cohort`` (the original run's rows) carries the in-sample scores the
-    frames do not hold, so the train-test gap columns survive. Returns (per_cohort, summary) as
-    ``run_experiment`` does; save with ``save_run`` and compare with ``paired``."""
+    multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
+    ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
+    with ``rep_for(T)`` and ``curve``), or just ``cfg.top_n``. ``src_per_cohort`` (the original
+    run's rows) carries the in-sample scores the frames do not hold, so the train-test gap columns
+    survive. Returns (per_cohort, summary) as ``run_experiment`` does; save with ``save_run`` and
+    compare with ``paired``."""
     H = list(cfg.horizons)
+    if sigma_mode and rep_for is None:
+        raise ValueError("a sigma_mode rebuilds value and WAR: rep_for (and curve) are needed")
     rows = []
     for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
         f = cohorts.filter(pl.col("cohort") == T)
+        if sigma_mode:
+            import war as _war
+            from league import WinCurve, OWNER_CURVE_FALLBACK
+            rep = rep_for(T)
+            f = apply_sigma_mode(f, H, sigma_mode)
+            f = value.intrinsic_value(f, rep, H, cfg.discount_rate)
+            f = _war.wins_above_replacement(f, rep, curve or WinCurve.normal(*OWNER_CURVE_FALLBACK), _war.career_components(H), cfg.discount_rate)
         scales = dict(fixed_scale or {})
         if walk_scale:
             scales.update(walk_forward_scales(cohorts, T, H))

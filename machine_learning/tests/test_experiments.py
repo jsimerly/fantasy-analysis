@@ -236,3 +236,22 @@ class TestRescore:
                 assert ws[pos] == pytest.approx(min(1.6, max(0.6, r_ / p_)))
         walked, _ = ex.rescore(frames, cfg, walk_scale=True)
         assert "scale_QB" not in walked.columns or walked["scale_QB"].null_count() == walked.height      # nothing complete: unscaled
+
+    def test_band_sigma_prices_each_players_own_spread(self):
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        rep = {"QB": 12.0, "RB": 9.0, "WR": 8.0, "TE": 7.0}
+        wide = frames.with_columns([(pl.col(f"h{k}_ppg_hat") - 3.0).alias(f"h{k}_ppg_q20") for k in H]
+                                   + [(pl.col(f"h{k}_ppg_hat") + 3.0).alias(f"h{k}_ppg_q80") for k in H])
+        f = ex.apply_sigma_mode(wide, H, "band")
+        assert f["h1_ppg_sigma"].to_list() == pytest.approx([6.0 / ex.BAND_TO_SIGMA] * f.height)      # width / 1.68
+        narrow = ex.apply_sigma_mode(wide.with_columns(pl.col("h1_ppg_hat").alias("h1_ppg_q20"), pl.col("h1_ppg_hat").alias("h1_ppg_q80")), H, "band")
+        assert narrow["h1_ppg_sigma"].to_list() == [ex.SIGMA_FLOOR] * f.height                         # never certain
+        assert "h1_ppg_sigma" not in ex.apply_sigma_mode(wide, H, "none").columns
+        assert ex.apply_sigma_mode(wide, H, None).equals(wide)
+        band, _ = ex.rescore(wide, cfg, sigma_mode="band", rep_for=lambda T: rep)
+        none, _ = ex.rescore(wide, cfg, sigma_mode="none", rep_for=lambda T: rep)
+        assert band["n_all"].to_list() == none["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert (band["bias_war_all"] < none["bias_war_all"]).all()      # upside priced: projected WAR higher, realized - projected lower
+        with pytest.raises(ValueError):
+            ex.rescore(wide, cfg, sigma_mode="band")                     # a rebuild needs the replacement levels
