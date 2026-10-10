@@ -27,6 +27,7 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 | `scripts/backtest_inseason.py` | the in-season backtest by checkpoint week; `--current` = the production projection of the season in progress |
 | `scripts/weekly_refresh.py` | the scheduled job: in-season projection → WAR per league → analysis summaries → the page export; `--preset production` |
 | `scripts/build_war.py`, `scripts/export_projections.py` | per-league roster views (teams.parquet + meta) and `projections.json` for the page |
+| `page/intrinsic_value.html`, `page/checks/` | the page itself (one HTML file reading `projections.json`) and its headless jsdom checks; see `page/CLAUDE.md` |
 | `scripts/market_backtest.py`, `scripts/evaluate_*.py`, `scripts/build_*.py` | the model-vs-market backtest; older evaluation and matrix builders |
 
 ## The rules of the harness
