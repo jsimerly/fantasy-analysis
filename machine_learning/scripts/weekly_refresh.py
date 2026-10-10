@@ -117,6 +117,8 @@ def main() -> None:
             p = gcs_io.write_ml_json(__import__("json").loads(out.read_text(encoding="utf-8")),
                                      "pages", f"season={season}", f"week={week}", f"run_date={args.run_date}", "projections.json")
             print("wrote", p, flush=True)
+        # the living scorecard (docs/model_scorecard.{json,md} + scorecard.json beside the payload): the site's table
+        run([py, "scripts/export_scorecard.py", "--payload", str(out), "--out-dir", str(ROOT.parent / "docs"), "--publish"], args.dry_run, best_effort=True)
     print("weekly refresh done", flush=True)
 
 

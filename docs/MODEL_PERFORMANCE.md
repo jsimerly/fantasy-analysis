@@ -28,13 +28,39 @@ idea tried, adopted or rejected, is in the project's journal with its numbers.
 
 ## What it has delivered
 
-| Claim | Number | What it means |
+**The headline: the swap test.** Every February from 2020 to 2022, each player the model called rich
+was paired with the closest-priced player it called cheap: two players within 15 % of each other on
+KTC, the model at least ten ranks apart on them. That is a trade a manager could have made at zero cost
+in market value. Three years later, **the player bought out-delivered the one sold in 73 % of the 66
+pairs, by 0.46 wins per swap on average**, and the rate held every year (73 %, 71 %, 74 %). Buying a
+running back won 89 % of the time (+1.18 wins per swap): the market under-prices productive backs.
+
+| February | Sold (KTC) | Delivered | Bought (KTC) | Delivered | Gain |
+| --- | --- | --- | --- | --- | --- |
+| 2021 | Elijah Moore, WR (5,112) | 0.00 | Derrick Henry, RB (4,974) | 3.16 | +3.16 wins |
+| 2022 | Garrett Wilson, WR (6,178) | 0.55 | Christian McCaffrey, RB (5,622) | 3.48 | +2.93 |
+| 2020 | J.K. Dobbins, RB (7,015) | 0.04 | Derrick Henry, RB (7,003) | 2.73 | +2.69 |
+| 2020 | Tee Higgins, WR (6,591) | 0.98 | Travis Kelce, TE (6,924) | 3.04 | +2.06 |
+| 2021 | Terry McLaurin, WR (5,019) | 0.86 | Travis Kelce, TE (4,900) | 2.69 | +1.83 |
+| 2021 | Brandon Aiyuk, WR (4,555) | 0.85 | Josh Jacobs, RB (4,661) | 2.62 | +1.77 |
+
+"Delivered" is wins above replacement over the following three seasons. One in four swaps went the
+other way (the worst: Saquon Barkley for Matthew Stafford in 2021, −2.7 wins), which is what a 73 %
+win rate means.
+
+**And it is actionable today.** Players the model called cheap against the market went on to finish
+**12.9 ranks better** than the market had them; the ones it called rich finished **10.6 ranks worse**.
+That gap is the Mispricing column on the page's Players tab, within each position: buy the first
+group, sell the second.
+
+| Supporting number | Value | What it means |
 | --- | --- | --- |
-| Rest of this season | **0.784 vs 0.704** rank agreement at week 3 (ahead at every checkpoint through week 13) | From a mid-season snapshot, the model orders players by what they will average the rest of the way better than the market's ranking does. |
+| Rest of this season | **0.784 vs 0.704** rank agreement at week 3, ahead at every checkpoint through week 13 | From a mid-season snapshot, the model orders players by what they will average the rest of the way better than the market's ranking does. |
 | Three years out | **0.695 vs 0.673** on 364 priced players, cohorts 2020-2022 | Projected before each season, scored on the wins delivered over the next three, the model's ordering edges the market's. |
-| The mispricing is real | **+12.9 / −10.6 ranks** | Players the model called cheap against the market finished 12.9 ranks better than the market had them; players it called rich finished 10.6 ranks worse. |
-| The swap test | **73 % won, +0.46 wins per swap**, 66 swaps | Every February, each player the model called rich was paired with the closest-priced player it called cheap. Three years later the player bought out-delivered the one sold in 73 % of pairs. |
 | Career projection, three years ahead | **−30 % error vs "repeat last season", −8 % vs an age curve** | Over 7,300 player-seasons since 2010, the season-points projection beats the two naive rules a manager would otherwise use. |
+
+The living version of these numbers is [model_scorecard.md](model_scorecard.md), regenerated with
+every weekly refresh.
 
 ## What it changes in practice
 
