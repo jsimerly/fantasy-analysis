@@ -85,12 +85,15 @@ OPP_COLS = ["op_xfp_pg", "op_pass_xfp_pg", "op_rush_xfp_pg", "op_rec_xfp_pg", "o
 #             from past seasons when the consensus was right and when rows that looked like this one beat it.
 CS_LINE = {"pass_att": "pass_att", "pass_yd": "pass_yd", "pass_td": "pass_td", "rush_att": "rush_att", "rush_yd": "rush_yd", "rush_td": "rush_td",
            "rec_tgt": "tgt", "rec": "rec", "rec_yd": "rec_yd", "rec_td": "rec_td"}     # the provider's projected stat line, coming week
-CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has", "cs_src"]   # cs_src: 0 Sleeper, 1 FFToday (the provider, so an offset can be learnt)
+CONSENSUS_COLS = ["cs_next_ppr", "cs_next_rank_pos", "cs_td_mean", "cs_beat_td", "cs_next_vs_td", "cs_has"]
+# cs_src (0 Sleeper, 1 FFToday) rides along for diagnostics but is NOT a feature: the trees screen of 2026-10-10 lost 0.004 next-season
+# ordering at every week with it in (a split the model does not need; the relative columns absorb the provider difference)
 # consensus_line - the provider's projected stat line for the coming week (volume and scoring by phase) and the
 #                  expected touchdown rate to date against the player's actual one (touchdown luck through the
 #                  provider's eyes); its own group so the funnel can judge it apart from the points
 CONSENSUS_LINE_COLS = [f"cs_next_{v}" for v in CS_LINE.values()] + ["cs_td_tgt", "cs_td_rush_att", "cs_td_xtd", "cs_td_luck"]
-CONSENSUS_FIRST_SEASON = 2018          # Sleeper; with FFToday rows the floor follows the data (2010)
+CONSENSUS_FIRST_SEASON = 2018          # Sleeper; with FFToday rows the floor can follow the data (2010)
+CONSENSUS_FLOOR_FOLLOWS_DATA = __import__("os").environ.get("CS_FLOOR_FOLLOWS_DATA", "0") == "1"   # default: unlisted before 2018 stays unknown (null); 1 = 0 like Sleeper years (screened neutral-to-worse)
 PROJ_PATH = "bronze/sleeper/projections"                  # season partitions (ingestion to follow); --proj-dir until then
 FF_IDS_PATH = "bronze/nflverse/fantasy_player_ids"        # sleeper_id -> gsis_id
 FFT_PATH = "bronze/fftoday/projections"                   # FFToday 2010-2017 weekly projections (season partitions): the consensus before 2018
@@ -440,7 +443,7 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
             snap = snap.join(preseason, on=["player_id", "season"], how="left").with_columns(
                 pl.when(pl.col("season") >= PRESEASON_FIRST_SEASON).then(pl.col("ps_drafted").fill_null(0.0)).otherwise(None).alias("ps_drafted"))
         if consensus is not None and consensus_xwalk is not None:
-            cs_first = int(consensus["season"].min()) if consensus.height else CONSENSUS_FIRST_SEASON
+            cs_first = (int(consensus["season"].min()) if consensus.height else CONSENSUS_FIRST_SEASON) if CONSENSUS_FLOOR_FOLLOWS_DATA else CONSENSUS_FIRST_SEASON
             snap = snap.join(consensus_features(consensus, consensus_xwalk, wk, w), on=["player_id", "season"], how="left").with_columns(
                 pl.when(pl.col("season") >= cs_first).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
         if schedules is not None:
