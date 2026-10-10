@@ -84,6 +84,8 @@ def healthy() -> tuple[dict, dict]:
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
     frames["fact_player_contract_season"] = pl.DataFrame({"season": [2026] * 1600, "gsis_id": [str(i) for i in range(1600)]})
     frames["fact_college_player_season"] = pl.DataFrame({"season": [2024, 2025], "cfbd_id": ["a", "b"]})
+    for s in range(2010, 2018):                   # FFToday's weekly projections 2010-2017, the consensus before Sleeper (one-time scrape)
+        frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
     return frames, parts
 
 
@@ -275,8 +277,6 @@ def test_the_model_feeds_must_have_their_current_season_partition():
 
 def test_the_fftoday_history_must_hold_every_season_in_full():
     frames, parts = healthy()
-    for s in range(2010, 2018):
-        frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
     assert run(frames, parts, only="fftoday")["passed"].all()
     frames["bronze/fftoday/projections/season=2013/data.parquet"] = pl.DataFrame({"week": list(range(1, 12)) * 160, "fft_id": [str(i) for i in range(1760)]})
     del frames["bronze/fftoday/projections/season=2017/data.parquet"]
