@@ -1304,6 +1304,15 @@ t = 1.45) stays a tie.
        week to week. Draft rows and the blend target (items 30 / 26) are queued ahead of it.
     5. *Full-precision inference* (`inference_precision=float32`): doubles the cost, sometimes
        tightens the tails; low expected gain, in the chain.
+    **Levers 2 and 3 built 2026-10-10 12:30 (owner: "I think we should really just start adding these"):**
+    `InSeasonModels(bags=K)` fits K estimators per target on different `bag_subset` draws (the two
+    most recent seasons whole, the rest of the 50k budget a random sample of the older rows, a
+    different draw per bag) and averages; `InSeasonModels(focus_week=True)` fits when a week is
+    predicted, on `training_subset(around_week=w)` (the snapshots nearest that week across every
+    season first, recency second), one set per week. `--inseason-bags` / `--inseason-focus-week`
+    on the backtest; spec-tested. Queued as `chain_context.sh` behind the accuracy chain at the
+    stage-2 scope against `stage2_base.log` (bags 3, then focus). Lever 1 (ensemble 16, fp32) is
+    in the accuracy chain the same day.
     Not worth the hours: more checkpoint weeks (the week is a feature), speed-only changes
     (caching the career tail, a 20k cap) -- unless the budget is exceeded. **Where the first
     production run's hours went (py-spy on the live process, 2026-10-09 14:00, 4.5 h in):**
@@ -1457,6 +1466,20 @@ t = 1.45) stays a tie.
     2009, for the career model's own harness); the provider's
     ROS number captured weekly from now on so the ROS claim can be tested in a year; FantasyPros
     consensus for the live week once its backfill runs (owner's call).
+
+    **FFToday backfill DONE 2026-10-10 11:21 (owner's go 10:20):** `bronze/fftoday/projections/season=2010..2017`,
+    2,726-2,916 rows a season, 17 weeks each, with the stat line and injury tags; DQ check
+    `bronze.fftoday.history_complete`. Next: map `fft_id` -> gsis (name + team + season via the nflverse
+    rosters) and feed the consensus group's 2010-2017 rows from it so the in-season model's labelled weeks
+    double; trees screen first (CPU), then the 3.5 stage. **Bridge built and screened 2026-10-10 11:40:**
+    `inseason.fftoday_as_consensus` (name + position onto nflverse ids, ties settled by the season fact; 98 % of
+    22.7k player-weeks match; PPR points from the stat line) feeds the consensus group for 2010-2017 beside
+    Sleeper. Trees screen, next-season ordering at weeks 3 / 6 / 9 / 13: without 0.544 / 0.561 / 0.585 / 0.598;
+    with FFToday 0.553 / 0.567 / 0.590 / 0.602 (+0.004 to +0.009 everywhere, from more labelled weeks; the test
+    cohorts 2021-24 never see FFToday). A provider flag as a feature cost 0.004 at every week and is out; the
+    era floor following the data (unlisted pre-2018 = 0 rather than unknown) was neutral and stays off.
+    Coverage per week is comparable (FFToday 28 QB / ~50 per other position, Sleeper's non-zero rows 24 / 58-112).
+    The 3.5 stage reads the lake by default (`--no-fftoday` to leave it out).
 
 39. **Repeated labels on split rows (owner, 2026-10-09: "if we're synthetically creating new rows
     by splitting individual player seasons ... are we fuzzing the data as to not overfit ... the
