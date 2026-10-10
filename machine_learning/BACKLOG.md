@@ -1526,6 +1526,12 @@ t = 1.45) stays a tie.
     not overfitting: the draft rows' sparse features and zero-production targets pull the prior
     for young players down. The hand-made rookie tail stays. The draft rows remain available
     (`--draft-rows`) for the unified / snapshot tests but are off the production path.
+    *The market backtest read (01:15, 2020-22 cohorts, 366 priced):* the draft-rows model
+    0.699 vs KTC 0.669 against the candidate's 0.695 vs 0.673; mispricing edge 0.399 vs 0.368,
+    cheap-side wins per 1,000 KTC 0.258 vs 0.248, error 0.486 vs 0.491, bias 0.114 vs 0.143 --
+    a mild plus on the priced pool, against a decisive minus on the harness (eight cohorts,
+    2015-22). The co-primary rule is the harness; the market read is the tie-break and there is
+    no tie. NO stands; the rookie-tail question goes to the unified model (item 32).
 
 44. **Blend target: ADOPT over the level target on the 3-year window (2026-10-10 00:43, paired
     on the fresh `_c` baseline, 8 cohorts).** Level + residual averaged (item 26's "blend"):
