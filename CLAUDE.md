@@ -4,6 +4,9 @@ Dynasty fantasy-football analytics for the owner's leagues: ingest raw data from
 providers, model it into clean dimensions/facts, and explore it in notebooks (team value over
 time, trade/pick valuation, draft-slot projection, a team-finish ML model).
 
+**Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md):** the whole system in three diagrams, the model
+in one page, the lake layout, a glossary. This file is the short operating guide.
+
 ## Architecture (medallion: bronze → silver → analysis)
 - **bronze** — raw provider data, lightly flattened, one folder per source under
   [data_engineering/](data_engineering/). Append-only, partitioned by `load_date` (or `season`).
@@ -35,8 +38,9 @@ per-dataset inventory with quirks lives in the data inventory note; mirror chang
 
 ## Working in this repo
 - **Python via the repo-root venv:** `.venv/Scripts/python.exe` (polars-based; pandas where needed).
-- **Tests:** `.venv/Scripts/python.exe -m pytest` from the root. Spec-style suite — see
-  [tests/README.md](tests/README.md). Keep it green before pushing.
+- **Tests:** `.venv/Scripts/python.exe -m pytest` from the root (the DE suite; see
+  [tests/README.md](tests/README.md)) and `machine_learning/.venv/Scripts/python.exe -m pytest tests`
+  from `machine_learning/`. Both green before pushing.
 - **Data quality:** the code is tested by pytest, the *lake* by
   [data_engineering/src/data_quality/](data_engineering/src/data_quality/) (the daily DAG's last step).
   A data bug fixed without a check there is only half fixed.
@@ -46,6 +50,7 @@ per-dataset inventory with quirks lives in the data inventory note; mirror chang
 | Path | What's there |
 | --- | --- |
 | [data_engineering/](data_engineering/) | all bronze ingestion + silver modeling (one folder per source) |
+| [machine_learning/](machine_learning/) | the dynasty value model: career + in-season TabPFN models, WAR, the harness, the weekly refresh, the page export (own venv; guide + README + BACKLOG journal) |
 | [analysis/](analysis/) | notebooks + `fantasy_lib.py` (shared value/event helpers) |
 | [orchestration/](orchestration/) | the daily Cloud Workflow DAG + deploy |
 | [tests/](tests/) | pytest spec suite for the ETL pipelines |
