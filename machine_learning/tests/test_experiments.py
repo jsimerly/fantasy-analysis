@@ -176,3 +176,12 @@ def test_in_sample_scores_and_the_gap_use_the_training_rows_only():
     t = _paired_table(-0.5, 3.0)
     t = pl.concat([t, pl.DataFrame({"metric": ["gap_h1", "mae_h1_train"], "a": [12.0, 20.0], "b": [25.0, 8.0], "diff_b_minus_a": [13.0, -12.0], "se": [1.0, 1.0], "t": [13.0, -12.0], "b_wins": [8, 0], "cohorts": [8, 8]})])
     assert "train-test gap h1 A 12.0 vs B 25.0" in ex.verdict(t)
+
+
+def test_ledger_columns_are_unique_and_append_result_takes_a_full_summary():
+    import collections
+    assert not [c for c, n in collections.Counter(ex.LEDGER_COLS).items() if n > 1]
+    ledger = pl.DataFrame(schema={c: pl.Utf8 for c in ex.LEDGER_COLS})
+    out = ex.append_result(ledger, {c: None for c in ex.LEDGER_COLS} | {"name": "x", "mae_h1_train": 1.0, "gap_h1": 2.0})
+    assert out.height == 1 and out["name"][0] == "x"
+
