@@ -51,6 +51,6 @@ market signals (adp, trade counts, liquidity). The silver staging
 
 ## Not here (cross-refs)
 - The **power-ranking algo** (`prProcessV`) and the **trade-calculator combine** are *analysis* concerns,
-  implemented in [analysis/fantasy_lib.py](../../analysis/) — see [analysis/CLAUDE.md](../../analysis/CLAUDE.md),
+  implemented in [analysis/fantasy_lib.py](../../../analysis/) — see [analysis/CLAUDE.md](../../../analysis/CLAUDE.md),
   not this ingestion folder.
 - KTC↔Sleeper id mapping is in silver `dim_players_master` (`ktc_id`).

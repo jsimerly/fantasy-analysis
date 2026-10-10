@@ -177,7 +177,7 @@ class TestExtras:
         wk, ss = _big()
         big = inseason.build_snapshots(wk, ss, weeks=[3, 8], contracts=_contracts())
         m = inseason.InSeasonModels(n_estimators=5, max_depth=2, extra_features=inseason.CONTRACT_SNAP_COLS).fit(big, as_of_season=2022)
-        assert m.models["ros_ppg"].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
+        assert m.models["ros_ppg"][0].n_features_in_ == len(inseason.FEATURES) + len(inseason.CONTRACT_SNAP_COLS)
 
 
 class TestTrainingSubset:
@@ -322,3 +322,108 @@ class TestUsageRoleScheduleGroups:
         assert out.height == 3 and out.select("player_id", "season").n_unique() == 3 and set(out.columns) == {"player_id", "season", "week"}
         assert inseason.one_week_per_season(rows, seed=1).equals(out)      # seeded: the same draw each time
 
+
+
+def test_fftoday_rows_become_consensus_rows_keyed_by_gsis():
+    import polars as pl
+    import inseason
+    ids = pl.DataFrame({"name": ["Tom Brady", "Mike Williams", "Mike Williams", "Drew Brees"], "position": ["QB", "WR", "WR", "QB"],
+                        "gsis_id": ["00-1", "00-2", "00-3", "00-4"], "sleeper_id": [11, 22, 33, None]})
+    fft = pl.DataFrame({"season": [2015, 2015, 2015, 2015], "week": [9, 9, 9, 10], "position": ["QB", "WR", "QB", "QB"],
+                        "player": ["Tom Brady", "Mike Williams", "Drew Brees Jr.", "Tom Brady"],
+                        "pass_yd": [320.0, None, 310.0, 250.0], "pass_td": [3.0, None, 2.0, 1.0], "pass_int": [0.0, None, 1.0, 0.0],
+                        "rush_att": [0.0, 10.0, 0.0, 2.0], "rush_yd": [0.0, 40.0, 0.0, 5.0], "rush_td": [0.0, 0.0, 0.0, 0.0],
+                        "rec": [None, 5.0, None, None], "rec_yd": [None, 70.0, None, None], "rec_td": [None, 1.0, None, None], "fpts": [28.0, 18.0, 23.5, 15.0]})
+    played = pl.DataFrame({"player_id": ["00-1", "00-3", "00-4"], "season": [2015, 2015, 2015]})     # only one Mike Williams played in 2015
+    out = inseason.fftoday_as_consensus(fft, ids, played)
+    assert out.columns[:6] == ["season", "week", "player_id", "position", "pts_ppr", "src"] and out.height == 4 and out["src"].unique().to_list() == [1.0]
+    brady = out.filter((pl.col("player_id") == "00-1") & (pl.col("week") == 9)).row(0, named=True)
+    assert abs(brady["pts_ppr"] - (320 * 0.04 + 3 * 4)) < 1e-9                                        # nflverse PPR, not FFToday's own points
+    assert out.filter(pl.col("player_id") == "00-3")["pts_ppr"][0] == 10 * 0.0 + 40 * 0.1 + 5 + 7.0 + 6.0   # the Mike Williams who played
+    assert out.filter(pl.col("player_id") == "00-4").height == 1                                        # "Jr." stripped
+    assert inseason.fftoday_as_consensus(fft, ids, None).filter(pl.col("position") == "WR").height == 0  # an unsettled tie is dropped
+    x = inseason.gsis_identity_rows(ids)
+    assert x.columns == ["sleeper_id", "gsis_id"] and x["sleeper_id"].to_list() == x["gsis_id"].to_list() and x.height == 4
+    assert inseason.fftoday_as_consensus(fft.head(0), ids).height == 0
+
+
+class TestContextLevers:
+    """Past the context cap (BACKLOG 36): bagging draws different contexts per estimator and averages;
+    focus_week fits per predicted week on the rows nearest that week."""
+
+    def test_bag_subset_keeps_the_recent_seasons_whole_and_varies_the_older_draw(self):
+        rows = pl.DataFrame({"season": [2020] * 50 + [2021] * 50 + [2022] * 30 + [2023] * 30, "week": [3] * 160, "x": list(range(160))})
+        a, b = inseason.bag_subset(rows, 100, seed=1), inseason.bag_subset(rows, 100, seed=2)
+        for d in (a, b):
+            assert d.height == 100 and d.filter(pl.col("season") >= 2022).height == 60      # 2022-23 whole, 40 of the 100 older rows
+        assert set(a.filter(pl.col("season") < 2022)["x"]) != set(b.filter(pl.col("season") < 2022)["x"])
+        assert inseason.bag_subset(rows, None, 1).height == 160 and inseason.bag_subset(rows, 40, 1).height == 40
+
+    def test_relevance_first_context_takes_the_nearest_weeks_then_recency(self):
+        rows = pl.DataFrame({"season": [2019, 2019, 2023, 2023, 2021, 2021], "week": [3, 9, 3, 9, 6, 13], "x": [1, 2, 3, 4, 5, 6]})
+        out = inseason.training_subset(rows, None, 3, around_week=9)
+        assert out["x"].to_list() == [4, 2, 5]            # week 9 of 2023 and 2019 first, then the nearest (week 6 of 2021)
+        assert inseason.training_subset(rows, None, 3).height == 3
+
+    def test_bags_average_their_estimators_and_focus_week_fits_per_week(self, monkeypatch):
+        wk, ss = _big()
+        big = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+        fits = []
+
+        class Fake:
+            def __init__(self):
+                self.c = len(fits); fits.append(self)
+
+            def fit(self, X, y):
+                self.n = len(X); return self
+
+            def predict(self, X):
+                return np.full(len(X), float(self.c % 2))              # alternating 0 / 1 across fits
+
+        import pytest
+        with pytest.raises(ValueError):
+            inseason.InSeasonModels(bags=2, focus_week=True)
+        m = inseason.InSeasonModels(bags=2, max_train_rows=40)
+        monkeypatch.setattr(m, "_new", lambda: Fake())
+        m.fit(big, as_of_season=2022)
+        assert all(len(v) == 2 for v in m.models.values()) and len(fits) == 8 and all(f.n == 40 for f in fits)
+        out = m.predict(big.filter(pl.col("season") == 2022).head(5))
+        assert out["ros_games_hat"].to_list() == [0.5] * 5                 # the mean of a 0-estimator and a 1-estimator
+        fits.clear()
+        f = inseason.InSeasonModels(focus_week=True, max_train_rows=40)
+        monkeypatch.setattr(f, "_new", lambda: Fake())
+        f.fit(big, as_of_season=2022)
+        assert not fits and set(f._pool) == {"ros_games", "ros_ppg", "next_games", "next_ppg"}   # nothing fitted until a week is asked for
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(4))
+        assert len(fits) == 4 and all(x.n == 40 for x in fits)
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(2))
+        assert len(fits) == 4                                              # the week's estimators are reused
+        f.predict(big.filter((pl.col("season") == 2022) & (pl.col("week") == 8)).head(2))
+        assert len(fits) == 8
+        both = pl.concat([big.filter((pl.col("season") == 2022) & (pl.col("week") == 3)).head(2), big.filter((pl.col("season") == 2022) & (pl.col("week") == 8)).head(2)])
+        with pytest.raises(ValueError):
+            f.predict(both)                                                 # two weeks at once
+
+
+def test_team_change_features_flag_a_new_starter_and_count_the_returning_line():
+    depth = pl.DataFrame({
+        "season": [2023] * 6 + [2024] * 2, "week": [1, 2, 3, 4, 5, 6, 1, 1], "game_type": ["REG"] * 8,
+        "team": ["KC"] * 6 + ["KC", "DET"], "slot": ["QB"] * 8, "depth_rank": [1] * 8,
+        "gsis_id": ["Q1", "Q1", "Q1", "Q2", "Q1", "Q1", "Q2", "Q9"],            # KC's regular 2023 starter is Q1; week 1 of 2024 starts Q2
+    })
+    sc = pl.DataFrame({
+        "season": [2023] * 5 + [2024] * 5, "week": [1] * 10, "game_type": ["REG"] * 10, "team": ["KC"] * 10,
+        "position": ["T", "G", "C", "G", "T"] * 2, "offense_pct": [0.9] * 10,
+        "pfr_player_id": ["a", "b", "c", "d", "e", "a", "b", "c", "x", "y"],   # three of five 2024 starters started in 2023
+    })
+    out = inseason.team_change_features(depth, sc, week=1)
+    kc = out.filter((pl.col("season") == 2024) & (pl.col("team") == "KC")).row(0, named=True)
+    assert kc["tc_qb_new"] == 1.0 and kc["_qb1"] == "Q2" and abs(kc["tc_ol_returning"] - 0.6) < 1e-9
+    det = out.filter((pl.col("season") == 2024) & (pl.col("team") == "DET")).row(0, named=True)
+    assert det["tc_qb_new"] is None and det["tc_ol_returning"] is None                      # no 2023 history for DET; no line snaps
+    kc23 = out.filter((pl.col("season") == 2023) & (pl.col("team") == "KC")).row(0, named=True)
+    assert kc23["tc_ol_returning"] is None                                                   # the snap counts' first season stays unknown
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2], team_change=(depth, sc))
+    assert {"tc_qb_new", "tc_ol_returning", "tc_is_new_qb"} <= set(snaps.columns)
+    assert inseason.extra_columns(["team_change"]) == inseason.TEAM_CHANGE_COLS

@@ -114,8 +114,7 @@ def rosters_one_per_lineage(ctx):
 
 
 @check("bronze.sleeper_projections.coming_week_present", "bronze/sleeper/projections", "error",
-       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it",
-       known_open="the dataset lands with the deploy of sleeper-incremental-projections and the PROJ_SEASONS=2018-2025 backfill (BACKLOG 38); until then there is nothing to check")
+       "the consensus feature group reads the provider's projection for the coming week; a season partition that stops at last week means the Monday model ran without it")
 def projections_fresh(ctx):
     if ctx.nfl_phase() == "offseason":
         return x.ok("offseason: not enforced")
@@ -576,3 +575,23 @@ def _sample_rows(df: pl.DataFrame, cols: list[str], n: int = 5) -> str:
 
 def suite(only: str | None = None) -> list[Check]:
     return [c for c in SUITE if not only or only in c.name or only in c.table]
+
+
+FFTODAY_SEASONS = range(2010, 2018)     # FFToday's own weekly projections, the consensus before Sleeper's 2018 floor (backfilled 2026-10-10)
+
+
+@check("bronze.fftoday.history_complete", "bronze/fftoday/projections", "warn",
+       "the weekly consensus before 2018 comes only from this one-time scrape; a season partition lost or truncated silently shortens the consensus group's history and the in-season model trains on fewer labelled weeks")
+def fftoday_history(ctx):
+    short = []
+    for season in FFTODAY_SEASONS:
+        try:
+            df = ctx.blob(f"bronze/fftoday/projections/season={season}/data.parquet")
+        except Exception:  # noqa: BLE001
+            short.append(f"{season}: missing"); continue
+        weeks = df["week"].n_unique() if "week" in df.columns else 0
+        if df.height < 2000 or weeks < 16:
+            short.append(f"{season}: {df.height} rows, {weeks} weeks")
+    if short:
+        return x.fail(f"{len(short)} of {len(FFTODAY_SEASONS)} seasons short", len(short), "; ".join(short))
+    return x.ok(f"{len(FFTODAY_SEASONS)} seasons, 16+ weeks and 2,000+ rows each", 0)

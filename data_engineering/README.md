@@ -14,9 +14,12 @@ src/
   ktc_ingestion/          utils.py, dynasty/ devy/ redraft/
   fantasycalc_ingestion/  daily_ingestion.py
   nflverse_ingestion/     *_ingestion.py, backfill_seasonal.py (daily reconcile of seasonal history)
-  fantasypros_ingestion/  projections_scraper.py   (local-only; not deployed)
+  fantasypros_ingestion/  backfill.py (local Wayback + live backfill), live_current.py (in-season daily job), _sources/_parse/_harvest.py
+  adp_ingestion/          average draft position by season (FFC 2009+, MFL 2011+): the preseason consensus with no survivorship; yearly job
+  fftoday_ingestion/      FFToday weekly projections 2010 on: the weekly consensus history before Sleeper's 2018 floor (local backfill)
   cfbd_ingestion/         client.py, backfill.py   (College Football Data; local backfill, CFBD_API_KEY)
   silver_fantasy/         dim_*.py, fact_*.py, utils.py, _staging/
+  data_quality/           checks on the lake itself (freshness, keys, history, invariants, drift); the daily DAG's last step
 tests/                    per-package; pytest in importlib mode, gql/nflreadpy stubs + fake_gcs
 Dockerfile                single image for all jobs (uv base, PYTHONPATH=/app/src)
 pyproject.toml / uv.lock  consolidated deps

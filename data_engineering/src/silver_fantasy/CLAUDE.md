@@ -3,7 +3,7 @@
 The silver star schema, built from bronze with **polars-on-parquet (no BigQuery)**. Each table is a
 pure `build_*`/`transform_*` function + a `main()` that does IO and writes
 `silver/fantasy/<table>/data.parquet`. Reuse `utils.get_latest_bronze_path`; spec-tested in
-[tests/silver_fantasy/](../../../tests/silver_fantasy/) via `load_de_module` + the `fake_gcs` fixture.
+[tests/silver_fantasy/](../../tests/silver_fantasy/) with the `fake_gcs` fixture.
 Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestration/README.md) (T1→T2→T3).
 
 ## Tables
@@ -22,6 +22,13 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
 | `fact_roster_membership.py` | `silver-fact-roster-membership` | SCD2 ownership ledger (players + picks), back to 2021 |
 | `fact_team_season_strength.py` | `silver-fact-team-season-strength` | team x season: market rating (mean closing spread), total line, record, EPA/play, QB situation; current franchise codes. Same job also writes `fact_team_week_strength` (team x season x week, the same quantities to date + this week's line, for the in-season model) |
 | `fact_player_contract_season.py` | `silver-fact-player-contract-season` | player x season: the contract in force (cap share, guarantees, years left, rookie deal, cap number, position rank) from Over The Cap |
+| `fact_player_season.py` | `silver-fact-player-season` | player x season production from nflverse player stats (points on the primary scoring, games, the stat line, age, draft capital); the model's base table (T3) |
+| `fact_player_week.py` | `silver-fact-player-week` | player x week production (the in-season snapshots and the weekly replacement line read it) (T2) |
+| `fact_player_week_status.py` | `silver-fact-player-week-status` | player x week for every rostered skill player: played / inactive / injured, report status, snaps, touches (T3) |
+| `fact_depth_chart_week.py` | `silver-fact-depth-chart-week` | team x week x player depth-chart rank for QB / RB / WR / TE / FB, 2001 on (T1) |
+| `fact_player_injury_week.py` | `silver-fact-player-injury-week` | player x week injury report rows, 2009 on (T1) |
+| `fact_college_player_season.py` | `silver-fact-college-player-season` | player x college season from CFBD (box score, usage, team SP+, dominator / breakout flags) + `dim_college_crosswalk` (yearly workflow) |
+| `schema_identifier.py` | — | the bronze schema fingerprint helper the dims use to tell a provider layout change from a data change |
 | `_pick_projection.py` | — (analysis helper) | reverse-standings tier projection (the measure layer, not a fact) |
 | `utils.py` | — | shared `get_latest_bronze_path`, `merge_full_and_incremental`, `read_latest_incremental_by_key` |
 

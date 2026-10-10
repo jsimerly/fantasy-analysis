@@ -9,7 +9,7 @@ the market (KTC / FantasyCalc). Format: **superflex / 2QB**.
 Datasets that are reusable beyond this model are **data engineering**; modeling-specific
 feature work is **machine learning**:
 
-- **`data_engineering/silver_fantasy/fact_player_season.py`** — builds the reusable
+- **`data_engineering/src/silver_fantasy/fact_player_season.py`** — builds the reusable
   player-season production fact (nflverse box scores re-scored under the league's rules +
   volume + bio) → `gs://nfl-data-bronze/silver/fantasy/fact_player_season/data.parquet`.
 - **`machine_learning/`** (this dir) — reads that fact and adds the model-exclusive feature
@@ -18,8 +18,8 @@ feature work is **machine learning**:
 Buckets, by ownership:
 - `nfl-data-bronze` (lake) — shared DE datasets; the model only **reads** from here.
 - ML bucket (`$ML_BUCKET`, default `fantasy-football-ml`) — model-exclusive artifacts,
-  namespaced per project under `<ML_BUCKET>/dynasty-value/`. Not used in Phase 0 (nothing
-  persisted yet); writes begin in Phase 1+.
+  namespaced per project under `<ML_BUCKET>/dynasty-value/`. The model reads the lake and
+  writes only this bucket (`gs://fantasy-football-ml/dynasty-value`).
 
 ## Phase 3 — in-season update (current)
 
@@ -370,7 +370,7 @@ modeling-specific lag/target assembly.
 
 ## Setup
 
-Fresh **uv** venv on **Python 3.11+** (isolated from the repo-root ETL venv). Requires
+Fresh **uv** venv on **Python 3.11+** (separate from `data_engineering/`'s uv venv). Requires
 Application Default Credentials for GCS (already configured on this machine).
 
 ```bash
@@ -380,9 +380,10 @@ uv run pytest                                    # unit tests
 uv run python scripts/build_training_matrix.py   # build the training matrix from the lake
 ```
 
-Rebuild the upstream dataset (DE, run from repo root on the ETL venv) when nflverse data
-or league scoring changes:
+Rebuild the upstream dataset (DE, run from `data_engineering/` with `PYTHONPATH=src`) when
+nflverse data or league scoring changes:
 
 ```bash
-python data_engineering/silver_fantasy/fact_player_season.py
+cd data_engineering
+PYTHONPATH=src python -m silver_fantasy.fact_player_season
 ```

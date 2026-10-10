@@ -2,7 +2,7 @@
 
 Daily Cloud Run jobs that snapshot the **curated active leagues** (`status != "complete"` and
 `source_system == "sleeper"`, from `get_fantasy_leagues()`). Each script: `flatten_*()` → per-league
-frames, then union and write. Run in the daily DAG ([orchestration/](../../../orchestration/)).
+frames, then union and write. Run in the daily DAG ([orchestration/](../../../../orchestration/)).
 
 | Script | Cloud Run job | Writes (under `bronze/sleeper/…`) |
 | --- | --- | --- |

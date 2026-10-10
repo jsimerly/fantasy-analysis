@@ -8,13 +8,16 @@ and is publicly reachable on historical pages.
 ## Files
 | File | Role |
 | --- | --- |
-| `projections_scraper.py` | the scraper; `python projections_scraper.py audit` runs a read-only parser-audit matrix |
-| `requirements.txt` / `Dockerfile` | deps + image (convention; this is a **local** backfill, not a daily job) |
+| `_sources.py` | the fetch layer: the polite live site (slow, jittered, rotating browser headers, hard backoff on 429/403/5xx) and the Wayback Machine (CDX lists a page's captures; an `id_` fetch returns the raw archived HTML) |
+| `_parse.py` | pure html → rows: header-driven stat mapping plus `parse_player_cell`, which handles the 2012, 2018+ and live player-cell shapes; unit-tested without network |
+| `_harvest.py` | the snapshot-driven harvest: one CDX query per (position, season), each capture assigned to the NFL week it pre-dates (latest per week kept), the live site unioned in, written resumably to bronze |
+| `backfill.py` | `python -m fantasypros_ingestion.backfill` — the 2012-2025 Wayback + live backfill, run **locally** (`FP_YEAR_START`/`FP_YEAR_END`, `FP_WEEKS`, `FP_LIVE_FROM`, `FP_RATE_PER_MIN`) |
+| `live_current.py` | `python -m fantasypros_ingestion.live_current` — the in-season daily Cloud Run job: season-long + current-week live projections under an `as_of=` sub-partition; self-gates to the NFL season and exits in the offseason |
 
 ## How it runs
 **Locally**, rate-limited (~4 req/min), **resumable** (a `(year, week)` whose GCS output exists is
-skipped). Env: `GCS_BUCKET_NAME`, `FP_NO_GCS` (1 = dry run), `FP_RATE_PER_MIN` (4),
-`FP_YEAR_START` (2012), `FP_YEAR_END`, `FP_WEEKS` (18), `FP_SEASON_ONLY`/`FP_WEEKLY_ONLY`.
+skipped). Env: `GCS_BUCKET_NAME`, `FP_RATE_PER_MIN` (4), `FP_YEAR_START` (2012), `FP_YEAR_END`,
+`FP_WEEKS` (18), `FP_LIVE_FROM` (the first season fetched live rather than from the Wayback CDX).
 
 Output: `projections/weekly/season={Y}/week={WW}/data.parquet` and `projections/season/season={Y}/data.parquet`
 — all 6 positions (qb/rb/wr/te/k/dst) unioned per file. Columns: `fp_id` (the FantasyPros player id from
@@ -26,7 +29,7 @@ team, raw projected stats, `fpts` (PPR), season, week (null = season-long), posi
 (QB/RB/WR/TE pages have a 2-row header where ATT/YDS/TDS repeat under PASSING/RUSHING/RECEIVING; K/DST
 have a 1-row header). It **fails loud** (`parse_fail`) on a header/column mismatch rather than mis-mapping
 values, and treats colspan placeholders ("Not enough sources…") as empty, not failure. Verify broadly
-with the `audit` subcommand before a full run.
+on one season (`FP_YEAR_START` = `FP_YEAR_END`) before a full run.
 
 ## Big gotcha — survivorship bias (only lives here; not in any memory note)
 **FantasyPros' historical projection pages only render players still in their current database**

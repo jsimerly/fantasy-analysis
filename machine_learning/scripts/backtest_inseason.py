@@ -111,14 +111,17 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
-    ap.add_argument("--no-tail-cache", action="store_true", help="--current: recompute the career tail even when _cache/career_tail has it for this key")
+    ap.add_argument("--no-tail-cache", action="store_true", help="recompute the career tail even when _cache/career_tail has it for this key (the --current run and every backtest cohort)")
     ap.add_argument("--sigma", choices=["band"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
+    ap.add_argument("--inseason-bags", type=int, default=1, help="context bagging (BACKLOG 36): K TabPFN fits per target on different context draws (recent seasons whole + a random share of the rest), averaged")
+    ap.add_argument("--inseason-focus-week", action="store_true", help="relevance-first context (BACKLOG 36): fit per predicted week on the snapshots nearest that week across every season")
     ap.add_argument("--inseason-next-one-per-season", action="store_true", help="the next-season models see one random snapshot week per player-season (a repeated label counts once)")
     ap.add_argument("--adp-dir", default=None, help="a directory with mfl.parquet / ffc.parquet (average draft position pulled locally) for the preseason group, instead of the lake")
     ap.add_argument("--proj-dir", default=None, help="a directory with weekly.parquet (Sleeper weekly projections pulled locally) for the consensus group, instead of the lake")
+    ap.add_argument("--no-fftoday", action="store_true", help="consensus group: leave out FFToday's 2010-2017 weekly projections (bronze/fftoday/projections), the history before Sleeper")
     ap.add_argument("--ffo-dir", default=None, help="a directory with weekly.parquet (nflverse ff_opportunity pulled locally) for the opportunity group, instead of the lake")
     ap.add_argument("--ngs-dir", default=None, help="a directory with receiving.parquet / rushing.parquet (Next Gen Stats pulled locally) for the usage group, instead of the lake")
     ap.add_argument("--inseason-train-weeks", default="", help="snapshot weeks the in-season model trains on, e.g. 3,6,9,13 (default: all for xgb, the checkpoint weeks for tabpfn)")
@@ -171,7 +174,8 @@ def main() -> None:
     is_tabpfn = args.inseason_backend == "tabpfn"
     is_train_weeks = [int(w) for w in args.inseason_train_weeks.split(",") if w] or ([int(w) for w in args.weeks.split(",")] if is_tabpfn else None)
     is_kw = dict(backend=args.inseason_backend, tabpfn_params=tabpfn_params if is_tabpfn else None, next_one_per_season=args.inseason_next_one_per_season,
-                 train_weeks=is_train_weeks, max_train_rows=args.inseason_max_rows if is_tabpfn else None)
+                 train_weeks=is_train_weeks, max_train_rows=args.inseason_max_rows if is_tabpfn else None,
+                 bags=args.inseason_bags, focus_week=args.inseason_focus_week)
     if is_tabpfn:
         print(f"in-season model: tabpfn {tabpfn_params or {}} on weeks {is_train_weeks}, at most {args.inseason_max_rows:,} rows per fit", flush=True)
     extra_cols = inseason.extra_columns(is_groups)
@@ -185,6 +189,9 @@ def main() -> None:
         else:
             ngs_rec, ngs_rush = gcs_io.read_lake_prefix(inseason.NGS_REC_PATH), gcs_io.read_lake_prefix(inseason.NGS_RUSH_PATH)
     schedules = gcs_io.read_lake_prefix(inseason.SCHEDULES_PATH) if "schedule" in is_groups else None
+    team_change = None
+    if "team_change" in is_groups:
+        team_change = (fg.Context().depth, gcs_io.read_lake_prefix(inseason.SNAP_COUNTS_PATH))
     ffo = None
     if "opportunity" in is_groups:
         ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
@@ -195,6 +202,17 @@ def main() -> None:
     if "consensus" in is_groups or "consensus_line" in is_groups:
         proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
         xw_ids = ids.select("sleeper_id", "gsis_id")
+        if not args.no_fftoday:
+            try:
+                fft = inseason.fftoday_as_consensus(gcs_io.read_lake_prefix(inseason.FFT_PATH), ids, base)
+            except Exception as e:  # noqa: BLE001
+                print("FFToday rows unavailable:", str(e)[:120], flush=True); fft = None
+            if fft is not None and fft.height:
+                have = set(int(x) for x in proj["season"].unique().to_list())
+                fft = fft.filter(~pl.col("season").is_in(sorted(have)))                 # Sleeper wins where both exist
+                print(f"consensus before Sleeper: FFToday {fft['season'].min()}..{fft['season'].max()}, {fft.height:,} player-weeks matched to gsis", flush=True)
+                proj = pl.concat([proj.with_columns(pl.col("player_id").cast(pl.Utf8)), fft.with_columns(pl.col("player_id").cast(pl.Utf8))], how="diagonal")
+                xw_ids = pl.concat([xw_ids.with_columns(pl.col("sleeper_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)), inseason.gsis_identity_rows(ids)], how="vertical")
     if "preseason" in is_groups:
         if args.adp_dir:
             mfl, ffc = pl.read_parquet(f"{args.adp_dir}/mfl.parquet"), pl.read_parquet(f"{args.adp_dir}/ffc.parquet")
@@ -204,7 +222,7 @@ def main() -> None:
         print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
                                                         status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
-                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason))
+                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change))
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:
@@ -271,7 +289,10 @@ def main() -> None:
     rows, lag_rows = [], []
     for T in range(args.first_cohort, last_complete):               # next-season outcome must be complete
         rep = replacement.replacement_levels(base, starters, seasons=list(range(T - 5, T)))
-        tail, sigma, survival, tail_model = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target)
+        # the career tail of a cohort is the same for every in-season variant (its groups do not touch it): cached across the
+        # backtests of a day unless the unified path needs the model object or --no-tail-cache says so
+        tail, sigma, survival, tail_model = career_tail(season, T - 1, rep, args.device, args.backend, tabpfn_params, args.cap, features=feature_cols, stacked=args.stacked, target=args.target,
+                                                     cache_dir=None if (args.snapshot_weeks or args.no_tail_cache) else TAIL_CACHE_DIR)
         rookie_tbl = inseason.rookie_tail_table(base, H, through=T - 1)
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps, as_of_season=T)
         k_end = market.ktc_as_of(hist, date(T + 1, 2, 15)).select("player_key", pl.col("ktc_value").alias("k_end"))
