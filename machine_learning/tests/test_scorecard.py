@@ -16,7 +16,7 @@ def _payload():
     return {"run_date": "2026-10-09", "season": 2026, "week": 5, "career_backend": "tabpfn stacked blend",
             "performance": {
                 "market": {"meta": {"cohorts": "2020-2022", "run_date": "2026-10-07"},
-                           "overall": [{"variant": "v", "horizon": 3, "n": 364, "rho_model": 0.6949, "rho_ktc": 0.6733, "cheap_gap_real": 12.85, "rich_gap_real": -10.64}],
+                           "overall": [{"variant": "v", "horizon": 3, "n": 364, "rho_model": 0.6949, "rho_ktc": 0.6733, "cheap_gap_real": 12.851, "rich_gap_real": -10.64}],
                            "swap_overall": [{"variant": "v", "horizon": 3, "pairs": 66, "win_rate": 0.7273, "gain_mean": 0.463}],
                            "swap_by_cohort": [{"variant": "v", "horizon": 3, "cohort": 2021, "pairs": 17, "win_rate": 0.71, "gain_mean": 0.52},
                                               {"variant": "v", "horizon": 3, "cohort": 2020, "pairs": 11, "win_rate": 0.73, "gain_mean": 0.53}],
