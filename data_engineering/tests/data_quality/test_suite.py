@@ -84,6 +84,7 @@ def healthy() -> tuple[dict, dict]:
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
     frames["fact_player_contract_season"] = pl.DataFrame({"season": [2026] * 1600, "gsis_id": [str(i) for i in range(1600)]})
     frames["fact_college_player_season"] = pl.DataFrame({"season": [2024, 2025], "cfbd_id": ["a", "b"]})
+    frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})   # the coming week's projections are in
     for s in range(2010, 2018):                   # FFToday's weekly projections 2010-2017, the consensus before Sleeper (one-time scrape)
         frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
     return frames, parts
