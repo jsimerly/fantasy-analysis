@@ -125,6 +125,30 @@ def par_against_outcome(snap: pl.DataFrame, rep: dict, top_n: int = 150) -> dict
         out.update({f"{span}|par": value.spearman(ph, pr), f"{span}|par_mae": float(np.mean(np.abs(pr - ph))), f"{span}|par_bias": float(np.mean(pr - ph))})
         if span == "next":
             out["n_par"] = top.height
+    # the benchmarks on ONE player set they can all rank (KTC-priced, outcome observable), every ranking against realized
+    # PAR: the model's projected PAR, KTC's value, the provider's projection for the coming week as ppg above replacement
+    # (Sleeper 2018 on, FFToday before; their later weeks were published later, so the coming week is the fair one), last season
+    if "ktc_value" in sc.columns:
+        cs = (pl.col("cs_next_ppr").fill_null(pl.col("cs_td_mean")) if "cs_next_ppr" in sc.columns else pl.lit(None, pl.Float64))
+        last = pl.col("bl_prior_ppg") if "bl_prior_ppg" in sc.columns else pl.lit(None, pl.Float64)
+        sc = sc.with_columns(pl.max_horizontal(cs.cast(pl.Float64) - rep_e, pl.lit(0.0)).alias("_cs"),
+                             pl.max_horizontal(last.cast(pl.Float64).fill_null(0.0) - rep_e, pl.lit(0.0)).alias("_last"))
+        for span, ok, h, r in (("next", "next_observable", "_nh", "_nr"), ("ros", "ros_observable", "_rh", "_rr")):
+            pr = sc.filter(pl.col(ok) & pl.col("ktc_value").is_not_null())
+            if pr.height < 20:
+                continue
+            real = pr[r].to_numpy().astype(float)
+            out[f"{span}|parb_model"] = value.spearman(pr[h].to_numpy().astype(float), real)
+            # the same projection unfloored: (ppg - replacement) x games keeps the order below replacement, where the floor ties at 0
+            ppg_c, g_c = ("next_ppg_hat", "next_games_hat") if span == "next" else ("ros_ppg_hat", "ros_games_hat")
+            signed = pr.select((pl.col(ppg_c).cast(pl.Float64).fill_null(0.0) - rep_e) * pl.col(g_c).cast(pl.Float64).fill_null(0.0)).to_series()
+            out[f"{span}|parb_model_unfloored"] = value.spearman(signed.to_numpy().astype(float), real)
+            if "cs_next_ppr" in sc.columns:
+                out[f"{span}|parb_provider_unfloored"] = value.spearman(pr.select(cs.cast(pl.Float64).fill_null(0.0) - rep_e).to_series().to_numpy().astype(float), real)
+            out[f"{span}|parb_ktc"] = value.spearman(pr["ktc_value"].to_numpy().astype(float), real)
+            if "cs_next_ppr" in sc.columns:
+                out[f"{span}|parb_provider"] = value.spearman(pr["_cs"].fill_null(0.0).to_numpy().astype(float), real)
+            out[f"{span}|parb_last_season"] = value.spearman(pr["_last"].fill_null(0.0).to_numpy().astype(float), real)
     return out
 
 
@@ -381,7 +405,10 @@ def main() -> None:
     res.write_parquet(out_dir / f"{args.tag or datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.parquet")   # per cohort x week, kept even with --no-write
     with pl.Config(tbl_rows=-1, float_precision=3, tbl_width_chars=220):
         print("\n== PRIMARY: points above replacement against what happened (top 150 by projected PAR, no market in the player set; mean over cohorts) ==")
-        print(res.group_by("W").agg(pl.col("n_par").mean(), pl.col("^(next|ros)\\|par.*$").mean()).sort("W"))
+        print(res.group_by("W").agg(pl.col("n_par").mean(), pl.col("^(next|ros)\\|par(_mae|_bias)?$").mean()).sort("W"))
+        print("== benchmarks on PAR: every ranking against realized points above replacement, on the KTC-priced players (one set all can rank) ==")
+        print(res.group_by("W").agg(pl.col("^next\\|parb_.*$").mean()).sort("W"))
+        print(res.group_by("W").agg(pl.col("^ros\\|parb_.*$").mean()).sort("W"))
         print("\n== secondary: rank correlation with NEXT-season raw points on the KTC-priced players (the market benchmark's set), by checkpoint week (mean over cohorts "
               f"{args.first_cohort}-{last_complete - 1}; players KTC priced that week) ==")
         print(res.group_by("W").agg(pl.col("n").sum(), pl.col("^next\\|.*$").mean()).sort("W"))

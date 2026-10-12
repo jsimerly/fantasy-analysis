@@ -1948,3 +1948,14 @@ t = 1.45) stays a tie.
     +3.03), PAR error lower on both (t +1.28 / +1.57). The adoption stands; the 3.5 re-check on PAR is queued after the
     main chain. Market-informed INPUTS (consensus projections, ADP) still predict real outcomes; what to watch is the
     edge over KTC -- the more the model borrows from the market, the smaller the gaps the swap test trades on.
+    **Are we beating KTC and the provider projections? (owner, 2026-10-12).** On raw points (the old scoring, the
+    production 3.5 model with the five groups, KTC-priced players) it looked decisive: rest of season 0.82 / 0.79 / 0.77
+    / 0.72 vs KTC 0.71 / 0.68 / 0.65 / 0.57 and the provider's coming-week projection 0.78 / 0.77 / 0.73 / 0.67; next
+    season 0.58 / 0.59 / 0.61 / 0.62 vs KTC 0.55 / 0.56 / 0.57 / 0.58. Raw points flatter the model (KTC prices
+    positional scarcity, raw points do not). On PAR against outcomes, same players (`next|parb_*` / `ros|parb_*`), trees
+    with the five groups: rest of season model 0.67 / 0.65 / 0.61 / 0.55 vs KTC 0.62 / 0.59 / 0.55 / 0.46 and the
+    provider 0.63 / 0.60 / 0.57 / 0.50 -- ahead at every week; next season 0.54 / 0.55 / 0.58 / 0.58 vs KTC 0.56 / 0.58
+    / 0.59 / 0.59 and the provider 0.53 / 0.55 / 0.58 / 0.58 -- even with the provider, a hair behind KTC. The model is
+    ranked unfloored ((ppg - replacement) x games): floored PAR ties everyone projected below replacement at zero and
+    cost it 0.01-0.06 against KTC's continuous values. The 3.5 answer (`par35_all5`, `par35_base`) runs in Monday
+    night's idle gap.
