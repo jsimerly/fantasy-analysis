@@ -1677,6 +1677,11 @@ t = 1.45) stays a tie.
     `weekly_refresh.py`, reversible), pending the residual rematch; the distribution metrics need `--range` on the harness
     runs (the after-prod chain ran without it, so pinball / coverage / skew are null tonight).
 
+    **Residual rematch 2026-10-12 02:02 (`tabpfn35_set_stacked_res_w2` vs `_blend_w2`, same night, bands on): TIE,
+    blend stays.** Ordering 0.628 vs 0.621 (t = +0.9), wins error 0.499 vs 0.502 (t = +1.4); residual's bands are
+    better calibrated (20-80 coverage 0.60 vs 0.57, pinball 1.087 vs 1.094, t = +3.4) and it under-projects the
+    prior top 12 more (bias +0.14 vs +0.05 wins, t = -6.6). Worth one combined test later: band sigma (item 45)
+    prices upside off these very bands, so residual + band sigma may beat blend + band sigma on the fixed set.
 45. **Value-side verdicts on one player set, and the spread question settled (2026-10-12 01:00, the night chain).**
     The blend baseline `tabpfn35_set_stacked_blend_w2` (bands, cohort frames saved; 1 h 36 m) rescored four ways, then
     re-judged on ONE player set per cohort (the union of the baseline's and the variant's top 150 by projected WAR,
