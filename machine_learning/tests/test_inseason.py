@@ -427,3 +427,13 @@ def test_team_change_features_flag_a_new_starter_and_count_the_returning_line():
     snaps = inseason.build_snapshots(wk, ss, weeks=[2], team_change=(depth, sc))
     assert {"tc_qb_new", "tc_ol_returning", "tc_is_new_qb"} <= set(snaps.columns)
     assert inseason.extra_columns(["team_change"]) == inseason.TEAM_CHANGE_COLS
+
+
+def test_preseason_reads_the_lake_shape_of_the_mfl_adp():
+    ids = pl.DataFrame({"mfl_id": ["11192"], "gsis_id": ["00-1"], "name": ["A B"], "position": ["RB"]})
+    lake = pl.DataFrame({"season": [2015], "mfl_id": ["11192"], "adp": [2.63]})                 # adp_ingestion.flatten_mfl's column name
+    local = lake.rename({"mfl_id": "ext_id"})
+    for mfl in (lake, local):
+        out = inseason.preseason_features(mfl, None, ids)
+        r = out.row(0, named=True)
+        assert r["player_id"] == "00-1" and r["season"] == 2015 and r["ps_adp"] == 2.63 and r["ps_drafted"] == 1.0

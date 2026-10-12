@@ -326,6 +326,8 @@ def preseason_features(mfl: pl.DataFrame | None, ffc: pl.DataFrame | None, xwalk
     xw = xwalk.with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id")).filter(pl.col("player_id").is_not_null() & (pl.col("player_id") != ""))
     parts = []
     if mfl is not None and mfl.height:
+        if "ext_id" not in mfl.columns and "mfl_id" in mfl.columns:     # the lake's shape (adp_ingestion writes mfl_id)
+            mfl = mfl.rename({"mfl_id": "ext_id"})
         by_id = xw.select(pl.col("mfl_id").cast(pl.Utf8).alias("ext_id"), "player_id", pl.col("position").cast(pl.Utf8)).drop_nulls("ext_id").unique("ext_id")
         parts.append(mfl.with_columns(pl.col("ext_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64), pl.col("adp").cast(pl.Float64))
                         .join(by_id, on="ext_id", how="inner").select("player_id", "season", "position", "adp"))
