@@ -452,3 +452,24 @@ def test_random_weeks_keep_k_per_player_season_and_cover_the_season():
     snaps = inseason.build_snapshots(wk, ss, weeks=[2, 3, 4, 5, 6, 7, 8])
     m = inseason.InSeasonModels(n_estimators=5, max_depth=2, random_weeks=2).fit(snaps, as_of_season=2022)
     assert m.train_rows["ros_games"] <= 2 * snaps.select("player_id", "season").unique().height
+
+
+def test_mixed_weeks_with_bags_give_each_model_its_own_weeks(monkeypatch):
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2, 3, 4, 5, 6, 7, 8, 9])
+    seen = []
+
+    class Fake:
+        def fit(self, X, y):
+            seen.append(X[:, 0].copy()); return self
+
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    m = inseason.InSeasonModels(random_weeks=2, bags=3)
+    monkeypatch.setattr(m, "_new", lambda: Fake())
+    monkeypatch.setattr(inseason, "feature_frame", lambda rows, extra: rows.select(pl.col("week").cast(pl.Float64), pl.col("season").cast(pl.Float64)))
+    m.fit(snaps, as_of_season=2022)
+    ros_games = seen[:3]                                         # the first target's three bags
+    assert len(m.models["ros_games"]) == 3
+    assert len({tuple(sorted(np.unique(w))) for w in ros_games}) >= 1 and not all(np.array_equal(np.sort(ros_games[0]), np.sort(w)) for w in ros_games[1:])

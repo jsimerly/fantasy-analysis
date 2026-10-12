@@ -637,6 +637,7 @@ class InSeasonModels:
         for name, (rows, target) in specs.items():
             if self.next_one_per_season and name.startswith("next_"):
                 rows = one_week_per_season(rows, self.seed)
+            pool = rows                                   # every snapshot week: a bag with random weeks draws its own from here
             if self.random_weeks:
                 rows = random_weeks_per_season(rows, self.random_weeks, self.seed)
             elif self.train_weeks is not None:
@@ -647,7 +648,9 @@ class InSeasonModels:
                 self._pool[name] = (rows, target)
                 self.train_rows[name] = min(rows.height, self.max_train_rows or rows.height)
                 continue
-            if self.bags > 1:
+            if self.bags > 1 and self.random_weeks:       # mixed weeks x bags: each model its own weeks per player-season (BACKLOG 48)
+                draws = [bag_subset(random_weeks_per_season(pool, self.random_weeks, self.seed + b), self.max_train_rows, self.seed + b) for b in range(self.bags)]
+            elif self.bags > 1:
                 draws = [bag_subset(rows, self.max_train_rows, self.seed + b) for b in range(self.bags)]
             else:
                 draws = [training_subset(rows, None, self.max_train_rows, self.seed)]

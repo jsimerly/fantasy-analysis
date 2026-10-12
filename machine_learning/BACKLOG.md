@@ -1766,3 +1766,7 @@ t = 1.45) stays a tie.
     `backtest_inseason.py --inseason-random-weeks K` keeps K random snapshot weeks per player-season instead: the
     same row count, every point of the season covered, the labels as valid as before (the week is an input).
     Test: fixed 3 / 6 / 9 / 13 vs 4 random, both evaluated off the grid (weeks 4 / 7 / 10 / 12), cohorts 2023-24.
+    Owner, the same morning: "we can mix it up a lot, we have a lot of rows". The cap is the limit (~50k rows a
+    model; 4 weeks per player-season already fills it), so two more variants: 8 random weeks per player-season (more
+    weeks, fewer seasons) and 4 random weeks x 3 bags with each bag drawing its own weeks (up to 12 weeks per
+    player-season, ~150k distinct rows across the models; `InSeasonModels(random_weeks=, bags=)`, spec-tested).
