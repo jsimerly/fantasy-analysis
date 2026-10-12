@@ -90,6 +90,16 @@ class Context:
         return self._college if self._college is not None and self._college.height else None
 
     _college2: pl.DataFrame | None = None
+    _is_inputs: dict | None = None
+
+    def inseason_inputs(self, group: str) -> dict:
+        """The lake tables an in-season group reads (inseason.load_group_inputs), loaded once per group."""
+        import inseason
+        if self._is_inputs is None:
+            self._is_inputs = {}
+        if group not in self._is_inputs:
+            self._is_inputs[group] = inseason.load_group_inputs([group], self._load(SEASON_FACT_PATH))
+        return self._is_inputs[group]
     _college_qb: pl.DataFrame | None = None
     _adp: pl.DataFrame | None = None
 
@@ -474,6 +484,38 @@ def build_adp(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
         pl.when(this_known).then(pl.col("adp_this_drafted").fill_null(0.0)).otherwise(None).alias("adp_this_drafted"))
 
 
+WEEK_GROUPS = {"is_usage": "usage", "is_role": "role", "is_opportunity": "opportunity", "is_consensus": "consensus", "is_preseason": "preseason"}
+
+
+def week_group_columns(name: str) -> list[str]:
+    import inseason
+    return list(inseason.EXTRA_GROUPS[WEEK_GROUPS[name]])
+
+
+def make_week_group_build(name: str):
+    """A career group from an in-season group (BACKLOG 51, the owner: "and career model as well"): its columns computed
+    through each row's ``row_week`` -- the whole season on a season row (18), the weeks so far on a season-to-date row."""
+    src = WEEK_GROUPS[name]
+
+    def build(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+        import inseason
+        cols = week_group_columns(name)
+        if "row_week" not in matrix.columns:
+            matrix = matrix.with_columns(pl.lit(18, pl.Int64).alias("row_week"))
+        gi, wk = ctx.inseason_inputs(src), ctx.weeks
+        parts = []
+        for w in sorted(int(x) for x in matrix["row_week"].drop_nulls().unique().to_list() if int(x) > 0):
+            f = inseason.week_group_features(wk, w, gi, [src])
+            parts.append(f.select(["player_id", pl.col("season").cast(pl.Int64)] + [c for c in cols if c in f.columns]).with_columns(pl.lit(w, pl.Int64).alias("row_week")))
+        if not parts:
+            return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in cols if c not in matrix.columns])
+        feats = pl.concat(parts, how="diagonal_relaxed")
+        out = matrix.with_columns(pl.col("season").cast(pl.Int64), pl.col("row_week").cast(pl.Int64)).join(
+            feats, on=["player_id", "season", "row_week"], how="left")
+        return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in cols if c not in out.columns])
+    return build
+
+
 def build_college2(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     """Join the per-player college2 row onto every season row (static over a career)."""
     col = ctx.college2
@@ -648,6 +690,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
     "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
+    **{n: FeatureGroup(n, [], make_week_group_build(n), f"the in-season {s} group through each row's week (BACKLOG 51)") for n, s in WEEK_GROUPS.items()},
     "college_qb": FeatureGroup("college_qb", COLLEGE_QB_COLS, build_college_qb, "CFBD quarterback passing efficiency and rushing, against the season's college QBs (BACKLOG 50)"),
     "draft_age": FeatureGroup("draft_age", DRAFT_AGE_COLS, build_draft_age, "age entering the league, explicit (BACKLOG 50)"),
     "adp": FeatureGroup("adp", ADP_COLS, build_adp, "preseason redraft ADP, next season and this (MFL / FFC; BACKLOG 50)"),
@@ -677,7 +720,8 @@ def resolve(names: list[str] | str) -> list[FeatureGroup]:
 def feature_columns(groups: list[FeatureGroup]) -> list[str]:
     cols: list[str] = []
     for g in groups:
-        cols += [c for c in g.columns if c not in cols]
+        own = week_group_columns(g.name) if g.name in WEEK_GROUPS else g.columns     # the in-season groups' columns, resolved late (no import cycle)
+        cols += [c for c in own if c not in cols]
     return cols
 
 

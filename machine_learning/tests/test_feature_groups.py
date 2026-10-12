@@ -282,3 +282,30 @@ def test_adp_puts_next_seasons_market_on_the_row_and_undrafted_past_the_last_pic
     assert out[("b", 2021)]["adp_next_drafted"] == 0.0 and out[("b", 2021)]["adp_next"] == 400.0      # not drafted in 2022
     assert out[("c", 2020)]["adp_next_drafted"] == 0.0
     assert out[("a", 2022)]["adp_next"] is None                                                       # 2023 not known yet
+
+
+def test_week_aware_groups_take_each_rows_own_week(monkeypatch):
+    """The career model's in-season groups (BACKLOG 51): a season row reads the whole season (week 18), a to-date row
+    the weeks so far; the columns resolve to the in-season group's own."""
+    import polars as pl
+    import feature_groups as fg
+    import inseason
+    assert fg.feature_columns(fg.resolve(["is_opportunity"])) == list(inseason.OPP_COLS)
+    seen = []
+
+    def fake(wk, w, gi, groups):
+        seen.append(w)
+        return pl.DataFrame({"player_id": ["a", "b"], "season": [2025, 2025], "op_xfp_pg": [float(w), float(w) + 0.5]})
+    monkeypatch.setattr(inseason, "week_group_features", fake)
+
+    class Ctx(fg.Context):
+        weeks = None
+        def inseason_inputs(self, group):
+            return {}
+
+    m = pl.DataFrame({"player_id": ["a", "a", "b"], "season": [2025, 2025, 2025], "row_week": [18, 5, 0]})
+    out = fg.GROUPS["is_opportunity"].build(m, Ctx())
+    got = {(r["player_id"], r["row_week"]): r["op_xfp_pg"] for r in out.to_dicts()}
+    assert sorted(seen) == [5, 18]                       # a draft row (week 0) asks for nothing
+    assert got[("a", 18)] == 18.0 and got[("a", 5)] == 5.0 and got[("b", 0)] is None
+    assert set(inseason.OPP_COLS) <= set(out.columns)

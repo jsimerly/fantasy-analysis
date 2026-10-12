@@ -458,6 +458,28 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def week_group_features(wk: pl.DataFrame, w: int, gi: dict, groups: Iterable[str]) -> pl.DataFrame:
+    """The named in-season groups' columns through week ``w`` for every (player_id, season) -- the same builders
+    ``build_snapshots`` joins, without the snapshot around them (the career model's week-aware groups, BACKLOG 51)."""
+    groups = set(groups)
+    out = wk.filter(pl.col("week") <= w).select("player_id", "season").unique()
+    if "usage" in groups and (gi.get("ngs_receiving") is not None or gi.get("status") is not None):
+        u = usage_features(gi.get("ngs_receiving"), gi.get("ngs_rushing"), gi.get("status"), w)
+        if u.width > 2:
+            out = out.join(u, on=["player_id", "season"], how="left")
+    if "role" in groups:
+        out = out.join(role_features(wk, gi.get("status"), w), on=["player_id", "season"], how="left")
+    if "opportunity" in groups and gi.get("opportunity") is not None:
+        out = out.join(opportunity_features(gi["opportunity"], w), on=["player_id", "season"], how="left")
+    if "preseason" in groups and gi.get("preseason") is not None:
+        out = out.join(gi["preseason"], on=["player_id", "season"], how="left").with_columns(
+            pl.when(pl.col("season") >= PRESEASON_FIRST_SEASON).then(pl.col("ps_drafted").fill_null(0.0)).otherwise(None).alias("ps_drafted"))
+    if "consensus" in groups and gi.get("consensus") is not None and gi.get("consensus_xwalk") is not None:
+        out = out.join(consensus_features(gi["consensus"], gi["consensus_xwalk"], wk, w), on=["player_id", "season"], how="left").with_columns(
+            pl.when(pl.col("season") >= CONSENSUS_FIRST_SEASON).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
+    return out
+
+
 def load_group_inputs(is_groups: Iterable[str], base: pl.DataFrame, ngs_dir: str | None = None, ffo_dir: str | None = None,
                       proj_dir: str | None = None, adp_dir: str | None = None, no_fftoday: bool = False) -> dict:
     """The lake tables the named in-season groups read, as ``build_snapshots`` keyword arguments (``depth`` aside). Shared by

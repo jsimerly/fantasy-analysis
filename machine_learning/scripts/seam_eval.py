@@ -41,17 +41,7 @@ from run_experiment import build_context  # noqa: E402
 
 H = [1, 2, 3, 4]
 SET = "base,career,injury,trend,situation,rookie,college"
-# groups that describe one player (not one season): valid on a mid-season row as they are on a season row
-STATIC_GROUPS = {"rookie", "college", "college2", "college_qb", "draft_age", "adp_this"}
 AGE_BANDS = (("<=24", 0.0, 24.99), ("25-28", 25.0, 28.99), ("29+", 29.0, 99.0))
-
-
-def mask_season_groups(df: pl.DataFrame, groups) -> pl.DataFrame:
-    """Season-level group columns (injury weeks, the second-half trend, team changes, next season's ADP) describe a whole
-    season: null on the to-date rows, which have not seen it."""
-    cols = [c for g in groups if g.name not in STATIC_GROUPS for c in g.columns if c not in career.FEATURES and c in df.columns]
-    snap = pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) > 0.5
-    return df.with_columns([pl.when(snap).then(None).otherwise(pl.col(c)).alias(c) for c in cols]) if cols else df
 
 
 def par(df: pl.DataFrame, rep: dict, ks: list[int], hat: bool) -> np.ndarray:
@@ -109,7 +99,7 @@ def main() -> None:
     hc = build_context(H, args.first_cohort, args.last_cohort, "weekly", todate_weeks=sorted(set(train_w) | set(test_w)))
     groups = fg.resolve(args.groups)
     cols = fg.feature_columns(groups)
-    df = mask_season_groups(fg.assemble(hc.matrix, groups, hc.ctx), groups)
+    df = unified.mask_season_groups(fg.assemble(hc.matrix, groups, hc.ctx), groups)
     snap = pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) > 0.5
     seasons_only = df.filter(~snap)
     train_all = df.filter(~snap | pl.col("row_week").is_in(train_w))

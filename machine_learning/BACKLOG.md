@@ -1924,3 +1924,12 @@ t = 1.45) stays a tie.
     experiments (the mixed-week chains move to Tuesday night); Tuesday, after the regular refresh, `chain_todate` re-runs
     the production refresh with `--career-todate` if `seam_35` passes the harness rule (ordering t > 2.4, PAR error no
     worse); the 7-season and young chains follow.
+    **The in-season groups on the career model (owner, 2026-10-12: "and career model as well"):** `is_usage`, `is_role`,
+    `is_opportunity`, `is_consensus`, `is_preseason` -- the in-season builders (`inseason.week_group_features`) run to
+    each row's `row_week`: the whole season on a season row, the weeks so far on a to-date row (never masked). Trees:
+    the season-model harness 0.614 vs 0.591 (t +1.81), error 0.523 vs 0.530 (t +1.13), below the line; on the seam test
+    (one random training week) every path gains -- last season 0.598 / 0.599 / 0.601 / 0.603 (was 0.583 / 0.587 /
+    0.589 / 0.588), to date 0.649 / 0.655 / 0.678 / 0.701 (was 0.630 / 0.650 / 0.666 / 0.696), the season model at
+    season end 0.715-0.723 (was 0.701-0.710); to date vs last season +0.070 (t +8.6, 29 of 32). Queued on 3.5 right
+    after Tuesday's refresh (`seam_35_is5`, then `tabpfn35_is5` on the day's harness baseline). The production
+    in-season model took the five groups the same day (item 39).
