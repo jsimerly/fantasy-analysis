@@ -230,7 +230,7 @@
   <div class="controls">
     <span class="ctl"><label for="lg">League</label><select id="lg"></select></span>
     <span class="ctl"><label for="view">View</label><select id="view"><option value="career" selected>Career (dynasty)</option><option value="ros">ROS (redraft)</option></select></span>
-    <span class="ctl"><label for="unit">Rank by</label><select id="unit"><option value="war" selected>Career WAR (wins)</option><option value="war_ros">ROS WAR (wins)</option><option value="par">Career PAR (points)</option><option value="par_ros">ROS PAR (points)</option></select></span>
+    <span class="ctl"><label for="unit">Rank by</label><select id="unit"><option value="par" selected>Career PAR (points)</option><option value="par_ros">ROS PAR (points)</option><option value="war">Career WAR (wins)</option><option value="war_ros">ROS WAR (wins)</option></select></span>
     <span class="ctl"><label for="disc">Discount rate</label><input type="range" id="disc" min="0" max="100" step="5" value="20" aria-valuetext="20% per year"><span class="val" id="discv">20%/yr</span></span>
     <span class="ctl"><label for="years">Years</label><select id="years"><option>1</option><option>3</option><option>5</option><option>7</option><option selected>10</option></select></span>
     <span class="ctl"><label for="fairm">Fair</label><select id="fairm"><option value="rank" selected>rank match</option><option value="curve">curve fit</option></select></span>
@@ -239,7 +239,7 @@
   <div class="leaguebox" id="leaguebox"></div>
 
   <section id="tab-players" role="tabpanel" aria-labelledby="tb-players">
-  <p class="how">Value is projected production turned into <b>wins above replacement (WAR)</b> for the selected league: each projected season's points above that league's replacement level (the best player left over after every lineup is filled from the players who actually play that week, so injuries and byes push the line deeper than the Nth starter), mapped through the league's own win curve, with the rest of this season at full weight and later seasons discounted at the <b>rate</b> you choose. <b>PAR</b> (points above replacement) is the same thing before the win mapping. No market input goes into either. <b>Fair</b> is what the market would pay if it agreed with our value, two ways. <em>Rank match</em>: line players up by our value and by price; the player we rank 10th gets the 10th-highest price as his fair value. It keeps the market's own price ladder and only argues about who stands where, so inside a flat tier (KTC's 9990s) swaps show as 0% and the <em>Gap</em> column carries the signal. <em>Curve fit</em>: one smooth line through every (our value, price) point, and each player's fair price is read off the line. That also judges the ladder's shape, so it can call a whole tier rich or cheap, but it cannot follow KTC's capped top, which once made every top asset look overpriced. <b>Mispricing</b> compares the market to that fair value within the player's position, the read to trade on; <b>All positions</b> does it with one line across every position, which also carries the model's positional lean (it gives quarterbacks a larger share of league wins than the market or the realized seasons do, so receivers read rich there), so take that column with the Performance tab.</p>
+  <p class="how">Value starts as <b>points above replacement (PAR)</b>: each projected season's points above this league's replacement level (the best player left over after every lineup is filled from the players who actually play that week, so injuries and byes push the line deeper than the Nth starter). <b>PAR / game</b> is the plain version: how many points per game a player gives you over a waiver-wire player at his position, rest of this season. Seasons after this one are discounted at the <b>rate</b> you choose. <b>WAR</b> (wins above replacement) is the same PAR run through this league's own win curve, for comparing across leagues and positions in wins; rank by either. No market input goes into any of it. <b>Fair</b> is what the market would pay if it agreed with our value, two ways. <em>Rank match</em>: line players up by our value and by price; the player we rank 10th gets the 10th-highest price as his fair value. It keeps the market's own price ladder and only argues about who stands where, so inside a flat tier (KTC's 9990s) swaps show as 0% and the <em>Gap</em> column carries the signal. <em>Curve fit</em>: one smooth line through every (our value, price) point, and each player's fair price is read off the line. <b>Mispricing</b> compares the market to that fair value within the player's position, the read to trade on; <b>All positions</b> does it with one line across every position, which also carries the model's positional lean (it gives quarterbacks a larger share of league wins than the market or the realized seasons do, so receivers read rich there), so take that column with the Performance tab.</p>
   <div class="controls">
     <input type="search" id="q" placeholder="Search player" aria-label="Search player">
     <div class="chips" id="pos" role="group" aria-label="Position">
@@ -324,7 +324,7 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let data = null, rows = [], sortKey = 'iv', sortDir = -1, posFilter = 'ALL', allCols = [], colGroups = [];
   const open = new Set();
-  const st = { rate: 0.2, years: 10, mkt: 'ktc', fair: 'rank', unit: 'war', league: null, team: null, picks: true };
+  const st = { rate: 0.2, years: 10, mkt: 'ktc', fair: 'rank', unit: 'par', league: null, team: null, picks: true };
   const rowsIn = () => data.rows.filter(r => !r.pick || st.picks);     // pick rows take part in ranking and pricing only when shown
 
   function misCell(m) {
@@ -372,6 +372,7 @@
       { label: ins ? 'Rest of season' : 'Season 1', cols: [
         ...(ins ? [{ key: 'td_ppg', label: yy + ' PPG so far', get: r => r.td_ppg, cell: r => fmt(r.td_ppg, 1) }] : []),
         { key: 'h1_ppg', label: 'Proj PPG', get: r => r.h1_ppg, cell: r => fmt(r.h1_ppg, 1) },
+        { key: 'par_pg', label: 'PAR / game', title: 'Points per game above a freely available player at his position, rest of this season', get: r => r.par_pg, cell: r => r.par_pg == null ? '<span class="dim">–</span>' : fmt(r.par_pg, 1) },
         { key: 'par_ros', label: 'PAR', get: r => r.par_ros, cell: r => B('par_ros', fmt(r.par_ros)) },
         { key: 'war_ros', label: 'WAR', get: r => r.war_ros, cell: r => B('war_ros', fmt(r.war_ros, 2)) },
       ] },
@@ -446,6 +447,7 @@
       if (c.wl && c.wh) for (let k = 0; k < Math.min(N, c.wl.length); k++) { lo += c.wl[k] * Math.pow(d, k); hi += c.wh[k] * Math.pow(d, k); }
       r.war_lo = c.wl ? lo : null; r.war_hi = c.wh ? hi : null;
       r.par = par; r.war = c.w ? war : null; r.par_ros = c.v ? c.v[0] : null; r.war_ros = c.w ? c.w[0] : null;
+      r.par_pg = c.v && r.g && r.g[0] > 0.5 ? c.v[0] / r.g[0] : null;   // points above replacement per game, rest of season: the manager's number
       r.iv = r[st.unit] == null ? 0 : r[st.unit];
       r.market = r[mk] != null && r[mk] > 0 ? r[mk] : null;
       r.fair = r.mis_pct = r.fair_pos = r.mis_pct_pos = r.market_rank = r.iv_rank = r.rank_gap = null;

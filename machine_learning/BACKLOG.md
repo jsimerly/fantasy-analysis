@@ -1730,3 +1730,21 @@ t = 1.45) stays a tie.
     path yet (the harness's `--fixed-scale` only). Band sigma also removes the cold run's sigma refit (~1 h of the
     1 h 58 m) once the career tail stops computing it. Scripts: scratchpad `dissect_sigma.py`, `fixed_set.py`
     (to move into `experiments.rescore` as reported columns if the rule is adopted).
+
+46. **The quarterback lean, traced; PAR first; band sigma in production (owner, 2026-10-12: "why does manually
+    adjusting help when we're projecting real outcomes?").** On the blend frames (cohorts 2015-22, every observable
+    player): the projections themselves are close by position -- games within +-0.5 of realized, points 2-6 per
+    player-season low everywhere. The gap is in PAR: realized minus projected PAR, summed, is ~0 for QBs (-137 / -238 /
+    +261 at h1 / h2 / h3) but +2,100 to +2,500 for RBs (about 20 % of their projected PAR), +1,200 to +2,300 for WRs and
+    +600 to +1,100 for TEs. So quarterbacks are priced right; everyone else is under-priced, because the projections
+    are pulled toward the average and a skill player's value lives in the top tail above a ~9 ppg replacement line.
+    The upside term is not the cause (it is 32 % of QB value vs 35-37 % elsewhere). **The x0.82 QB scale is dropped:**
+    it only mimics scaling the others up, the 0.82 was read off realized shares of the 2020-22 cohorts that are also
+    test cohorts (partly in-sample), and its leak-free walk-forward version failed (wins error t = -2.1). The real
+    fix is to price PAR off the player's whole predictive distribution instead of a point + a normal spread
+    ("distributional PAR": TabPFN returns quantiles); per-player band sigma (adopted below) is the first step.
+    **Owner's calls the same morning:** (1) band sigma ADOPTED for production (`PRESETS["production"]["sigma"] =
+    "band"`); (2) PAR is the unit the owner reads -- the page now ranks by Career PAR by default and shows **PAR / game**
+    (rest of season: points per game over a waiver-wire player at the position); WAR stays, computed per league from
+    PAR through that league's win curve. The harness still accepts on WAR (switching would orphan 90+ ledger rows);
+    PAR metrics can be added beside it.
