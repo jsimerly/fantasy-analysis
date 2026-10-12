@@ -1335,6 +1335,12 @@ t = 1.45) stays a tie.
     runs after Monday Night Football so the career projections move weekly; speed is not a goal,
     an 8-hour budget is. The binding constraint for TabPFN is context, not time: the in-season
     model has 199k snapshot rows but holds 50k in 16 GB (also the model's pretraining limit).
+    **Correction 2026-10-12 (owner: "why is 3.5 so limited?"):** 50k was TabPFN 2.5's limit; the 3.5 checkpoint's own
+    inference config says MAX_NUMBER_OF_SAMPLES = 1,000,000 and 20,000 features, and the production career model
+    already runs 3.5 on ~115k pooled rows on this 16 GB card (1 h 51 m with the sigma refit). The in-season cap
+    (`--inseason-max-rows 50000`) is ours and only bites once training uses more than four weeks (4 fixed weeks =
+    ~53k snapshots, all 15 weeks = ~200k). Uncapped variants queued (BACKLOG 48): 8 random weeks / ~110k rows and
+    every week / ~210k rows, each with a hard stop before Tuesday's refresh.
     Levers, each through the harness under the co-primary rule, in order:
     1. *Ensemble size* (`--tabpfn-params n_estimators=32`; production = the library default) on
        the career and the in-season model. Zero code; `chain_accuracy.sh` (scratchpad) is
