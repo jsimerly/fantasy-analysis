@@ -1632,6 +1632,11 @@ t = 1.45) stays a tie.
     crossing 8 p.m. Eastern lost its projections; the refresh's run date is now passed down), and the export
     served `market_trends` as the market backtest (prefix listing; now an exact match, and the production
     preset pins its own market run, `market_run_date`).
+    **And a third, the next morning (2026-10-12 06:24):** the warm refresh missed the cache and recomputed the
+    tail (1 h 50 m): the key hashed every column of the visible rows, and the season fact's `loaded_at` stamp is
+    rewritten by every daily rebuild, so no two mornings ever shared a key. The key now hashes the content
+    columns only (`tail_cache.content_columns`: ingestion stamps excluded; spec-tested); this morning's entry is
+    re-keyed so Tuesday's run is the warm one.
 
 42. **Positional calibration (owner, 2026-10-09 evening: "why is like every WR over rated?").** The
     pooled mispricing column carries a positional lean: tonight's run gives quarterbacks 36-47 %

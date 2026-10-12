@@ -37,8 +37,19 @@ def visible_rows(season_df: pl.DataFrame, as_of: int) -> pl.DataFrame:
     return season_df.filter(cond)
 
 
+VOLATILE = ("loaded_at",)      # ingestion stamps: rewritten by every daily rebuild while the data is unchanged
+
+
+def content_columns(df: pl.DataFrame) -> list[str]:
+    """The columns that carry data: everything except ingestion stamps (``loaded_at`` and any other
+    ``*_at`` datetime), which the daily DAG rewrites every morning -- hashing them made every key new
+    and the weekly cache never hit (found on the 2026-10-12 refresh)."""
+    return [c for c, t in df.schema.items() if c not in VOLATILE and not (c.endswith("_at") and t.is_temporal())]
+
+
 def cache_key(season_df: pl.DataFrame, as_of: int, config: dict, code: Iterable[Path] = CODE) -> str:
     seen = visible_rows(season_df, as_of)
+    seen = seen.select(content_columns(seen))
     h = hashlib.sha1()
     h.update(json.dumps({"as_of": int(as_of), "config": config, "polars": pl.__version__, "columns": seen.columns, "shape": list(seen.shape)},
                         sort_keys=True, default=str).encode())
