@@ -35,7 +35,7 @@ def test_scorecard_leads_with_the_swap_test_and_the_mispricing():
     keys = [h["key"] for h in card["headline"]]
     assert keys == ["swap_test", "mispricing", "rest_of_season", "three_years_out", "career_error"]
     swap, mis, ros, three, err = card["headline"]
-    assert swap["value"] == 73 and swap["unit"] == "% won" and "66 swaps" in swap["detail"] and swap["secondary"] == 0.46
+    assert swap["value"] == 73 and swap["unit"] == "% won" and "66 swaps made each February 2021-2023" in swap["detail"] and swap["secondary"] == 0.46
     assert mis["value"] == 12.9 and mis["secondary"] == -10.6 and "10.6 worse" in mis["detail"]
     assert ros["value"] == 0.784 and ros["secondary"] == 0.704 and "week 13" in ros["detail"]
     assert three["value"] == 0.695 and three["secondary"] == 0.673 and "364 priced" in three["detail"]
@@ -52,8 +52,8 @@ def test_markdown_table_carries_every_headline_and_the_named_swaps():
     assert "| The swap test: same-price trades the model would have made | **73 % won** |" in md
     assert "| The mispricing is real | **12.9 ranks better** |" in md
     assert "**-30 % error**" in md
-    assert "| 2021 | A, WR (5,112) | 0.00 | B, RB (4,974) | 3.16 | +3.16 |" in md
-    assert "Win rate by year: 2020: 73% of 11 · 2021: 71% of 17." in md and "RB 89% (+1.18 wins per swap)" in md
+    assert "| 2022 | A, WR (5,112) | 0.00 | B, RB (4,974) | 3.16 | +3.16 |" in md                     # cohort 2021 -> the swap of February 2022
+    assert "Win rate by year of the swap: February 2021: 73% of 11 · February 2022: 71% of 17." in md and "RB 89% (+1.18 wins per swap)" in md
 
 
 def test_an_empty_performance_block_gives_an_empty_card_not_an_error():

@@ -37,7 +37,7 @@ STEPS = ["inseason", "war", "analysis", "export"]
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
                        inseason_backend="tabpfn", target="blend",    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
-                       market_run_date="2026-10-07"),                # the Model performance tab's market backtest: the production model's own, not the newest experiment
+                       market_run_date="2026-10-12"),                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 
 

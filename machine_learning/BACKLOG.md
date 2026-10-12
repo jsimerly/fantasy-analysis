@@ -673,10 +673,15 @@ the same backtest that answers "are we beating the market"); 24 after the winner
 
 23. **Model vs market backtest, 2021 to now: are we winning, and where.** *(2026-10-10: the backtest now
     carries realized points and points above replacement per player and per swap -- the numbers a
-    non-modeller reads; the page's swap test leads with them (+196 points per swap over three seasons,
-    +104 above replacement, ahead in 82 % of swaps; in wins 73 %, +0.46). The production summary of
-    2026-10-07 was enriched from the lake by a one-off (scratchpad `enrich_swaps.py`); the restart chain
-    re-runs the backtest on the blend preset with `--publish` so the permanent path fills them.)* KTC dynasty values are
+    non-modeller reads. **Correction 2026-10-12:** Friday's one-off enrichment of the 2026-10-07 summary
+    (+196 points per swap) summed seasons T..T+2 for cohort T; the swap is made at KTC of 15 February T+1
+    and the projections cover T+1..T+3, so it counted the season before the swap and missed the third
+    after. The swaps were also labelled by cohort ("February 2020-2022") instead of the February they
+    were made (2021-2023). The production (blend) backtest of 2026-10-12, points computed natively from
+    the horizon targets: **65 swaps, +123 points per swap, +53 above replacement (ahead in 68 %), 71 %
+    won in wins (+0.46)**; mispricing +14.4 / -10.8 places; three-year ordering 0.697 vs 0.675 on 369.
+    Published and pinned (`market_run_date=2026-10-12`); page v54, the scorecard and the site write-up
+    corrected; labels are now the February of the swap.)* KTC dynasty values are
     daily from 2020-04, so each cohort T = 2020…2025 can be scored as "the model's projection at
     season end vs KTC the following February", against what the players then delivered. Report
     per cohort and per horizon (1 / 2 / 3 years so 2023–25 count too): rank agreement with realized
