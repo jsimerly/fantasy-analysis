@@ -6,8 +6,7 @@
 TabPFN 3.5, feature set `base,career,injury,trend,situation,rookie,college`, pooled horizons 1-10, the
 **blend** target (mean of level and residual), the 20/50/80 band, age-survival cap `30+t`, weekly
 replacement, in-season on 3.5 with no extra groups yet. The career tail is cached per season; the
-weekly run is the in-season stage plus the exports (~1.5 h; the first run is timed end to end before
-the Tuesday task is scheduled). Page: Players / Rosters (title odds this season and next) / Model
+weekly run is the in-season stage plus the exports (timed 2026-10-11: 1 h 58 m cold, ~10 minutes warm). Page: Players / Rosters (title odds this season and next) / Model
 performance / Trades / Draft slots / Team value / Market.
 
 **Adopted, with the number that decided it** (co-primary rule: ordering `spearman_war_top` and wins
@@ -1607,6 +1606,14 @@ t = 1.45) stays a tie.
     performance tab pinned to the 2026-10-07 3.5 market backtest (the production backtest was cut
     for time). Page v46 published 19:20. The Monday-night job is this preset, after the Tuesday
     DAG, with the career tail and sigma cached per season once item 36 lands.
+    **Timed end to end 2026-10-11 (the Tuesday dry run, same preset + blend target):** 21:10 -> 23:08, **1 h 58 m**
+    cold (was 9 h 47 m on 2026-10-09): the career tail + sigma 1 h 51 m (written to the cache), the in-season
+    stage, WAR for three leagues, the analysis summaries, the export and the scorecard together 7 minutes. A warm
+    run (cache hit: any week until the season completes or the code / lake changes) is therefore ~10 minutes.
+    Two fixes the run surfaced: the projection step stamped its output with the UTC date at its end (a run
+    crossing 8 p.m. Eastern lost its projections; the refresh's run date is now passed down), and the export
+    served `market_trends` as the market backtest (prefix listing; now an exact match, and the production
+    preset pins its own market run, `market_run_date`).
 
 42. **Positional calibration (owner, 2026-10-09 evening: "why is like every WR over rated?").** The
     pooled mispricing column carries a positional lean: tonight's run gives quarterbacks 36-47 %
