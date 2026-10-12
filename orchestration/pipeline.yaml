@@ -40,6 +40,7 @@ main:
               - "ktc-incremental-devy"
               - "nflverse-daily"
               - "nflverse-backfill-seasonal"  # fills any missing past season of every seasonal nflverse dataset (no-op when complete)
+              - "adp-daily"                   # average draft position of the coming season (FFC + MFL), as soon as it is published
           # --- SILVER T1: read bronze only ---
           - silver_t1_jobs:
               - "silver-dim-league-meta"

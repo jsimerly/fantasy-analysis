@@ -77,6 +77,8 @@ def resolve_seasons(spec: str | None, today: datetime | None = None) -> list[int
     spec = (spec or "current").strip().lower()
     if spec == "current":
         return [today.year if today.month >= 3 else today.year - 1]
+    if spec == "live":                 # the coming season from 1 January (its drafts start in the spring), the last one to its end
+        return [today.year - 1, today.year] if today.month <= 2 else [today.year]
     if "-" in spec:
         a, b = spec.split("-", 1)
         return list(range(int(a), int(b) + 1))
@@ -88,6 +90,13 @@ def save(df: pl.DataFrame, bucket_name: str, source: str, season: int) -> str:
     df.write_parquet(path)
     print(f"Saved adp/{source} {season} ({df.height:,} rows) to {path}", flush=True)
     return path
+
+
+def not_published_yet(e: Exception, season: int, today: datetime | None = None) -> bool:
+    """A 400 / 404 for a season whose games have not started: its drafts have not begun (FFC answers 400, MFL 404)."""
+    today = today or datetime.now(timezone.utc)
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    return status in (400, 404) and (season > today.year or (season == today.year and today.month < 9))
 
 
 def main() -> None:
@@ -104,6 +113,8 @@ def main() -> None:
                 try:
                     df = flatten(fetch(season, session), season)
                 except Exception as e:  # noqa: BLE001
+                    if not_published_yet(e, season):
+                        print(f"  {source} {season}: not published yet", flush=True); continue
                     print(f"  {source} {season}: FAILED {e}", flush=True); failures.append((source, season)); continue
                 if df.height == 0:
                     print(f"  {source} {season}: no rows served", flush=True); continue

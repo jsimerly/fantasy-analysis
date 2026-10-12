@@ -31,3 +31,20 @@ def test_seasons_and_the_partition_path(fake_gcs):
     assert mod.resolve_seasons("current", datetime(2026, 10, 9)) == [2026] and mod.resolve_seasons("2009-2011") == [2009, 2010, 2011]
     df = mod.flatten_ffc({"players": [{"player_id": 1, "name": "A", "position": "RB", "adp": 1.0}]}, 2012)
     assert mod.save(df, "gs://test-bucket", "ffc", 2012) == "gs://test-bucket/bronze/adp/ffc/season=2012/data.parquet"
+
+
+def test_live_pulls_the_coming_season_all_year_and_skips_one_not_published_yet():
+    from datetime import datetime
+    import requests
+
+    assert mod.resolve_seasons("live", datetime(2027, 1, 20)) == [2026, 2027]      # January: the final view and the coming season
+    assert mod.resolve_seasons("live", datetime(2027, 5, 1)) == [2027]
+    assert mod.resolve_seasons("live", datetime(2026, 10, 12)) == [2026]
+
+    def http_error(code):
+        r = requests.Response(); r.status_code = code
+        return requests.HTTPError(f"{code}", response=r)
+    assert mod.not_published_yet(http_error(404), 2027, datetime(2027, 1, 20))
+    assert mod.not_published_yet(http_error(400), 2027, datetime(2026, 12, 1))
+    assert not mod.not_published_yet(http_error(404), 2025, datetime(2026, 10, 12))    # a past season missing is a real failure
+    assert not mod.not_published_yet(http_error(500), 2027, datetime(2027, 1, 20))
