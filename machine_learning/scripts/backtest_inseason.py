@@ -111,6 +111,7 @@ def main() -> None:
     ap.add_argument("--discount-rate", type=float, default=value.DEFAULT_DISCOUNT_RATE)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
+    ap.add_argument("--run-date", default=None, help="--current: the run_date partition to write (default: today, UTC); the weekly refresh passes its own so WAR and the export find it")
     ap.add_argument("--no-tail-cache", action="store_true", help="recompute the career tail even when _cache/career_tail has it for this key (the --current run and every backtest cohort)")
     ap.add_argument("--sigma", choices=["band"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
@@ -272,7 +273,7 @@ def main() -> None:
             movers = liquid.filter(pl.col("moved_up").is_not_null())      # rookies have no preseason rank
             print("\nBiggest movers since preseason in the model's own ranking (moved_up = preseason IV rank - in-season IV rank):")
             print(movers.sort("moved_up", descending=True).select(show).head(10)); print(movers.sort("moved_up").select(show).head(10))
-        run = datetime.now(timezone.utc).date().isoformat()
+        run = args.run_date or datetime.now(timezone.utc).date().isoformat()
         p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left")
                                     .with_columns(pl.lit(backend_tag).alias("career_backend")),
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")

@@ -21,3 +21,20 @@ def test_production_preset_sets_the_adopted_configuration():
     assert out.groups == "base,career,injury,trend,situation,rookie,college" and out.device == "cuda"
     b = m.apply_preset(argparse.Namespace(preset=None, backend="xgb", stacked=False))
     assert b.backend == "xgb" and b.stacked is False and set(m.PRESETS) == {"production"}
+
+
+def test_the_projection_step_writes_under_the_refresh_run_date(monkeypatch):
+    """A refresh that crosses UTC midnight (8 p.m. Eastern) used to stamp the in-season run with the UTC date
+    at its end while WAR and the export read the refresh's own date; the date is now passed down."""
+    import sys
+    m = _mod()
+    seen = []
+    monkeypatch.setattr(m, "run", lambda cmd, dry, cwd=None, best_effort=False: seen.append(cmd) or True)
+    monkeypatch.setattr(m, "current_season_week", lambda: (2026, 6))
+    monkeypatch.setattr(m.power, "keep_awake", lambda *a, **k: True)
+    monkeypatch.setattr(sys, "argv", ["weekly_refresh.py", "--dry-run", "--run-date", "2026-10-11", "--skip", "analysis", "export"])
+    m.main()
+    ins = next(c for c in seen if any("backtest_inseason.py" in str(x) for x in c))
+    assert ins[ins.index("--run-date") + 1] == "2026-10-11"
+    war = next(c for c in seen if any("build_war.py" in str(x) for x in c))
+    assert war[war.index("--run-date") + 1] == "2026-10-11"

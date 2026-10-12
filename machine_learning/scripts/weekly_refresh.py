@@ -94,7 +94,7 @@ def main() -> None:
     print(f"season {season} through week {week}; run date {args.run_date}", flush=True)
 
     if "inseason" not in args.skip:
-        run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
+        run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
             + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
