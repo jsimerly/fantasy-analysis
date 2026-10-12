@@ -111,6 +111,9 @@ def main() -> None:
                     ["analysis/pick_slots_report.py", "--out", "analysis/_cache/pick_slots", "--publish"],
                     ["analysis/trade_report.py", "--rebuild", "--out", "analysis/_cache/trades", "--min-seasons", "1", "--publish"]):
             run([apy, *cmd], args.dry_run, cwd=root, best_effort=True)
+        # title odds from the roster views just written and Sleeper's live records (the Rosters tab's lens); this
+        # interpreter, since the script imports the model's modules. Best-effort like the reports above.
+        run([py, "analysis/title_odds.py", "--out", "analysis/_cache/title_odds", "--publish"], args.dry_run, cwd=root, best_effort=True)
     if "export" not in args.skip:
         out = ROOT / "projections.json"
         run([py, "scripts/export_projections.py", "--source", "inseason", "--season", str(season), "--week", str(week),

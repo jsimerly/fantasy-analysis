@@ -59,3 +59,18 @@ def test_the_export_shows_the_pinned_market_run_and_never_market_trends(monkeypa
     assert ex.newest_summary(paths, "market") == "backtests/market/run_date=2026-10-09/summary.json"
     assert ex.newest_summary(paths, "market_trends") == "backtests/market_trends/run_date=2026-10-10/summary.json"
     assert ex.newest_summary(paths, "value") is None
+
+
+def test_the_refresh_reruns_the_title_odds_before_the_export(monkeypatch):
+    import sys
+    m = _mod()
+    seen = []
+    monkeypatch.setattr(m, "run", lambda cmd, dry, cwd=None, best_effort=False: seen.append((cmd, best_effort)) or True)
+    monkeypatch.setattr(m, "current_season_week", lambda: (2026, 6))
+    monkeypatch.setattr(m.power, "keep_awake", lambda *a, **k: True)
+    monkeypatch.setattr(sys, "argv", ["weekly_refresh.py", "--dry-run", "--preset", "production", "--skip", "inseason", "war"])
+    m.main()
+    names = [" ".join(str(x) for x in c) for c, _ in seen]
+    t = next(i for i, n in enumerate(names) if "title_odds.py" in n)
+    e = next(i for i, n in enumerate(names) if "export_projections.py" in n)
+    assert t < e and "--publish" in names[t] and seen[t][1] is True       # before the export, published, best-effort
