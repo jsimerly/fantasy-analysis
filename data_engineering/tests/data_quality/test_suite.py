@@ -83,7 +83,8 @@ def healthy() -> tuple[dict, dict]:
         frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13})
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
     frames["fact_player_contract_season"] = pl.DataFrame({"season": [2026] * 1600, "gsis_id": [str(i) for i in range(1600)]})
-    frames["fact_college_player_season"] = pl.DataFrame({"season": [2024, 2025], "cfbd_id": ["a", "b"]})
+    frames["fact_college_player_season"] = pl.DataFrame({"season": [2023, 2024, 2024, 2025], "cfbd_id": ["a", "a", "b", "b"], "class_year": [1, 2, 3, 4]})
+    frames["dim_college_crosswalk"] = pl.DataFrame({"cfbd_id": ["a", "b", "c"], "gsis_id": ["00-1", "00-2", None], "birth_date": ["2002-01-01", "2001-05-05", None]})
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})   # the coming week's projections are in
     for s in range(2010, 2018):                   # FFToday's weekly projections 2010-2017, the consensus before Sleeper (one-time scrape)
         frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
@@ -283,3 +284,13 @@ def test_the_fftoday_history_must_hold_every_season_in_full():
     del frames["bronze/fftoday/projections/season=2017/data.parquet"]
     r = failed(run(frames, parts, only="fftoday"))["bronze.fftoday.history_complete"]
     assert "2 of 8 seasons short" in r["observed"] and "2013: 1760 rows, 11 weeks" in r["detail"] and "2017: missing" in r["detail"]
+
+
+def test_the_college_birth_dates_and_class_years_are_checked():
+    frames, parts = healthy()
+    assert run(frames, parts, only="college")["passed"].all()
+    frames["dim_college_crosswalk"] = frames["dim_college_crosswalk"].with_columns(pl.lit(None, pl.Utf8).alias("birth_date"))   # the 2026-10 bug
+    frames["fact_college_player_season"] = frames["fact_college_player_season"].with_columns(pl.lit(3).alias("class_year"))      # frozen class
+    r = failed(run(frames, parts, only="college"))
+    assert "0% of the 2 matched players have a birth date" in r["dim.college_crosswalk.birth_dates"]["observed"]
+    assert "100% of multi-season players have one class year" in r["fact.college_player_season.class_year_varies"]["observed"]

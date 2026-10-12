@@ -595,3 +595,32 @@ def fftoday_history(ctx):
     if short:
         return x.fail(f"{len(short)} of {len(FFTODAY_SEASONS)} seasons short", len(short), "; ".join(short))
     return x.ok(f"{len(FFTODAY_SEASONS)} seasons, 16+ weeks and 2,000+ rows each", 0)
+
+
+@check("dim.college_crosswalk.birth_dates", "dim_college_crosswalk", "error",
+       "the crosswalk looked for nflverse's birthdate column while production passes our birth_date: every birth date was empty and the model's college breakout age with it (2026-10-12)",
+       known_open="the fix lands with the next college rebuild (fact_college_player_season runs in the yearly college workflow; run it by hand after the merge)")
+def crosswalk_birth_dates(ctx):
+    xw = ctx.table("dim_college_crosswalk")
+    matched = xw.filter(pl.col("gsis_id").is_not_null())
+    if matched.height == 0:
+        return x.fail("no crosswalk rows matched to a gsis id", 0)
+    share = float(matched["birth_date"].is_not_null().mean())
+    if share < 0.9:
+        return x.fail(f"{share:.0%} of the {matched.height:,} matched players have a birth date, need 90%", round(share, 3))
+    return x.ok(f"{share:.0%} of {matched.height:,} matched players have a birth date", round(share, 3))
+
+
+@check("fact.college_player_season.class_year_varies", "fact_college_player_season", "warn",
+       "CFBD's roster year is not a class year: some seasons carry the calendar year, others the player's final class repeated, so early-declare and any per-season class are wrong",
+       known_open="needs a real class source (CFBD's recruiting class or the first college season); the model's college2 group does not use it")
+def college_class_year(ctx):
+    f = ctx.table("fact_college_player_season")
+    multi = f.group_by("cfbd_id").agg(pl.len().alias("n"), pl.col("class_year").n_unique().alias("k"), pl.col("class_year").max().alias("mx")).filter(pl.col("n") >= 2)
+    if multi.height == 0:
+        return x.ok("no multi-season players", 0)
+    frozen = float((multi["k"] == 1).mean())
+    calendar = float((multi["mx"].fill_null(0) > 10).mean())
+    if frozen > 0.5 or calendar > 0.01:
+        return x.fail(f"{frozen:.0%} of multi-season players have one class year for every season; {calendar:.0%} carry a calendar year", round(frozen, 3))
+    return x.ok(f"class year moves with the season for {1 - frozen:.0%} of multi-season players", round(frozen, 3))

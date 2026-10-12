@@ -126,9 +126,13 @@ def build_crosswalk(draft_picks: pl.DataFrame, ids: pl.DataFrame) -> pl.DataFram
     n = (ids.filter(pl.col("gsis_id").is_not_null()).with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars(), pl.col("draft_year").cast(pl.Int64, strict=False),
                                                                   pl.col("draft_pick").cast(pl.Int64, strict=False), _norm("name").alias("_n"))
             .filter(pl.col("gsis_id") != ""))
-    by_pick = d.join(n.select("gsis_id", "draft_year", pl.col("draft_pick").alias("overall"), pl.col("birthdate").alias("birth_date") if "birthdate" in n.columns else pl.lit(None, pl.Utf8).alias("birth_date")).unique(["draft_year", "overall"]),
+    # the birth date: our season fact calls it birth_date, nflverse's player ids birthdate (looking only for the latter left
+    # every crosswalk birth date empty until 2026-10-12, and with them the model's breakout ages)
+    bcol = "birth_date" if "birth_date" in n.columns else "birthdate" if "birthdate" in n.columns else None
+    birth = (pl.col(bcol).cast(pl.Utf8) if bcol else pl.lit(None, pl.Utf8))
+    by_pick = d.join(n.select("gsis_id", "draft_year", pl.col("draft_pick").alias("overall"), birth.alias("birth_date")).unique(["draft_year", "overall"]),
                      on=["draft_year", "overall"], how="left")
-    by_name = n.select("_n", "position", pl.col("gsis_id").alias("_g2"), pl.col("birthdate").alias("_b2") if "birthdate" in n.columns else pl.lit(None, pl.Utf8).alias("_b2")).unique(["_n", "position"])
+    by_name = n.select("_n", "position", pl.col("gsis_id").alias("_g2"), birth.alias("_b2")).unique(["_n", "position"])
     x = by_pick.join(by_name, on=["_n", "position"], how="left").with_columns(
         pl.coalesce([pl.col("gsis_id"), pl.col("_g2")]).alias("gsis_id"), pl.coalesce([pl.col("birth_date"), pl.col("_b2")]).alias("birth_date"),
         pl.when(pl.col("gsis_id").is_not_null()).then(pl.lit("pick")).when(pl.col("_g2").is_not_null()).then(pl.lit("name")).otherwise(None).alias("match"))

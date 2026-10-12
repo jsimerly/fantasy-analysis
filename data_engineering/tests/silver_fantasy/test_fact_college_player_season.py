@@ -56,3 +56,13 @@ def test_crosswalk_by_pick_then_name():
     assert r["8"]["gsis_id"] == "00-2" and r["8"]["match"] == "name"          # pick 300 vs 301: the name carries it
     assert r["9"]["gsis_id"] is None and r["9"]["match"] is None
     assert x["draft_year"].to_list() and x["college"].to_list()
+
+
+def test_crosswalk_reads_the_season_facts_birth_date_column():
+    """Production passes our fact_player_season (birth_date, a date), not nflverse's ids (birthdate); looking only for the
+    latter left every crosswalk birth date empty until 2026-10-12 (and the model's breakout ages with them)."""
+    from datetime import date
+    picks = pl.DataFrame({"collegeAthleteId": [7], "year": [2024], "overall": [13], "round": [1], "name": ["Brock Bowers"], "position": ["TE"], "collegeTeam": ["Georgia"]})
+    ids = pl.DataFrame({"gsis_id": ["00-0039338"], "draft_year": [2024], "draft_pick": [13], "name": ["Brock Bowers"], "position": ["TE"], "birth_date": [date(2002, 12, 13)]})
+    r = m.build_crosswalk(picks, ids).row(0, named=True)
+    assert r["gsis_id"] == "00-0039338" and r["birth_date"] == "2002-12-13"
