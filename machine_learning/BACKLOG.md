@@ -1775,6 +1775,17 @@ t = 1.45) stays a tie.
     and horizon (conformal: scale the spread around the median until coverage hits nominal on the holdout seasons),
     and residual + dist. Production stays on band (dist needs the grid in the career tail: a new cache key and a
     cold run) until one of those moves the gap.
+    **The level gap found, same afternoon:** calibrating the quantiles walk-forward (spread factors ~1.1) moves the
+    ratios only to 1.09 / 1.17 / 1.13 / 1.11. The leak is the product: value is E[excess] x E[games], but realized ppg
+    and games correlate +0.48 among players who played (healthy seasons are the big seasons), so the product of the
+    averages under-counts every position. Coupling the two predictive grids quantile by quantile, halfway between
+    independent and fully dependent: realized / priced **QB 0.98 / RB 1.00 / TE 1.00 / WR 0.97** -- the gap and the QB
+    lean both gone without any positional scale; fixed-set ordering +0.022 (t 2.0, 7 of 8) vs as-run; wins error
+    worse (t -2.5) because MAE rewards a median and the level-correct price is a mean (most players realize zero, a
+    few boom). Fully dependent over-prices (0.85-0.89). **Next (production path):** the 20-point grid for ppg and games
+    in the weekly output (career tail; the in-season model's ROS / next spans need quantiles too), joint pricing with
+    the coupling fit walk-forward (0.5 matches the 0.48 correlation), a per-player outcome sparkline on the page, and
+    a bias / level metric beside MAE in the harness so a mean-correct change is not read as a loss.
 
 48. **Mixed checkpoint weeks (owner, 2026-10-12: "maybe we mix it up in our synth data right? Some player seasons 1,
     4, 7 ...").** The in-season TabPFN trains on weeks 3 / 6 / 9 / 13 only, so a week-5 projection (today's)
