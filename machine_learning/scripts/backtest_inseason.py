@@ -105,6 +105,29 @@ def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, bac
     return pred, sigma, survival, m
 
 
+def par_against_outcome(snap: pl.DataFrame, rep: dict, top_n: int = 150) -> dict:
+    """The in-season model's primary score (BACKLOG 52, owner: "why are we not projecting the points above replacement
+    against what actually happened?"): projected points above replacement -- max(ppg - replacement, 0) x games -- against
+    the realized PAR, for next season and the rest of this season, among the ``top_n`` players by projected PAR. No market
+    in the player set (the raw-points scores are on KTC-priced players; KTC is the benchmark there, never the target)."""
+    rep_e = pl.col("position").replace_strict(rep, default=0.0, return_dtype=pl.Float64)
+
+    def par(ppg: str, games: str) -> pl.Expr:
+        return pl.max_horizontal(pl.col(ppg).cast(pl.Float64).fill_null(0.0) - rep_e, pl.lit(0.0)) * pl.col(games).cast(pl.Float64).fill_null(0.0)
+    sc = snap.with_columns(par("next_ppg_hat", "next_games_hat").alias("_nh"), par("next_ppg", "next_games").alias("_nr"),
+                           par("ros_ppg_hat", "ros_games_hat").alias("_rh"), par("ros_ppg", "ros_games").alias("_rr"))
+    out = {}
+    for span, ok, h, r in (("next", "next_observable", "_nh", "_nr"), ("ros", "ros_observable", "_rh", "_rr")):
+        top = sc.filter(pl.col(ok)).sort(h, descending=True).head(top_n)
+        if top.height < 20:
+            continue
+        ph, pr = top[h].to_numpy().astype(float), top[r].to_numpy().astype(float)
+        out.update({f"{span}|par": value.spearman(ph, pr), f"{span}|par_mae": float(np.mean(np.abs(pr - ph))), f"{span}|par_bias": float(np.mean(pr - ph))})
+        if span == "next":
+            out["n_par"] = top.height
+    return out
+
+
 def career_tail_todate(base: pl.DataFrame, wk: pl.DataFrame, groups, as_of: int, cur: int, w_now: int, survival, device: str, backend: str,
                        tabpfn_params: dict | None, cap: str, range_quantiles: tuple | None, features: list[str], stacked: bool, target: str,
                        base_tail: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -143,6 +166,7 @@ def main() -> None:
     ap.add_argument("--quantile-grid", action="store_true", help="--current: the 20-point outcome grid (plus the 20/50/80 band) from the career tail and the in-season model (BACKLOG 47)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
+    ap.add_argument("--tag", default=None, help="name of the per cohort x week table kept in _cache/inseason_backtests (default: a timestamp)")
     ap.add_argument("--career-todate", action="store_true",
                     help="--current: the career seasons (T+2 on) projected from this season's to-date rows instead of the last complete season (BACKLOG 51)")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
@@ -306,6 +330,7 @@ def main() -> None:
                 up = career.apply_cap(survival, tail_model.predict(urows), [1], args.cap)
                 snap = snap.join(up.select("player_id", (pl.col("h1_ppg_hat") * pl.col("h1_games_hat")).alias("next_fpts_unified")), on="player_id", how="left")
             snap = market.attach_market(snap, week_end_date(wk, T, W), hist, xw).join(k_end, on="player_key", how="left")
+            par_scores = par_against_outcome(snap, rep)
             priced = snap.filter(pl.col("ktc_value").is_not_null() & pl.col("next_observable"))
             nx = priced["next_fpts"].to_numpy().astype(float)
             r = {"T": T, "W": W, "n": priced.height,
@@ -314,7 +339,7 @@ def main() -> None:
                  "next|ktc": value.spearman(priced["ktc_value"].to_numpy(), nx),
                  "next|last_season": value.spearman(priced["bl_prior_ppg"].to_numpy(), nx),
                  "next|to_date": value.spearman(priced["bl_todate_ppg"].to_numpy(), nx),
-                 "next|blend": value.spearman(priced["bl_blend_ppg"].to_numpy(), nx)}
+                 "next|blend": value.spearman(priced["bl_blend_ppg"].to_numpy(), nx), **par_scores}
             rk = priced.filter(pl.col("exp_at_season").fill_null(99) == 0)       # rookies (BACKLOG 50): next season among the priced first-year players
             if rk.height >= 10:
                 rn = rk["next_fpts"].to_numpy().astype(float)
@@ -351,8 +376,13 @@ def main() -> None:
                                  **{f"move|{t}": float(np.expm1(cmp.filter(pl.col("tercile") == t)["move"].mean())) for t in ["cheap", "fair", "rich"]}})
 
     res = pl.DataFrame(rows)
+    out_dir = ROOT / "_cache" / "inseason_backtests"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    res.write_parquet(out_dir / f"{args.tag or datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.parquet")   # per cohort x week, kept even with --no-write
     with pl.Config(tbl_rows=-1, float_precision=3, tbl_width_chars=220):
-        print("\n== Rank correlation with NEXT-season points, by checkpoint week (mean over cohorts "
+        print("\n== PRIMARY: points above replacement against what happened (top 150 by projected PAR, no market in the player set; mean over cohorts) ==")
+        print(res.group_by("W").agg(pl.col("n_par").mean(), pl.col("^(next|ros)\\|par.*$").mean()).sort("W"))
+        print("\n== secondary: rank correlation with NEXT-season raw points on the KTC-priced players (the market benchmark's set), by checkpoint week (mean over cohorts "
               f"{args.first_cohort}-{last_complete - 1}; players KTC priced that week) ==")
         print(res.group_by("W").agg(pl.col("n").sum(), pl.col("^next\\|.*$").mean()).sort("W"))
         print("\n== Rank correlation with REST-OF-SEASON ppg (players who played again) ==")

@@ -1933,3 +1933,18 @@ t = 1.45) stays a tie.
     season end 0.715-0.723 (was 0.701-0.710); to date vs last season +0.070 (t +8.6, 29 of 32). Queued on 3.5 right
     after Tuesday's refresh (`seam_35_is5`, then `tabpfn35_is5` on the day's harness baseline). The production
     in-season model took the five groups the same day (item 39).
+
+52. **Score against points above replacement, not the market's player list (owner, 2026-10-12: "when rank order, why
+    are we not projecting the points above replacement against what actually happened? ... we're losing the Intrinsic
+    Value approach").** Nothing trains on or predicts KTC: the targets are realized points per game and games, value is
+    PAR and then wins per league, and the career harness (projected vs realized WAR) and the current-season test
+    (projected vs realized PAR) were already market-free. The in-season backtest was not: it ranked raw next-season
+    points (QBs on top) on the KTC-priced players only. `backtest_inseason.par_against_outcome` is now its primary
+    score -- projected PAR (max(ppg - replacement, 0) x games) against realized PAR, next season and the rest of the
+    season, top 150 by projected PAR, no market in the player set -- and the per cohort x week table is kept in
+    `_cache/inseason_backtests/<tag>.parquet` even with `--no-write`. The raw-points scores on KTC-priced players stay as
+    the secondary (the market benchmark's set). **The five in-season groups re-checked on it (trees, cohorts 2021-24,
+    weeks 3 / 6 / 9 / 13):** next-season PAR ordering +0.022 (11 of 16, t +2.33), rest of season +0.019 (11 of 16, t
+    +3.03), PAR error lower on both (t +1.28 / +1.57). The adoption stands; the 3.5 re-check on PAR is queued after the
+    main chain. Market-informed INPUTS (consensus projections, ADP) still predict real outcomes; what to watch is the
+    edge over KTC -- the more the model borrows from the market, the smaller the gaps the swap test trades on.
