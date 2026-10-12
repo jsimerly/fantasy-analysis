@@ -31,6 +31,7 @@ INJURY_PATH = "silver/fantasy/fact_player_injury_week/data.parquet"
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 COLLEGE_PATH = "silver/fantasy/fact_college_player_season/data.parquet"
 COLLEGE_XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
+SEASON_FACT_PATH = "silver/fantasy/fact_player_season/data.parquet"         # birth dates (100 %) for college2's ages
 WEEK_STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
 TEAM_PATH = "silver/fantasy/fact_team_season_strength/data.parquet"
 CONTRACT_PATH = "silver/fantasy/fact_player_contract_season/data.parquet"
@@ -87,6 +88,21 @@ class Context:
         if self._college is None:
             self._load_college()
         return self._college if self._college is not None and self._college.height else None
+
+    _college2: pl.DataFrame | None = None
+
+    @property
+    def college2(self) -> pl.DataFrame | None:
+        """College production read against the position, with real breakout ages (BACKLOG 50); None without the lake tables."""
+        if self._college2 is None:
+            try:
+                fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
+                births = self._load(SEASON_FACT_PATH).select("player_id", "birth_date")
+            except Exception:  # noqa: BLE001 - not ingested yet
+                self._college2 = pl.DataFrame()
+            else:
+                self._college2 = college2_per_player(fact, xw, births)
+        return self._college2 if self._college2.height else None
 
     @property
     def college_cfbd(self) -> pl.DataFrame | None:
@@ -302,6 +318,55 @@ def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
     return per.join(x, on="cfbd_id", how="inner").select(["gsis_id"] + COLLEGE_COLS).unique("gsis_id")
 
 
+COLLEGE2_COLS = ["c2_breakout_age", "c2_broke_out", "c2_dom_pct_best", "c2_dom_pct_age20", "c2_ryptpa_best", "c2_ryptpa_pct_best",
+                 "c2_age_final", "c2_seasons", "c2_team_sp_last", "c2_dom_vs_nfl", "c2_ryptpa_vs_nfl"]
+BREAKOUT_PCT = 0.97          # a breakout season: dominator in the top 3 % of the player's position that season (WR ~0.19, TE ~0.12, RB ~0.28)
+
+
+def college2_per_player(fact: pl.DataFrame, xw: pl.DataFrame, births: pl.DataFrame) -> pl.DataFrame:
+    """One row per NFL player (gsis id) with college production read against his position (BACKLOG 50).
+    ``births``: (player_id = gsis id, birth_date) from the NFL season fact -- the crosswalk's own birth dates are empty.
+    Age in a college season = age on 1 September of that season. Percentiles are within (season, position) over every
+    FBS player at the position with a team passing game (team_pass_att > 0)."""
+    x = xw.filter(pl.col("gsis_id").is_not_null()).select(pl.col("cfbd_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)).unique("cfbd_id")
+    b = births.select(pl.col("player_id").cast(pl.Utf8).alias("gsis_id"), pl.col("birth_date").cast(pl.Date, strict=False)).drop_nulls().unique("gsis_id")
+    f = (fact.filter(pl.col("team_pass_att").fill_null(0) > 0)
+             .with_columns(pl.col("cfbd_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64),
+                           (pl.col("rec_yds").fill_null(0.0) / pl.col("team_pass_att")).alias("_ryptpa"),
+                           pl.col("dominator").fill_null(0.0).alias("_dom"))
+             .with_columns(pl.col("_dom").rank("average").over(["season", "position"]).alias("_r"), pl.len().over(["season", "position"]).alias("_n"),
+                           pl.col("_ryptpa").rank("average").over(["season", "position"]).alias("_rr"))
+             .with_columns((pl.col("_r") / pl.col("_n")).alias("_dom_pct"), (pl.col("_rr") / pl.col("_n")).alias("_ryptpa_pct")))
+    f = f.join(x, on="cfbd_id", how="inner").join(b, on="gsis_id", how="left")
+    sept1 = pl.date(pl.col("season"), 9, 1)
+    age = ((sept1 - pl.col("birth_date")).dt.total_days() / 365.25)
+    f = f.with_columns(age.alias("_age"), (pl.col("_dom_pct") >= BREAKOUT_PCT).alias("_bo"))
+    per = (f.sort(["gsis_id", "season"]).group_by("gsis_id").agg(
+        pl.col("_age").filter(pl.col("_bo")).first().alias("c2_breakout_age"),
+        pl.col("_bo").any().cast(pl.Float64).alias("c2_broke_out"),
+        pl.col("_dom_pct").max().alias("c2_dom_pct_best"),
+        pl.col("_dom_pct").filter(pl.col("_age") <= 20.5).max().alias("c2_dom_pct_age20"),
+        pl.col("_ryptpa").max().alias("c2_ryptpa_best"),
+        pl.col("_ryptpa_pct").max().alias("c2_ryptpa_pct_best"),
+        pl.col("_age").last().alias("c2_age_final"),
+        pl.len().cast(pl.Float64).alias("c2_seasons"),
+        pl.col("team_sp").last().cast(pl.Float64).alias("c2_team_sp_last"),
+        pl.col("_dom").max().alias("_dom_best"), pl.col("position").last().alias("_pos")))
+    # against the other NFL players at the position: almost every draftee is a top-5 % FBS producer, so the FBS percentile
+    # compresses near 1; the rank among the players who reached the NFL spreads them back out
+    per = per.with_columns((pl.col("_dom_best").rank("average").over("_pos") / pl.len().over("_pos")).alias("c2_dom_vs_nfl"),
+                           (pl.col("c2_ryptpa_best").rank("average").over("_pos") / pl.len().over("_pos")).alias("c2_ryptpa_vs_nfl"))
+    return per.select(["gsis_id"] + COLLEGE2_COLS)
+
+
+def build_college2(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """Join the per-player college2 row onto every season row (static over a career)."""
+    col = ctx.college2
+    if col is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in COLLEGE2_COLS if c not in matrix.columns])
+    return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
+
+
 def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     """Join the per-player college row onto every season row (static over a career); nulls when the
     lake has no college data for the player or at all."""
@@ -468,6 +533,7 @@ GROUPS: dict[str, FeatureGroup] = {
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
     "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
+    "college2": FeatureGroup("college2", COLLEGE2_COLS, build_college2, "CFBD read against the position: real breakout age, dominator / RYPTPA percentiles, early production (BACKLOG 50)"),
     "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
     "team": FeatureGroup("team", TEAM_COLS, build_team, "fact_team_season_strength (schedules closing lines + team_stats EPA)"),
     "contract": FeatureGroup("contract", CONTRACT_COLS, build_contract, "fact_player_contract_season (Over The Cap via nflverse)"),

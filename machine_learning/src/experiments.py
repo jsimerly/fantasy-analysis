@@ -539,6 +539,30 @@ def window_scores(cohorts: pl.DataFrame, windows: Iterable[int] = (3, 5, 7), dis
     return pl.DataFrame(rows)
 
 
+AGE_BANDS = (("<=24", 0.0, 24.99), ("25-28", 25.0, 28.99), ("29+", 29.0, 99.0))
+
+
+def age_band_scores(cohorts: pl.DataFrame, window: int = 3, discount_rate: float = value.DEFAULT_DISCOUNT_RATE,
+                    bands=AGE_BANDS) -> pl.DataFrame:
+    """The career projection by the player's age at the cohort row (BACKLOG 50: are young and old players the weak spot?):
+    per (cohort, band), window-``window`` projected vs realized WAR on the players with every season observable --
+    ordering among those projected above zero, bias, and realized / priced."""
+    rows = []
+    ks = list(range(1, window + 1))
+    for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
+        f = cohorts.filter((pl.col("cohort") == T) & pl.all_horizontal([pl.col(f"h{k}_observable") for k in ks]))
+        f = f.with_columns(pl.sum_horizontal([pl.col(f"war_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_p"),
+                           pl.sum_horizontal([pl.col(f"war_real_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_r"))
+        for name, lo, hi in bands:
+            g = f.filter((pl.col("age_at_season") >= lo) & (pl.col("age_at_season") <= hi) & (pl.col("_p") > 0))
+            if g.height < 20:
+                continue
+            pp, rr = g["_p"].to_numpy().astype(float), g["_r"].to_numpy().astype(float)
+            rows.append({"cohort": T, "band": name, "n": g.height, "spearman": value.spearman(pp, rr), "mae": float(np.mean(np.abs(rr - pp))),
+                         "bias": float(np.mean(rr - pp)), "ratio": float(rr.sum() / pp.sum()) if pp.sum() else None})
+    return pl.DataFrame(rows)
+
+
 def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:
     """The measurement regime of a run: the lineup behind the replacement levels (starters per
     position), when the season fact was written, and the matrix height. Same stamp = comparable

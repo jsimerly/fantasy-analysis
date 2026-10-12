@@ -208,3 +208,29 @@ class TestNoise:
         assert a.select(fg.NOISE_COLS).equals(b.select(fg.NOISE_COLS)) and a.select(fg.NOISE_COLS).n_unique() == 3
         assert "noise" in fg.GROUPS and len(fg.feature_columns(fg.resolve("base,career,noise"))) == len(fg.feature_columns(fg.resolve("base,career"))) + 15
         assert a.filter(pl.col("player_id") == "p2")[fg.NOISE_COLS[0]][0] != a.filter((pl.col("player_id") == "p1") & (pl.col("season") == 2023))[fg.NOISE_COLS[0]][0]
+
+
+def test_college2_reads_production_against_the_position_with_real_breakout_ages():
+    import polars as pl
+    import feature_groups as fg
+    from datetime import date
+    rows = []
+    # 40 FBS tight ends a season, 2020-2022; "star" is a freshman monster at 18, "late" breaks out at 21, "never" never does
+    for season in (2020, 2021, 2022):
+        for i in range(40):
+            rows.append({"cfbd_id": f"f{i}", "season": season, "position": "TE", "team_pass_att": 400, "rec_yds": 50.0 + i, "dominator": 0.01 + 0.001 * i, "team_sp": 0.0})
+        rows.append({"cfbd_id": "star", "season": season, "position": "TE", "team_pass_att": 400, "rec_yds": 800.0, "dominator": 0.15, "team_sp": 30.0})
+        rows.append({"cfbd_id": "late", "season": season, "position": "TE", "team_pass_att": 400, "rec_yds": 700.0 if season == 2022 else 60.0,
+                     "dominator": 0.14 if season == 2022 else 0.02, "team_sp": 5.0})
+        rows.append({"cfbd_id": "never", "season": season, "position": "TE", "team_pass_att": 400, "rec_yds": 70.0, "dominator": 0.03, "team_sp": 1.0})
+    fact = pl.DataFrame(rows)
+    xw = pl.DataFrame({"cfbd_id": ["star", "late", "never"], "gsis_id": ["g1", "g2", "g3"], "birth_date": [None, None, None]})
+    births = pl.DataFrame({"player_id": ["g1", "g2", "g3"], "birth_date": [date(2001, 11, 1), date(2001, 6, 1), date(2000, 6, 1)]})
+    out = {r["gsis_id"]: r for r in fg.college2_per_player(fact, xw, births).to_dicts()}
+    assert set(out) == {"g1", "g2", "g3"}
+    assert 18.0 < out["g1"]["c2_breakout_age"] < 19.0 and out["g1"]["c2_broke_out"] == 1.0          # age on 1 Sept 2020
+    assert 21.0 < out["g2"]["c2_breakout_age"] < 21.5                                                # broke out in 2022
+    assert out["g3"]["c2_breakout_age"] is None and out["g3"]["c2_broke_out"] == 0.0
+    assert out["g1"]["c2_dom_pct_age20"] > out["g2"]["c2_dom_pct_age20"]                              # early production
+    assert out["g1"]["c2_dom_vs_nfl"] > out["g2"]["c2_dom_vs_nfl"] > out["g3"]["c2_dom_vs_nfl"]
+    assert abs(out["g1"]["c2_ryptpa_best"] - 2.0) < 1e-9 and out["g1"]["c2_seasons"] == 3.0
