@@ -193,7 +193,7 @@ class TestTrainingSubset:
         import career
 
         class _Fake:
-            def __init__(self, device, seed, params):
+            def __init__(self, device, seed, params, want_quantiles=None):
                 self.n = None
 
             def fit(self, X, y, sample_weight=None):
@@ -473,3 +473,33 @@ def test_mixed_weeks_with_bags_give_each_model_its_own_weeks(monkeypatch):
     ros_games = seen[:3]                                         # the first target's three bags
     assert len(m.models["ros_games"]) == 3
     assert len({tuple(sorted(np.unique(w))) for w in ros_games}) >= 1 and not all(np.array_equal(np.sort(ros_games[0]), np.sort(w)) for w in ros_games[1:])
+
+
+def test_inseason_models_emit_each_targets_outcome_grid(monkeypatch):
+    import career
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+
+    class Fake:
+        def fit(self, X, y):
+            self.mu = float(np.mean(y)); return self
+
+        def predict(self, X):
+            return np.full(len(X), self.mu)
+
+        def predict_quantiles(self, X, qs):
+            return np.column_stack([np.full(len(X), self.mu * (0.5 + q)) for q in qs])
+
+    m = inseason.InSeasonModels(range_quantiles=(0.2, 0.5, 0.8), bags=2, max_train_rows=40)
+    monkeypatch.setattr(m, "_new", lambda: Fake())
+    m.fit(snaps, as_of_season=2022)
+    out = m.predict(snaps.filter(pl.col("season") == 2022).head(5))
+    for name in ("ros_ppg", "ros_games", "next_ppg", "next_games"):
+        cols = [f"{name}_{career.q_name(q)}" for q in (0.2, 0.5, 0.8)]
+        assert all(c in out.columns for c in cols)
+        v = out.select(cols).row(0)
+        assert v[0] <= v[1] <= v[2]                                    # ordered
+    assert (out["ros_games_q80"] <= inseason.MAX_GAMES).all()
+    plain = inseason.InSeasonModels(bags=1, max_train_rows=40)
+    monkeypatch.setattr(plain, "_new", lambda: Fake())
+    assert "ros_ppg_q20" not in plain.fit(snaps, as_of_season=2022).predict(snaps.head(3)).columns

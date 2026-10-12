@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import polars as pl  # noqa: E402
 
+import career  # noqa: E402
 import gcs_io  # noqa: E402
 import market  # noqa: E402
 import picks  # noqa: E402
@@ -115,7 +116,13 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
         if any(r.get(f"h{k}_ppg_q20") is not None for k in tail):      # the range of outcomes: 20th / 80th percentile ppg per tail span
             band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail],
                     "md": [None, None] + [_r(r.get(f"h{k}_ppg_q50"), 1) for k in tail]}    # the median: the point is the mean, and the distribution is skewed
+        dist = {}
+        for span in ("ros", "next"):                               # the outcome grid of a span, when the run kept it (BACKLOG 47)
+            vals = [r.get(f"{span}_ppg_{career.q_name(q)}") for q in career.QUANTILE_GRID]
+            if all(x is not None for x in vals):
+                dist[span] = [_r(x, 1) for x in vals]
         out.append({**_common(r),
+                    **({"dist": dist} if dist else {}),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
                     "iv": _r(r["iv_inseason"]), "iv_pre": _r(r.get("iv_preseason")), "iv_rank_all": int(r["iv_rank_all"]),

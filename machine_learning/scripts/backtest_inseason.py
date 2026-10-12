@@ -43,7 +43,8 @@ import value  # noqa: E402
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 H = list(range(1, 11))
-TAIL_CACHE_DIR = ROOT / "_cache" / "career_tail"      # the --current career tail, reused weekly (tail_cache)
+TAIL_CACHE_DIR = ROOT / "_cache" / "career_tail"
+GRID_Q = tuple(sorted(set(career.QUANTILE_GRID) | {0.2, 0.5, 0.8}))   # the outcome grid + the page's band (BACKLOG 47)      # the --current career tail, reused weekly (tail_cache)
 
 
 def load_inputs(draft_rows: bool = False, snapshot_weeks: list[int] | None = None, snapshot_from: int = 2010) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -113,7 +114,8 @@ def main() -> None:
     ap.add_argument("--current", action="store_true", help="train on everything and project the in-progress season")
     ap.add_argument("--run-date", default=None, help="--current: the run_date partition to write (default: today, UTC); the weekly refresh passes its own so WAR and the export find it")
     ap.add_argument("--no-tail-cache", action="store_true", help="recompute the career tail even when _cache/career_tail has it for this key (the --current run and every backtest cohort)")
-    ap.add_argument("--sigma", choices=["band"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
+    ap.add_argument("--quantile-grid", action="store_true", help="--current: the 20-point outcome grid (plus the 20/50/80 band) from the career tail and the in-season model (BACKLOG 47)")
+    ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
@@ -240,17 +242,19 @@ def main() -> None:
         w_now = int(wk.filter(pl.col("season") == cur)["week"].max())
         rep = replacement.replacement_levels(base, starters)
         tail, sigma, survival, _ = career_tail(season, last_complete, rep, args.device, args.backend, tabpfn_params, args.cap,
-                                            range_quantiles=(0.2, 0.5, 0.8) if args.range else None,
+                                            range_quantiles=GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
                                             features=feature_cols, stacked=args.stacked, target=args.target,
                                             cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
         backend_tag = (args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
                        + (" stacked" if args.stacked else "") + (f" {args.target}" if args.target != "level" else "") + (f" [{args.groups}]" if args.groups != "base,career" else ""))
-        m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, **is_kw).fit(snaps)
+        m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, range_quantiles=GRID_Q if args.quantile_grid else None, **is_kw).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
         rookie_tbl = inseason.rookie_tail_table(base, H, through=last_complete)
         if args.sigma == "band" and not args.range:
             raise SystemExit("--sigma band needs --range (the band comes from the TabPFN career tail)")
+        if args.sigma == "joint" and not args.quantile_grid:
+            raise SystemExit("--sigma joint needs --quantile-grid (the outcome grids it prices)")
         snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl, sigma_mode=args.sigma)
         print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
@@ -281,7 +285,7 @@ def main() -> None:
         p2 = gcs_io.write_ml_json({
             "run_date": run, "season": cur, "week": w_now, "as_of_season": last_complete, "career_backend": backend_tag, "cap": args.cap,
             "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target, "draft_rows": args.draft_rows, "snapshot_weeks": args.snapshot_weeks, "inseason_groups": args.inseason_groups, "inseason_backend": args.inseason_backend,
-            "sigma_mode": args.sigma,
+            "sigma_mode": args.sigma, "quantile_grid": args.quantile_grid,
             "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
             "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
         }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")

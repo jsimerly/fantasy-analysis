@@ -88,7 +88,8 @@ def main() -> None:
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
     ap.add_argument("--market-run-date", default=None, help="the backtests/market run the page's Model performance tab shows (the production preset pins it)")
-    ap.add_argument("--sigma", choices=["band"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
+    ap.add_argument("--quantile-grid", action="store_true", help="the 20-point outcome grids in the run (backtest_inseason --quantile-grid; BACKLOG 47)")
+    ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
@@ -98,7 +99,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)

@@ -396,6 +396,28 @@
     return groups.flatMap(g => g.cols);
   }
 
+  function outcomeCurve(q, rep, label) {   // a player's predictive distribution from his 20 equal-probability quantiles (BACKLOG 47)
+    if (!q || q.length < 4) return '';
+    const W = 300, H = 70, pad = 4, lo = Math.min(q[0], rep != null ? rep : q[0]) - 1, hi = Math.max(q[q.length - 1], rep != null ? rep : 0) + 1;
+    const x = v => pad + (v - lo) / Math.max(hi - lo, 1e-6) * (W - 2 * pad);
+    const bars = [];                 // each gap between neighbouring quantiles holds 1/20 of the probability: height = 1 / width
+    for (let j = 0; j + 1 < q.length; j++) { const w = Math.max(q[j + 1] - q[j], 0.15); bars.push([q[j], q[j + 1], 1 / w]); }
+    const top = Math.max(...bars.map(b => b[2]));
+    const y = d => H - 14 - d / top * (H - 22);
+    let d = `M${x(bars[0][0]).toFixed(1)},${(H - 14).toFixed(1)}`;
+    for (const [a, b, h] of bars) d += ` L${x(a).toFixed(1)},${y(h).toFixed(1)} L${x(b).toFixed(1)},${y(h).toFixed(1)}`;
+    d += ` L${x(bars[bars.length - 1][1]).toFixed(1)},${(H - 14).toFixed(1)} Z`;
+    const md = (q[9] + q[10]) / 2, mean = q.reduce((a, b) => a + b, 0) / q.length;
+    const above = rep == null ? null : q.filter(v => v > rep).length / q.length;
+    const tick = (v, t) => `<line x1="${x(v).toFixed(1)}" x2="${x(v).toFixed(1)}" y1="6" y2="${H - 12}" stroke="currentColor" stroke-dasharray="${t}" stroke-width="1"/>`;
+    return `<figure class="arch" style="margin:8px 0 0"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}: the spread of likely points per game, median ${fmt(md, 1)}${rep != null ? `, replacement ${fmt(rep, 1)}` : ''}" style="max-width:340px;width:100%;height:auto">` +
+      `<path d="${d}" fill="var(--accent)" fill-opacity="0.25" stroke="var(--accent)" stroke-width="1"/>` +
+      (rep != null ? tick(rep, '3 3') + `<text x="${(x(rep) + 3).toFixed(1)}" y="12" font-size="10" fill="currentColor">replacement</text>` : '') +
+      tick(md, '0') + `<text x="${x(lo + 0.2).toFixed(1)}" y="${H - 2}" font-size="10" fill="currentColor">${fmt(q[0], 1)}</text>` +
+      `<text x="${(W - pad).toFixed(1)}" y="${H - 2}" font-size="10" text-anchor="end" fill="currentColor">${fmt(q[q.length - 1], 1)} ppg</text></svg>` +
+      `<figcaption class="k">${esc(label)}: median ${fmt(md, 1)} ppg, average ${fmt(mean, 1)}${above == null ? '' : `; ${Math.round(above * 100)}% of outcomes above replacement`}. Lopsided to the right = more upside than downside.</figcaption></figure>`;
+  }
+
   function details(r) {
     if (r.pick) return `<div class="k">A draft pick valued as the expected wins of the player taken there (see the Rosters tab for how). Its wins land in the season its player arrives (${esc(r.name.slice(0, 4))}), so it carries ${esc(r.name.slice(0, 4))} − ${data.picks ? data.picks.now : ''} year(s) of your discount today and gains that back as the draft nears. Priced at KTC's tier value; fair value and the gap come from the same rank match as every player.</div>`;
     const c = comps(r), L = data.labels, d = 1 - st.rate;
@@ -415,7 +437,9 @@
     const skewOf = s => { if (s.md == null || s.lo == null || s.hi == null) return ''; const up = s.hi - s.md, dn = s.md - s.lo; if (up > 1.25 * dn + 0.05) return ' <span class="skew up" title="right-skewed: more upside than downside (mean above median)">▲</span>'; if (dn > 1.25 * up + 0.05) return ' <span class="skew dn" title="left-skewed: more downside than upside (mean below median)">▼</span>'; return ''; };
     const bandTd = s => hasBand ? `<td>${s.lo == null ? '<span class="dim">–</span>' : `${fmt(s.pg, 1)}${s.md == null ? '' : ` <span class="dim">med ${fmt(s.md, 1)}</span>`} <span class="dim">(${fmt(s.lo, 1)}–${fmt(s.hi, 1)})</span>${skewOf(s)}`}</td>` : '';
     const wTd = s => hasW ? `<td>${s.wl == null ? '<span class="dim">–</span>' : `${fmt(s.wl, 2)}–${fmt(s.wh, 2)}`}</td>` : '';
-    return `<div class="dgrid"><div class="facts">${facts.map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` +
+    const repPos = data.replacement_ppg ? data.replacement_ppg[r.pos] : null;
+    const curves = r.dist ? outcomeCurve(r.dist.next, repPos, `Next season (${L[1] || 'next'})`) + outcomeCurve(r.dist.ros, repPos, `Rest of this season (${L[0] || 'ROS'})`) : '';
+    return `<div class="dgrid"><div class="facts">${facts.map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` + curves +
       `<table class="small spans"><thead><tr><th class="l">Season</th><th>Proj pts</th>${bandTh}<th>PAR</th><th>WAR</th>${wTh}<th>Weight</th></tr></thead><tbody>${spans.map(s => `<tr><td class="l">${esc(s.lab)}</td><td>${fmt(s.pts)}</td>${bandTd(s)}<td>${fmt(s.par)}</td><td>${fmt(s.war, 2)}</td>${wTd(s)}<td class="dim">${s.w ? s.w.toFixed(2) : '0'}</td></tr>`).join('')}</tbody></table>` +
       (hasBand || hasW ? `<div class="k" style="margin-top:6px">The band is the 20th to 80th percentile of the career model's predictive distribution (TabPFN) for seasons two and on; the point is the mean of that distribution and "med" its median; ▲ marks a right-skewed season (more upside than downside, the usual shape for RB, WR and TE) and ▼ a left-skewed one (a fat downside, the usual shape for QBs). This season and next season are point projections from the in-season model, so their floor and ceiling equal the point. Rookies without a modelled tail carry the position's spread.</div>` : '') + `</div>`;
   }

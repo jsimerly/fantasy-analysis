@@ -1786,6 +1786,15 @@ t = 1.45) stays a tie.
     in the weekly output (career tail; the in-season model's ROS / next spans need quantiles too), joint pricing with
     the coupling fit walk-forward (0.5 matches the 0.48 correlation), a per-player outcome sparkline on the page, and
     a bias / level metric beside MAE in the harness so a mean-correct change is not read as a loss.
+    **Production path built the same day, behind flags (off until the owner's call):** `InSeasonModels(range_quantiles=)`
+    emits each target's grid (`ros_/next_` x `ppg_/games_qNN`, averaged over bags); `inseason.joint_excess` prices a
+    span jointly (the games grid rescaled to the age-capped expected games); `inseason_value(sigma_mode="joint")`
+    writes `{ros,next,h{k}}_ppg_excess`, which value and WAR use; `backtest_inseason.py --current --quantile-grid
+    --sigma joint` and the same flags on `weekly_refresh.py`; the export carries each player's ROS and next-season
+    ppg grid (`dist`) and the page draws it as an outcome curve in the player detail (median, average, share above
+    replacement, the replacement line). Spec-tested with the owner's worked example (16 g x 15 ppg / 8 g x 9 ppg:
+    36 points as a product of averages, 48 paired, 42 at the halfway coupling). Switching = the production preset
+    (`quantile_grid=True, sigma="joint"`) and one cold run (~2 h: the grid changes the tail-cache key).
 
 48. **Mixed checkpoint weeks (owner, 2026-10-12: "maybe we mix it up in our synth data right? Some player seasons 1,
     4, 7 ...").** The in-season TabPFN trains on weeks 3 / 6 / 9 / 13 only, so a week-5 projection (today's)

@@ -597,8 +597,11 @@ class InSeasonModels:
 
     def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
                  tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None,
-                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, random_weeks: int | None = None, **params):
+                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, random_weeks: int | None = None,
+                 range_quantiles: Iterable[float] | None = None, **params):
         self.device, self.seed = device, seed
+        # the predictive quantiles of each target (TabPFN only; the same forward pass as the point): ros_ppg_qNN ...
+        self.range_quantiles = tuple(float(q) for q in range_quantiles) if range_quantiles else None
         self.random_weeks = int(random_weeks) if random_weeks else None
         self.bags, self.focus_week = max(int(bags), 1), bool(focus_week)
         if self.bags > 1 and self.focus_week:
@@ -618,7 +621,7 @@ class InSeasonModels:
 
     def _new(self):
         if self.backend == "tabpfn":
-            return career._TabPFN(self.device, self.seed, self.tabpfn_params)
+            return career._TabPFN(self.device, self.seed, self.tabpfn_params, want_quantiles=self.range_quantiles)
         if self.backend != "xgb":
             raise ValueError(f"unknown in-season backend {self.backend!r} (xgb | tabpfn)")
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1, **self.params)
@@ -682,10 +685,26 @@ class InSeasonModels:
         ros_p = np.clip(self._predict("ros_ppg", X, snaps), 0, None)
         nx_g = np.clip(self._predict("next_games", X, snaps), 0, MAX_GAMES)
         nx_p = np.clip(self._predict("next_ppg", X, snaps), 0, None)
-        return snaps.with_columns(
+        out = snaps.with_columns(
             pl.Series("ros_games_hat", ros_g), pl.Series("ros_ppg_hat", ros_p), pl.Series("ros_fpts_hat", ros_g * ros_p),
             pl.Series("next_games_hat", nx_g), pl.Series("next_ppg_hat", nx_p), pl.Series("next_fpts_hat", nx_g * nx_p),
         )
+        return out.with_columns(self._quantile_columns(X, snaps))
+
+    def _quantile_columns(self, X: np.ndarray, snaps: pl.DataFrame) -> list[pl.Series]:
+        """``{ros,next}_{ppg,games}_qNN`` from each target's predictive distribution, averaged over its estimators (bags);
+        nothing for a backend without quantiles (the trees)."""
+        if not self.range_quantiles:
+            return []
+        cols = []
+        for name, cap in (("ros_ppg", None), ("ros_games", MAX_GAMES), ("next_ppg", None), ("next_games", MAX_GAMES)):
+            ests = self._estimators(name, snaps)
+            if not all(hasattr(m, "predict_quantiles") for m in ests):
+                return []
+            q = np.mean([np.asarray(m.predict_quantiles(X, self.range_quantiles), dtype=float) for m in ests], axis=0)
+            q = np.clip(np.sort(q, axis=1), 0.0, cap)                  # bag averages keep the order; clip like the points
+            cols += [pl.Series(f"{name}_{career.q_name(qq)}", q[:, j]) for j, qq in enumerate(self.range_quantiles)]
+        return cols
 
 
 # ------------------------------------------------------------------- in-season value
@@ -809,8 +828,34 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8,
 Z_20_80 = 0.8416     # a 20-80 band is +- 0.84 standard deviations of a normal spread
 
 
+JOINT_COUPLING = 0.5          # BACKLOG 47: halfway between independent and fully dependent ppg x games (their correlation is +0.48)
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma (experiments.apply_sigma_mode uses the same)
 SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain
+
+
+def joint_excess(df: pl.DataFrame, span: str, rep: dict[str, float], grid: tuple[float, ...] | None = None,
+                 coupling: float = JOINT_COUPLING) -> pl.Series | None:
+    """Per-game excess of a span (``ros``, ``next`` or ``h{k}``) priced jointly with its games: the season's points above
+    replacement E[max(ppg - rep, 0) x games] from the two predictive grids -- ``coupling`` x the quantile-by-quantile
+    pairing (healthy seasons are the big seasons) + (1 - coupling) x the product of the means -- divided by the
+    expected games, so value x games_hat reproduces it. None when the span has no complete grid."""
+    grid = grid or career.QUANTILE_GRID
+    pq = [f"{span}_ppg_{career.q_name(q)}" for q in grid]
+    gq = [f"{span}_games_{career.q_name(q)}" for q in grid]
+    if not all(c in df.columns for c in pq + gq):
+        return None
+    rep_e = pl.col("position").replace_strict(rep, default=0.0, return_dtype=pl.Float64)
+    ex_q = [pl.max_horizontal(pl.col(c).cast(pl.Float64) - rep_e, pl.lit(0.0)) for c in pq]
+    games = pl.col(f"{span}_games_hat").cast(pl.Float64)
+    # the games grid rescaled to the (age-capped) expected games: the cap moves the level, the grid keeps its shape
+    g_raw = [pl.col(c).cast(pl.Float64).clip(lower_bound=0.0) for c in gq]
+    g_mean = pl.sum_horizontal(g_raw) / len(grid)
+    scale = pl.when(g_mean > 0.01).then(games / g_mean).otherwise(0.0)
+    g_q = [g * scale for g in g_raw]
+    dep = pl.sum_horizontal([a * b for a, b in zip(ex_q, g_q)]) / len(grid)
+    ind = (pl.sum_horizontal(ex_q) / len(grid)) * games
+    e = pl.when(games > 0.01).then((coupling * dep + (1 - coupling) * ind) / games).otherwise(0.0)
+    return df.select(e.fill_null(0.0).alias(f"{span}_ppg_excess")).to_series()
 
 
 def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int, dict[str, float]] | None) -> pl.DataFrame:
@@ -868,12 +913,20 @@ def inseason_value(
     if sigma_mode == "band":
         df = df.with_columns([((pl.col(f"h{k}_ppg_q80") - pl.col(f"h{k}_ppg_q20")) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma")
                               for k in horizons if f"h{k}_ppg_q20" in df.columns and f"h{k}_ppg_q80" in df.columns])
+    elif sigma_mode == "joint":                        # BACKLOG 47: every span with a grid priced jointly with its games
+        for span in ["ros", "next"] + [f"h{k}" for k in horizons]:
+            e = joint_excess(df, span, rep)
+            if e is not None:
+                df = df.with_columns(e)
     elif sigma_mode:
-        raise ValueError(f"sigma_mode {sigma_mode!r}: None or 'band'")
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'joint'")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
 
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
+        pre = mu_col.replace("_ppg_hat", "_ppg_excess")
+        if pre in df.columns and df[pre].null_count() < df.height:
+            return df[pre].fill_null(0.0).to_numpy().astype(float)
         own = mu_col.replace("_ppg_hat", "_ppg_sigma")
         if own in df.columns and df[own].null_count() < df.height:
             return _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
