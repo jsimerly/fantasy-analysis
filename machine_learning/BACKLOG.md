@@ -1676,3 +1676,29 @@ t = 1.45) stays a tie.
     market tie -> **the production preset's target is `blend` from 2026-10-10** (one line in
     `weekly_refresh.py`, reversible), pending the residual rematch; the distribution metrics need `--range` on the harness
     runs (the after-prod chain ran without it, so pinball / coverage / skew are null tonight).
+
+45. **Value-side verdicts on one player set, and the spread question settled (2026-10-12 01:00, the night chain).**
+    The blend baseline `tabpfn35_set_stacked_blend_w2` (bands, cohort frames saved; 1 h 36 m) rescored four ways, then
+    re-judged on ONE player set per cohort (the union of the baseline's and the variant's top 150 by projected WAR,
+    ~204 players), because the standard co-primaries score each variant's own top 150 and a value-side change moves
+    that list by construction:
+
+    | Variant | Standard reading (own top 150) | Fixed set: ordering | Fixed set: wins error |
+    | --- | --- | --- | --- |
+    | Each player's own band as sigma (items 6 / 26 / 36b) | 0.636 vs 0.621, t = +0.8; error 0.502 vs 0.502 | **+0.025, t = 2.8, 7 of 8** | **-0.005, t = 2.7** |
+    | No spread at all | 0.817 vs 0.621, t = +17.6 (!) | -0.039, t = -5.6, 0 of 8 | -0.019 |
+    | QB x 0.82 (item 42) | 0.625 vs 0.621, t = +1.9; error t = +2.1 | +0.003, t = 2.0 | **-0.006, t = 3.4** |
+    | Walk-forward positional scale | flat; error worse (t = -2.1) | -- | -- |
+    | Band + QB x 0.82 | -- | **+0.023, t = 2.4** | **-0.007, t = 3.4** |
+
+    **The no-spread "ADOPT" is a yardstick artifact:** without the upside term every player below replacement
+    projects to exactly zero, the "top 150" list fills with zero-projected players who also realized zero (46 % of
+    the list vs 30 %), and the matching zeros read as perfect agreement and zero error; wins error also rewards a
+    median, which is what dropping the spread produces. On the same players the spread orders better (0.733 vs
+    0.694) and is unbiased on average (realized - projected +0.03 wins vs +0.09). The upside term stays.
+    **Proposed rule change (owner's call):** judge value-side variants (sigma, scales, discount) on the fixed
+    union set; model-side variants keep the standard reading. Under it, per-player band sigma and the QB scale both
+    pass. Production: `--sigma band` exists (`weekly_refresh.py --sigma band`, off); the QB scale has no production
+    path yet (the harness's `--fixed-scale` only). Band sigma also removes the cold run's sigma refit (~1 h of the
+    1 h 58 m) once the career tail stops computing it. Scripts: scratchpad `dissect_sigma.py`, `fixed_set.py`
+    (to move into `experiments.rescore` as reported columns if the rule is adopted).
