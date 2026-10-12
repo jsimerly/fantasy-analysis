@@ -1576,6 +1576,12 @@ t = 1.45) stays a tie.
     held back (it could not finish before the Monday refresh); it needs its own ~3.5 h night, the career tails for
     every cohort are cached. These base numbers are also the production model's own in-season validation (the
     page's in-season card still shows the 2026-10-07 summary; a `--publish`-style write of this run would refresh it).
+    **Stage 3 all five groups, 2026-10-12 13:39 -> 14:44 (cohorts 2021-24, weeks 3 / 6 / 9 / 13; usage, role, opportunity,
+    consensus with FFToday, preseason ADP):** rest of season 0.818 / 0.793 / 0.765 / 0.722 vs the base's 0.801 / 0.770 /
+    0.744 / 0.688 (+0.017 to +0.034, the market 0.707 / 0.677 / 0.648 / 0.569); next season 0.580 / 0.592 / 0.607 / 0.623
+    vs 0.573 / 0.583 / 0.600 / 0.622 (+0.001 to +0.009); rookies' next season 0.42 / 0.44 / 0.49 / 0.49 vs KTC 0.41 /
+    0.45 / 0.46 / 0.46. The base ran at 02:50 on the morning's lake (the in-season model does not read the career tail,
+    so the comparison holds). A production candidate for the rest of season; the owner's call.
 40. **Title odds: the championship lens next to WAR (owner, 2026-10-09: "maximize our
     championship odds, not our win rate ... it does show up as important in leagues where they
     are top heavy").** `machine_learning/src/title.py`: a Monte Carlo of the remaining
