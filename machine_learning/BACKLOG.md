@@ -1557,6 +1557,13 @@ t = 1.45) stays a tie.
     splits a little, and only degrades an in-context model's signal; what matters is that a
     repeated outcome counts once, and the harness's train-test gap (`gap_h1`) is the detector.
 
+    **Stage 2 on 3.5, 2026-10-12 02:50 (cohorts 2023-24, weeks 6 / 13; groups from the lake: Next Gen, expected
+    points, Sleeper projections 2018-26 + FFToday 2010-17, ADP local):** the five groups (usage, role, opportunity,
+    consensus, preseason) vs the base -- rest of season 0.792 -> **0.808** at week 6, 0.740 -> **0.763** at week 13;
+    next season 0.604 -> 0.611, 0.652 -> 0.656. One label per player-season adds nothing on 3.5 (next season
+    0.607 vs 0.611 at week 6, tie at 13; on the trees it was +0.015) and is dropped. Stage 3 (cohorts 2021-24,
+    weeks 3 / 6 / 9 / 13) runs the same night in the gap before Monday's DAG. (The first stage-2 attempt died in
+    four seconds: the chain named its group list `GROUPS`, a reserved bash variable.)
 40. **Title odds: the championship lens next to WAR (owner, 2026-10-09: "maximize our
     championship odds, not our win rate ... it does show up as important in leagues where they
     are top heavy").** `machine_learning/src/title.py`: a Monte Carlo of the remaining
