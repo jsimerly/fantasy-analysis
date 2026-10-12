@@ -1748,3 +1748,21 @@ t = 1.45) stays a tie.
     (rest of season: points per game over a waiver-wire player at the position); WAR stays, computed per league from
     PAR through that league's win curve. The harness still accepts on WAR (switching would orphan 90+ ledger rows);
     PAR metrics can be added beside it.
+
+47. **Distributional PAR: price the breakout tail (owner, 2026-10-12: "I really don't like that we're off by ~20-30 %
+    for all skill positions ... that also means we're missing upside").** Where the gap lives (h1, blend frames,
+    realized vs priced PAR by projected tier): the stars are priced right (top 12: RB +7 %, WR +2 %, QB -7 %); the
+    missing value is breakouts lower down (RB 13-24 +19 %, 25-48 +52 %, 49+ +109 %; WR 13-24 +18 %, 49+ +58 %; a third
+    of RBs projected 25th-48th finish above replacement against 5 % for their point projection). A normal spread --
+    per position or per player -- is symmetric and under-counts a right-skewed tail. **Built (offline-testable):**
+    `career.QUANTILE_GRID` (20 equal-probability midpoints), `run_experiment.py --quantile-grid` keeps them per
+    horizon, `experiments.distributional_excess` = E[max(X - rep, 0)] from the player's own predictive quantiles,
+    `--rescore RUN --sigma dist` re-prices; value / WAR take a precomputed `h{k}_ppg_excess`. Spec-tested. Needs one
+    GPU run with the grid (~1 h 45 m), then the fixed-set verdict against band sigma; production follows if it wins.
+
+48. **Mixed checkpoint weeks (owner, 2026-10-12: "maybe we mix it up in our synth data right? Some player seasons 1,
+    4, 7 ...").** The in-season TabPFN trains on weeks 3 / 6 / 9 / 13 only, so a week-5 projection (today's)
+    interpolates between rows it has never seen. `InSeasonModels(random_weeks=K)` /
+    `backtest_inseason.py --inseason-random-weeks K` keeps K random snapshot weeks per player-season instead: the
+    same row count, every point of the season covered, the labels as valid as before (the week is an input).
+    Test: fixed 3 / 6 / 9 / 13 vs 4 random, both evaluated off the grid (weeks 4 / 7 / 10 / 12), cohorts 2023-24.

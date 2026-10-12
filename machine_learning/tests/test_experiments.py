@@ -255,3 +255,54 @@ class TestRescore:
         assert (band["bias_war_all"] < none["bias_war_all"]).all()      # upside priced: projected WAR higher, realized - projected lower
         with pytest.raises(ValueError):
             ex.rescore(wide, cfg, sigma_mode="band")                     # a rebuild needs the replacement levels
+
+
+class TestDistributionalPAR:
+    """BACKLOG 47: value priced off the player's whole predictive distribution (a quantile grid), skew included."""
+
+    def _grid_frame(self, qs_by_player):
+        import career
+        rows = []
+        for pid, pos, qs in qs_by_player:
+            r = {"player_id": pid, "position": pos}
+            for q, v in zip(career.QUANTILE_GRID, qs):
+                r[f"h1_ppg_{career.q_name(q)}"] = v
+            rows.append(r)
+        return pl.DataFrame(rows)
+
+    def test_the_excess_integrates_the_grid_and_sees_the_right_tail(self):
+        import numpy as np
+        import career
+        rep = {"RB": 9.0}
+        flat = [8.0] * 20                                            # never above the line
+        sym = list(np.linspace(6.0, 10.0, 20))                       # median 8, a little above the line at the top
+        skew = list(np.linspace(6.0, 8.0, 15)) + [10.0, 12.0, 14.0, 17.0, 21.0]   # same median region, a breakout tail
+        d = ex.distributional_excess(self._grid_frame([("a", "RB", flat), ("b", "RB", sym), ("c", "RB", skew)]), [1], rep)
+        e = dict(zip(d["player_id"], d["h1_ppg_excess"]))
+        assert e["a"] == 0.0 and 0.0 < e["b"] < e["c"]
+        assert abs(e["c"] - sum(max(v - 9.0, 0.0) for v in skew) / 20) < 1e-12
+        partial = self._grid_frame([("a", "RB", flat)]).drop(f"h1_ppg_{career.q_name(career.QUANTILE_GRID[0])}")
+        assert "h1_ppg_excess" not in ex.distributional_excess(partial, [1], rep).columns       # an incomplete grid is not priced
+
+    def test_value_and_war_use_a_precomputed_excess(self):
+        import value, war
+        from league import WinCurve
+        df = pl.DataFrame({"player_id": ["a"], "position": ["RB"], "h1_ppg_hat": [8.0], "h1_games_hat": [10.0], "h1_ppg_sigma": [3.0], "h1_ppg_excess": [2.5]})
+        assert value.intrinsic_value(df, {"RB": 9.0}, [1], 0.2)["h1_vorp_hat"][0] == 25.0
+        w = war.wins_above_replacement(df, {"RB": 9.0}, WinCurve.normal(120.0, 25.0), war.career_components([1]), 0.2)
+        assert w["par_1"][0] == 25.0
+
+    def test_rescore_dist_prices_off_the_grid(self):
+        import numpy as np
+        import career
+        cfg, H, per_cohort, frames = TestRescore()._run()
+        rep = {"QB": 12.0, "RB": 9.0, "WR": 8.0, "TE": 7.0}
+        cols = []
+        for k in H:
+            for i, q in enumerate(career.QUANTILE_GRID):
+                cols.append((pl.col(f"h{k}_ppg_hat") + (i - 9.5) * 0.4 + (3.0 if i >= 17 else 0.0)).alias(f"h{k}_ppg_{career.q_name(q)}"))
+        g = frames.with_columns(cols)
+        dist, _ = ex.rescore(g, cfg, sigma_mode="dist", rep_for=lambda T: rep)
+        none, _ = ex.rescore(g, cfg, sigma_mode="none", rep_for=lambda T: rep)
+        assert dist["n_all"].to_list() == none["n_all"].to_list()
+        assert (dist["bias_war_all"] < none["bias_war_all"]).all()   # the tail is priced: projected value up, realized - projected down

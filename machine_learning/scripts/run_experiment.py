@@ -120,7 +120,7 @@ def rescore_cli(args) -> None:
     meta = meta[0] if meta else {}
     groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
     H = sorted(int(c[1:-9]) for c in frames.columns if c.startswith("h") and c.endswith("_fpts_hat") and c[1:-9].isdigit())   # the horizons the frames hold
-    suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + ({"band": "_sb", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else "")
+    suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + ({"band": "_sb", "dist": "_sd", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else "")
     name = args.as_name or (src_name + (suffix or "_rescored"))
     backend = str(meta.get("backend") or args.backend)
     cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(int(t) for t in frames["cohort"].unique().to_list()),
@@ -176,6 +176,7 @@ def main() -> None:
     ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (college + draft capital; draft_rows.py) to the matrix")
     ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py), e.g. 9 or 6,13")
     ap.add_argument("--snapshot-from", type=int, default=2010, help="first season of the snapshot rows")
+    ap.add_argument("--quantile-grid", action="store_true", help="keep the 20-point quantile grid of the predictive distribution too (BACKLOG 47: --rescore RUN --sigma dist prices PAR off it)")
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the predictive distribution (TabPFN) and score the band: coverage, pinball")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default, as production: tier-aware from 30) | 30+ | 30+t34 | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
@@ -188,7 +189,7 @@ def main() -> None:
     ap.add_argument("--rescore", metavar="RUN", help="score the saved cohort frames of RUN again (no GPU) under --fixed-scale, --walk-scale or --top-n; name it with --as")
     ap.add_argument("--as", dest="as_name", help="the rescored run name (default: RUN plus a suffix for the change)")
     ap.add_argument("--walk-scale", action="store_true", help="--rescore: walk-forward per-position value scale from the cohorts complete by each cohort")
-    ap.add_argument("--sigma", choices=["band", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
+    ap.add_argument("--sigma", choices=["band", "dist", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
     ap.add_argument("--top-n", type=int, default=None, help="the top-N projected players the ordering and error metrics score (default: the config)")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
@@ -257,7 +258,8 @@ def main() -> None:
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
-                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
+                                  range_quantiles=(tuple(sorted(set(career.QUANTILE_GRID) | {0.2, 0.5, 0.8})) if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None),
+                                  draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
         got: list[pl.DataFrame] = []
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for, collect=got if args.save_cohorts else None)
         summary["regime"] = bc.regime

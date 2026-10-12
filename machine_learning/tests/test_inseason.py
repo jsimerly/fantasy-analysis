@@ -437,3 +437,18 @@ def test_preseason_reads_the_lake_shape_of_the_mfl_adp():
         out = inseason.preseason_features(mfl, None, ids)
         r = out.row(0, named=True)
         assert r["player_id"] == "00-1" and r["season"] == 2015 and r["ps_adp"] == 2.63 and r["ps_drafted"] == 1.0
+
+
+def test_random_weeks_keep_k_per_player_season_and_cover_the_season():
+    rows = pl.DataFrame({"player_id": ["a"] * 30 + ["b"] * 15, "season": [2020] * 15 + [2021] * 15 + [2020] * 15,
+                         "week": list(range(2, 17)) * 3, "x": list(range(45))})
+    out = inseason.random_weeks_per_season(rows, 4, seed=7)
+    per = out.group_by("player_id", "season").len()
+    assert per["len"].to_list() == [4, 4, 4] and out.height == 12
+    assert out.equals(inseason.random_weeks_per_season(rows, 4, seed=7))                  # seeded: reproducible
+    assert out["week"].n_unique() > 4                                                     # not the same four weeks for everyone
+    assert not out.equals(inseason.random_weeks_per_season(rows, 4, seed=8))
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2, 3, 4, 5, 6, 7, 8])
+    m = inseason.InSeasonModels(n_estimators=5, max_depth=2, random_weeks=2).fit(snaps, as_of_season=2022)
+    assert m.train_rows["ros_games"] <= 2 * snaps.select("player_id", "season").unique().height

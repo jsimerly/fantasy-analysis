@@ -610,7 +610,14 @@ class HorizonModels:
 
 
 def q_name(q: float) -> str:
-    return f"q{int(round(q * 100)):02d}"
+    """0.2 -> 'q20'; a half-percent level keeps its half: 0.025 -> 'q02p5', 0.975 -> 'q97p5'."""
+    pct = round(q * 1000) / 10
+    whole = int(pct)
+    return f"q{whole:02d}" if pct == whole else f"q{whole:02d}p{int(round((pct - whole) * 10))}"
+
+
+# the quantile-midpoint grid a distributional value integrates over (BACKLOG 47): 20 equal-probability bins
+QUANTILE_GRID = tuple(round((i + 0.5) / 20, 4) for i in range(20))
 
 
 def _range_columns_of(self, k: int, X: np.ndarray, df: pl.DataFrame) -> list[pl.Series]:

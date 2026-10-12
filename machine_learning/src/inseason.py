@@ -562,6 +562,14 @@ def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None
     return pl.concat(kept) if kept else out.head(0)
 
 
+def random_weeks_per_season(rows: pl.DataFrame, k: int, seed: int = 0) -> pl.DataFrame:
+    """At most ``k`` snapshot weeks per player-season, drawn at random (seeded) from the weeks he has (BACKLOG 48): the
+    same number of rows as k fixed checkpoints, but the model sees every point of the season (a week-5 projection
+    no longer interpolates between week-3 and week-6 training rows)."""
+    key = pl.struct("player_id", "season", "week").hash(seed)
+    return (rows.with_columns(key.alias("_rk")).filter(pl.col("_rk").rank("ordinal").over(["player_id", "season"]) <= k).drop("_rk"))
+
+
 def bag_subset(rows: pl.DataFrame, max_rows: int | None, seed: int, keep_recent: int = 2) -> pl.DataFrame:
     """One bag's in-context draw (context bagging, BACKLOG 36): the most recent ``keep_recent``
     seasons whole, the rest of the budget a random sample of the older rows -- a different draw
@@ -589,8 +597,9 @@ class InSeasonModels:
 
     def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
                  tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None,
-                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, **params):
+                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, random_weeks: int | None = None, **params):
         self.device, self.seed = device, seed
+        self.random_weeks = int(random_weeks) if random_weeks else None
         self.bags, self.focus_week = max(int(bags), 1), bool(focus_week)
         if self.bags > 1 and self.focus_week:
             raise ValueError("bags and focus_week are two different contexts; pick one")
@@ -628,7 +637,9 @@ class InSeasonModels:
         for name, (rows, target) in specs.items():
             if self.next_one_per_season and name.startswith("next_"):
                 rows = one_week_per_season(rows, self.seed)
-            if self.train_weeks is not None:
+            if self.random_weeks:
+                rows = random_weeks_per_season(rows, self.random_weeks, self.seed)
+            elif self.train_weeks is not None:
                 rows = rows.filter(pl.col("week").is_in(self.train_weeks))
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")

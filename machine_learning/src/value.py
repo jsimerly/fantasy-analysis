@@ -64,7 +64,9 @@ def intrinsic_value(
     for k in horizons:
         mu = df[f"h{k}_ppg_hat"].to_numpy().astype(float)
         games = df[f"h{k}_games_hat"].to_numpy().astype(float)
-        if f"h{k}_ppg_sigma" in df.columns:
+        if f"h{k}_ppg_excess" in df.columns:          # priced off the player's whole predictive distribution (BACKLOG 47)
+            excess = df[f"h{k}_ppg_excess"].fill_null(0.0).to_numpy().astype(float)
+        elif f"h{k}_ppg_sigma" in df.columns:
             excess = expected_excess(mu, df[f"h{k}_ppg_sigma"].to_numpy(), rep_arr)
         else:
             excess = np.maximum(mu - rep_arr, 0.0)

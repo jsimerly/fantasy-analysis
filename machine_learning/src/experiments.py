@@ -434,14 +434,29 @@ def apply_sigma_mode(f: pl.DataFrame, H: list[int], sigma_mode: str | None) -> p
         return f
     if sigma_mode == "none":
         return f.drop([c for c in f.columns if c.endswith("_ppg_sigma")])
+    if sigma_mode == "dist":
+        return f                                   # rescore prices it with distributional_excess (it needs rep)
     if sigma_mode != "band":
-        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'none'")
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band', 'dist' or 'none'")
     cols = []
     for k in H:
         lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
         if lo in f.columns and hi in f.columns:
             cols.append(((pl.col(hi) - pl.col(lo)) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma"))
     return f.with_columns(cols)
+
+
+def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float], grid: tuple[float, ...] = career.QUANTILE_GRID) -> pl.DataFrame:
+    """``h{k}_ppg_excess`` = E[max(X - rep, 0)] per player from his predictive quantiles on ``grid`` (equal-probability
+    midpoints: the mean of the clipped excess over them integrates the distribution, its skew included -- the
+    breakout tail a normal spread under-counts). A horizon whose grid is incomplete is left unpriced (no column)."""
+    rep_e = pl.col("position").replace_strict(rep, default=0.0, return_dtype=pl.Float64)
+    cols = []
+    for k in H:
+        names = [f"h{k}_ppg_{career.q_name(q)}" for q in grid]
+        if all(n in df.columns for n in names):
+            cols.append((pl.sum_horizontal([pl.max_horizontal(pl.col(n).cast(pl.Float64) - rep_e, pl.lit(0.0)) for n in names]) / len(names)).alias(f"h{k}_ppg_excess"))
+    return df.with_columns(cols) if cols else df
 
 
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
@@ -464,7 +479,10 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
             import war as _war
             from league import WinCurve, OWNER_CURVE_FALLBACK
             rep = rep_for(T)
-            f = apply_sigma_mode(f, H, sigma_mode)
+            if sigma_mode == "dist":
+                f = distributional_excess(f.drop([c for c in f.columns if c.endswith("_ppg_excess")]), H, rep)
+            else:
+                f = apply_sigma_mode(f, H, sigma_mode)
             f = value.intrinsic_value(f, rep, H, cfg.discount_rate)
             f = _war.wins_above_replacement(f, rep, curve or WinCurve.normal(*OWNER_CURVE_FALLBACK), _war.career_components(H), cfg.discount_rate)
         scales = dict(fixed_scale or {})

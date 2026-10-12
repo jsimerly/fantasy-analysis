@@ -52,6 +52,9 @@ def career_components(horizons: list[int]) -> list[Component]:
 
 def _excess(df: pl.DataFrame, comp: Component, rep_arr: np.ndarray, sigma: dict | None) -> np.ndarray:
     mu = df[comp.ppg].fill_null(0.0).to_numpy().astype(float)
+    pre = comp.ppg.replace("_ppg_hat", "_ppg_excess")
+    if pre != comp.ppg and pre in df.columns:        # priced off the player's whole predictive distribution (BACKLOG 47)
+        return df[pre].fill_null(0.0).to_numpy().astype(float)
     if comp.sigma and comp.sigma in df.columns:
         return value.expected_excess(mu, df[comp.sigma].fill_null(0.0).to_numpy().astype(float), rep_arr)
     if sigma and comp.k in sigma:
