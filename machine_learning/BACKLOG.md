@@ -1806,3 +1806,17 @@ t = 1.45) stays a tie.
     model; 4 weeks per player-season already fills it), so two more variants: 8 random weeks per player-season (more
     weeks, fewer seasons) and 4 random weeks x 3 bags with each bag drawing its own weeks (up to 12 weeks per
     player-season, ~150k distinct rows across the models; `InSeasonModels(random_weeks=, bags=)`, spec-tested).
+
+49. **Careers first, scored over several horizons (owner, 2026-10-12: "Why is the model not doing career outputs? ... I
+    thought the whole point was to project future value?").** It does: the in-season model carries the rest of this
+    season and next, the career model seasons 3-10, all summed into Career PAR / WAR. But the default view leaned
+    near-term -- on the week-5 page the top 150's value was 36 % this season, 30 % next, 35 % seasons 3-10 (under-24s
+    26 / 28 / 46) at the 20 % discount -- and the career model has only ever been tested three seasons out.
+    **Owner's calls:** (1) score the career model at 3, 5 and 7 years -- ONE run does it (the fitted model projects every
+    season; a window is a different sum): `experiments.window_scores` + `scripts/window_report.py RUN --windows 3 5 7
+    [--vs RUN_B]` score a run's saved frames per window on the cohorts where it is complete, with the market on the
+    same players; on today's 3-season run windows 1 / 2 / 3 read 0.573 / 0.612 / 0.621 (matches the harness) with the
+    model ahead of KTC on the priced players at each (0.675 vs 0.642, 0.699 vs 0.672, 0.698 vs 0.679). The 7-season run
+    (`tabpfn35_set_stacked_blend_h7`, cohorts 2015-20, grid kept) is queued after Tuesday's refresh; (2) the page and
+    the production refresh default to a **10 %** discount (the harness keeps 0.2 for the ledger); (3) the next model
+    work is careers -- young players' trajectories and aging -- when the owner is ready.

@@ -38,7 +38,8 @@ PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
                        inseason_backend="tabpfn", target="blend",    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
                        market_run_date="2026-10-12",
-                       sigma="band"),                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
+                       sigma="band",
+                       discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 
 
@@ -88,6 +89,7 @@ def main() -> None:
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
     ap.add_argument("--market-run-date", default=None, help="the backtests/market run the page's Model performance tab shows (the production preset pins it)")
+    ap.add_argument("--discount-rate", type=float, default=None, help="yearly discount for the in-season value and the per-league WAR (default: the scripts' own, 0.2)")
     ap.add_argument("--quantile-grid", action="store_true", help="the 20-point outcome grids in the run (backtest_inseason --quantile-grid; BACKLOG 47)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
@@ -99,10 +101,10 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)
+             "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []), args.dry_run)
     if "analysis" not in args.skip:
         # the page's Draft slots and Trades tabs come from these summaries (latest run in the ML bucket);
         # rebuilt here so they carry the lake's newest standings and transactions. Best-effort: a failure

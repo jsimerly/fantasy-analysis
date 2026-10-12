@@ -19,6 +19,7 @@ def test_production_preset_sets_the_adopted_configuration():
     assert out.backend == "tabpfn" and out.stacked is True and out.range is True and out.inseason_backend == "tabpfn"
     assert a.target == "blend"                                   # the level + residual blend (BACKLOG 44)
     assert a.sigma == "band"                                     # each player's own band prices his upside (BACKLOG 45)
+    assert a.discount_rate == 0.1                                # the page's dynasty default (owner, 2026-10-12)
     assert out.groups == "base,career,injury,trend,situation,rookie,college" and out.device == "cuda"
     b = m.apply_preset(argparse.Namespace(preset=None, backend="xgb", stacked=False))
     assert b.backend == "xgb" and b.stacked is False and set(m.PRESETS) == {"production"}

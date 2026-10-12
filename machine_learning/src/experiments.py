@@ -21,7 +21,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Iterable
 
 import numpy as np
 import re
@@ -502,6 +502,41 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
     per_cohort = pl.DataFrame(rows)
     groups = fg.resolve(cfg.groups)
     return per_cohort, summarize(per_cohort, cfg, groups, fg.feature_columns(groups))
+
+
+def window_scores(cohorts: pl.DataFrame, windows: Iterable[int] = (3, 5, 7), discount_rate: float = value.DEFAULT_DISCOUNT_RATE,
+                  top_n: int = 150) -> pl.DataFrame:
+    """The career projection scored over several horizons from ONE run's saved cohort frames (BACKLOG 49): for window w,
+    projected WAR = the discounted sum of the run's own per-season ``war_k`` for k <= w, realized = the same sum of
+    ``war_real_k``, on the players whose seasons 1..w are all observable (a window is scored only on the cohorts where
+    it is complete). Per (cohort, window): ordering and wins error among the top ``top_n`` by projected window WAR,
+    bias, the market's ordering on the priced players, and realized / priced by position."""
+    rows = []
+    for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
+        f = cohorts.filter(pl.col("cohort") == T)
+        for w in windows:
+            ks = list(range(1, w + 1))
+            need = [f"war_{k}" for k in ks] + [f"war_real_{k}" for k in ks] + [f"h{k}_observable" for k in ks]
+            if not all(c in f.columns for c in need):
+                continue
+            g = f.filter(pl.all_horizontal([pl.col(f"h{k}_observable") for k in ks]))
+            if g.height < 30:
+                continue
+            g = g.with_columns(pl.sum_horizontal([pl.col(f"war_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_p"),
+                               pl.sum_horizontal([pl.col(f"war_real_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_r"))
+            top = g.sort("_p", descending=True).head(top_n)
+            p_, r_ = top["_p"].to_numpy().astype(float), top["_r"].to_numpy().astype(float)
+            row = {"cohort": T, "window": w, "n": g.height, "spearman_top": value.spearman(p_, r_), "mae_top": float(np.mean(np.abs(r_ - p_))),
+                   "bias_top": float(np.mean(r_ - p_)), "spearman_all": value.spearman(g["_p"].to_numpy().astype(float), g["_r"].to_numpy().astype(float))}
+            if "ktc_value" in g.columns:
+                pr = g.filter(pl.col("ktc_value").is_not_null())
+                if pr.height >= 20:
+                    row["spearman_model_priced"] = value.spearman(pr["_p"].to_numpy().astype(float), pr["_r"].to_numpy().astype(float))
+                    row["spearman_ktc_priced"] = value.spearman(pr["ktc_value"].to_numpy().astype(float), pr["_r"].to_numpy().astype(float))
+            for pos, pp, rr in g.group_by("position").agg(pl.col("_p").sum(), pl.col("_r").sum()).iter_rows():
+                row[f"ratio_{pos}"] = float(rr / pp) if pp else None
+            rows.append(row)
+    return pl.DataFrame(rows)
 
 
 def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:

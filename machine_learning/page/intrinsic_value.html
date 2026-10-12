@@ -231,7 +231,7 @@
     <span class="ctl"><label for="lg">League</label><select id="lg"></select></span>
     <span class="ctl"><label for="view">View</label><select id="view"><option value="career" selected>Career (dynasty)</option><option value="ros">ROS (redraft)</option></select></span>
     <span class="ctl"><label for="unit">Rank by</label><select id="unit"><option value="par" selected>Career PAR (points)</option><option value="par_ros">ROS PAR (points)</option><option value="war">Career WAR (wins)</option><option value="war_ros">ROS WAR (wins)</option></select></span>
-    <span class="ctl"><label for="disc">Discount rate</label><input type="range" id="disc" min="0" max="100" step="5" value="20" aria-valuetext="20% per year"><span class="val" id="discv">20%/yr</span></span>
+    <span class="ctl"><label for="disc">Discount rate</label><input type="range" id="disc" min="0" max="100" step="5" value="10" aria-valuetext="10% per year"><span class="val" id="discv">10%/yr</span></span>
     <span class="ctl"><label for="years">Years</label><select id="years"><option>1</option><option>3</option><option>5</option><option>7</option><option selected>10</option></select></span>
     <span class="ctl"><label for="fairm">Fair</label><select id="fairm"><option value="rank" selected>rank match</option><option value="curve">curve fit</option></select></span>
     <span class="ctl"><label for="mkt">Market</label><select id="mkt"><option value="ktc" selected>KTC dynasty (SF)</option><option value="fc">FantasyCalc dynasty (SF)</option><option value="rd_sf">KTC redraft (SF)</option><option value="rd_1qb">KTC redraft (1QB)</option></select></span>
@@ -324,7 +324,7 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let data = null, rows = [], sortKey = 'iv', sortDir = -1, posFilter = 'ALL', allCols = [], colGroups = [];
   const open = new Set();
-  const st = { rate: 0.2, years: 10, mkt: 'ktc', fair: 'rank', unit: 'par', league: null, team: null, picks: true };
+  const st = { rate: 0.1, years: 10, mkt: 'ktc', fair: 'rank', unit: 'par', league: null, team: null, picks: true };
   const rowsIn = () => data.rows.filter(r => !r.pick || st.picks);     // pick rows take part in ranking and pricing only when shown
 
   function misCell(m) {

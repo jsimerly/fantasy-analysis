@@ -306,3 +306,22 @@ class TestDistributionalPAR:
         none, _ = ex.rescore(g, cfg, sigma_mode="none", rep_for=lambda T: rep)
         assert dist["n_all"].to_list() == none["n_all"].to_list()
         assert (dist["bias_war_all"] < none["bias_war_all"]).all()   # the tail is priced: projected value up, realized - projected down
+
+
+def test_window_scores_use_each_runs_per_season_wins_and_only_complete_windows():
+    import numpy as np
+    rows = []
+    rng = np.random.default_rng(0)
+    for T in (2015, 2020):
+        for i in range(60):
+            r = {"cohort": T, "player_id": f"p{i}", "position": ["QB", "RB", "WR", "TE"][i % 4], "ktc_value": float(1000 + i * 10) if i % 2 else None}
+            for k in range(1, 8):
+                r[f"war_{k}"] = float(i) / 10
+                r[f"war_real_{k}"] = float(i) / 10 + rng.normal(0, 0.05)
+                r[f"h{k}_observable"] = T + k <= 2025                   # cohort 2020: only 5 seasons complete
+            rows.append(r)
+    per = ex.window_scores(pl.DataFrame(rows), (3, 5, 7), 0.2, top_n=40)
+    got = {(r["cohort"], r["window"]) for r in per.select("cohort", "window").to_dicts()}
+    assert got == {(2015, 3), (2015, 5), (2015, 7), (2020, 3), (2020, 5)}     # 2020's 7-year window is not complete
+    r = per.filter((pl.col("cohort") == 2015) & (pl.col("window") == 5)).row(0, named=True)
+    assert r["spearman_top"] > 0.95 and abs(r["bias_top"]) < 0.05 and r["n"] == 60 and "spearman_ktc_priced" in r and 0.9 < r["ratio_RB"] < 1.1
