@@ -234,3 +234,51 @@ def test_college2_reads_production_against_the_position_with_real_breakout_ages(
     assert out["g1"]["c2_dom_pct_age20"] > out["g2"]["c2_dom_pct_age20"]                              # early production
     assert out["g1"]["c2_dom_vs_nfl"] > out["g2"]["c2_dom_vs_nfl"] > out["g3"]["c2_dom_vs_nfl"]
     assert abs(out["g1"]["c2_ryptpa_best"] - 2.0) < 1e-9 and out["g1"]["c2_seasons"] == 3.0
+
+
+def test_college_qb_reads_passing_and_rushing_against_the_seasons_quarterbacks():
+    import polars as pl
+    import feature_groups as fg
+    rows = []
+    for season in (2020, 2021):
+        for i in range(30):                                     # starters: 200-490 attempts, little rushing
+            rows.append({"cfbd_id": f"q{i}", "season": season, "position": "QB", "pass_att": 200 + 10 * i, "pass_cmp": 120 + 6 * i,
+                         "pass_yds": 1500.0 + 80 * i, "pass_td": 10 + i // 3, "pass_int": 8, "rush_yds": 50.0 + i, "rush_td": 1, "team_games": 12})
+        rows.append({"cfbd_id": "runner", "season": season, "position": "QB", "pass_att": 300, "pass_cmp": 180, "pass_yds": 2700.0,
+                     "pass_td": 25, "pass_int": 6, "rush_yds": 1400.0, "rush_td": 18, "team_games": 13})
+    rows.append({"cfbd_id": "backup", "season": 2021, "position": "QB", "pass_att": 40, "pass_cmp": 20, "pass_yds": 300.0,
+                 "pass_td": 2, "pass_int": 1, "rush_yds": 900.0, "rush_td": 5, "team_games": 12})       # under the starter line
+    xw = pl.DataFrame({"cfbd_id": ["runner", "q0", "backup"], "gsis_id": ["g1", "g2", "g3"]})
+    out = {r["gsis_id"]: r for r in fg.college_qb_per_player(pl.DataFrame(rows), xw).to_dicts()}
+    assert set(out) == {"g1", "g2"}                              # a backup's season never counts
+    assert out["g1"]["cq_rush_pct_best"] == 1.0 and abs(out["g1"]["cq_rush_ypg_best"] - 1400 / 13) < 1e-9
+    assert out["g1"]["cq_rush_pct_best"] > out["g2"]["cq_rush_pct_best"]
+    assert abs(out["g1"]["cq_ypa_last"] - 9.0) < 1e-9 and out["g1"]["cq_starter_seasons"] == 2.0
+
+
+def test_draft_age_is_age_less_experience_and_the_young_copy_stops_after_year_three():
+    import polars as pl
+    import feature_groups as fg
+    m = pl.DataFrame({"player_id": ["a"] * 4, "season": [2020, 2021, 2022, 2023], "age_at_season": [21.5, 22.5, 23.5, 24.5], "exp_at_season": [0, 1, 2, 3]})
+    out = fg.build_draft_age(m, fg.Context())
+    assert out["draft_age"].to_list() == [21.5] * 4
+    assert out["draft_age_x_young"].to_list() == [21.5, 21.5, 21.5, None]
+
+
+def test_adp_puts_next_seasons_market_on_the_row_and_undrafted_past_the_last_pick():
+    import polars as pl
+    import feature_groups as fg
+
+    class Ctx(fg.Context):
+        @property
+        def adp(self):
+            return pl.DataFrame({"player_id": ["a", "a", "b"], "season": [2021, 2022, 2021], "ps_adp": [30.0, 12.0, 100.0],
+                                 "ps_adp_pos_rank": [9.0, 3.0, 40.0], "ps_drafted": [1.0, 1.0, 1.0]})
+
+    m = pl.DataFrame({"player_id": ["a", "a", "b", "c", "a"], "season": [2020, 2021, 2021, 2020, 2022]})
+    out = {(r["player_id"], r["season"]): r for r in fg.build_adp(m, Ctx()).to_dicts()}
+    assert out[("a", 2020)]["adp_next"] == 30.0 and out[("a", 2020)]["adp_this_pos_rank"] is None    # 2020 ADP not in the data
+    assert out[("a", 2021)]["adp_next_pos_rank"] == 3.0 and out[("a", 2021)]["adp_this_pos_rank"] == 9.0
+    assert out[("b", 2021)]["adp_next_drafted"] == 0.0 and out[("b", 2021)]["adp_next"] == 400.0      # not drafted in 2022
+    assert out[("c", 2020)]["adp_next_drafted"] == 0.0
+    assert out[("a", 2022)]["adp_next"] is None                                                       # 2023 not known yet

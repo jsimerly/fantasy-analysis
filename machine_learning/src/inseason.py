@@ -109,9 +109,25 @@ FFT_PATH = "bronze/fftoday/projections"                   # FFToday 2010-2017 we
 PRESEASON_COLS = ["ps_adp", "ps_adp_pos_rank", "ps_drafted"]
 PRESEASON_FIRST_SEASON = 2009
 ADP_PATH = "bronze/adp"                                   # season partitions per source (ingestion to follow); --adp-dir until then
+# college2 / college_qb / draft_age -- the career model's groups (feature_groups), static per player, joined onto every
+#                                     snapshot: the rookie has no prior NFL season, so college and entry age are his history
+from feature_groups import COLLEGE2_COLS, COLLEGE_QB_COLS, DRAFT_AGE_COLS  # noqa: E402
+PLAYER_GROUPS = ("college2", "college_qb", "draft_age")
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
                 "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS,
-                "team_change": TEAM_CHANGE_COLS}
+                "team_change": TEAM_CHANGE_COLS, "college2": COLLEGE2_COLS, "college_qb": COLLEGE_QB_COLS, "draft_age": DRAFT_AGE_COLS}
+
+
+def player_group_features(snaps: pl.DataFrame, groups: Iterable[str], ctx=None) -> pl.DataFrame:
+    """The career model's per-player groups (college2, college_qb, draft_age) on the snapshots, built the same way."""
+    import feature_groups as fg
+    names = [g for g in groups if g in PLAYER_GROUPS]
+    if not names:
+        return snaps
+    ctx = ctx or fg.Context()
+    for g in names:
+        snaps = fg.GROUPS[g].build(snaps, ctx)
+    return snaps
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"

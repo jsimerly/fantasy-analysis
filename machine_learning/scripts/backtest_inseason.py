@@ -227,6 +227,7 @@ def main() -> None:
     snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
                                                         status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
                                                         consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change))
+    snaps = inseason.player_group_features(snaps, is_groups)
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
     if depth is not None:
@@ -323,6 +324,11 @@ def main() -> None:
                  "next|last_season": value.spearman(priced["bl_prior_ppg"].to_numpy(), nx),
                  "next|to_date": value.spearman(priced["bl_todate_ppg"].to_numpy(), nx),
                  "next|blend": value.spearman(priced["bl_blend_ppg"].to_numpy(), nx)}
+            rk = priced.filter(pl.col("exp_at_season").fill_null(99) == 0)       # rookies (BACKLOG 50): next season among the priced first-year players
+            if rk.height >= 10:
+                rn = rk["next_fpts"].to_numpy().astype(float)
+                r.update({"n_rookies": rk.height, "next|model_rookies": value.spearman(rk["next_fpts_hat"].to_numpy(), rn),
+                          "next|ktc_rookies": value.spearman(rk["ktc_value"].to_numpy(), rn)})
             if "cs_next_ppr" in priced.columns:                                    # the provider's view as rankings: the coming week (a bye or an out week falls back to the mean to date) and the mean to date
                 r["next|consensus"] = value.spearman(priced.select(pl.col("cs_next_ppr").fill_null(pl.col("cs_td_mean")).fill_null(0.0))["cs_next_ppr"].to_numpy(), nx)
                 r["next|consensus_td"] = value.spearman(priced["cs_td_mean"].fill_null(0.0).to_numpy(), nx)

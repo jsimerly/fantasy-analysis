@@ -1820,3 +1820,62 @@ t = 1.45) stays a tie.
     (`tabpfn35_set_stacked_blend_h7`, cohorts 2015-20, grid kept) is queued after Tuesday's refresh; (2) the page and
     the production refresh default to a **10 %** discount (the harness keeps 0.2 for the ledger); (3) the next model
     work is careers -- young players' trajectories and aging -- when the owner is ready.
+
+50. **Careers for young players: college production, breakout age and the market (owner, 2026-10-12: "college
+    production / breakout age is a HUGE missing piece for both the now models (to better project rookies) and
+    careers ... Someone like Bowers ... is shockingly low projected to me").**
+    **A data bug first:** the `college` group's breakout age was null for every player -- `dim_college_crosswalk`
+    looked for nflverse's `birthdate`, production passes the season fact's `birth_date`, so every birth date was empty.
+    Fixed in `fact_college_player_season.build_crosswalk` with two data-quality checks (`dim.college_crosswalk.birth_dates`,
+    known_open until the college tables are rebuilt by hand on the owner's go; `fact.college_player_season.class_year_varies`,
+    CFBD's class year is frozen) and replay tests. `college2` does not wait for the rebuild: it reads birth dates from the
+    NFL season fact (100 % filled).
+    **Where young players miss (production config, cohorts 2015-22, 3-season window, realized / priced WAR):** under 25
+    1.26, 25-28 1.11, 29+ 0.97 with the band pricing (1.46 / 1.31 / 1.02 at the point, 1.23 / 1.09 / 0.95 on the
+    20-point outcome grid). The average projection is right (under-25 points per game 6.97 projected vs 6.98 realized
+    three seasons out); the gap is the stars the model priced as average -- Mahomes 2017 (0.17 WAR priced, 3.77
+    realized), Lamar 2018, Allen, Hurts, McCaffrey, Kamara -- and it sits on the rows right after the rookie year
+    (1.60), fading to 1.26 after year two and 1.11 after year three. Every cohort has it (1.05 to 2.32; 2017 is the
+    Mahomes / Kamara / McCaffrey class). For productive players (13+ ppg over 8+ games) the model's regression is
+    nearly right: under-25s 16.8 ppg now -> 13.9 projected / 14.3 realized three seasons out (0.5 ppg short a season);
+    29+ 17.4 -> 14.2 / 13.7 (0.5 too generous).
+    **New groups:** `college2` (breakout age = age on 1 Sept of the first season in the top 3 % dominator of the
+    position, dominator and receiving-yards-per-team-attempt percentiles within the season's position and against NFL
+    peers, production at age 20 or younger, seasons, last team's SP+); `college_qb` (college passing efficiency and
+    rushing against the season's starting college QBs: Lamar 118 rushing yards a game, the 100th percentile; Mahomes
+    37, Allen 35); `draft_age` (age entering the league, explicit, and a copy for the first three seasons); `adp` /
+    `adp_this` / `adp_next` (preseason redraft ADP, MFL by id and FFC by name, from the lake's bronze/adp or the local
+    pull in FF_ADP_DIR until the ADP backfill has the owner's go). The college groups also run on the in-season model
+    (`--inseason-groups college2,college_qb,draft_age`), and the in-season backtest scores rookies apart
+    (`next|model_rookies` vs `next|ktc_rookies`).
+    **Trees screen, career model (2026-10-12; production set `xgb_set_c1` = ordering 0.591, error 0.530):**
+    | variant | ordering | t | error | t | under-25 ratio |
+    | --- | --- | --- | --- | --- | --- |
+    | college2 instead of college | 0.607 | +1.69 | 0.532 | -0.75 | 1.23 (base 1.21) |
+    | college + college2 | 0.601 | +1.22 | 0.531 | -0.31 | |
+    | college_qb | 0.604 | +1.63 | 0.529 | +0.69 | 1.21 |
+    | draft_age | 0.601 | +0.96 | 0.529 | +0.31 | 1.22 |
+    | college2 + college_qb + draft_age | 0.596 | +0.71 | 0.533 | -0.70 | 1.23 |
+    | adp_this (this season's ADP) | 0.609 | +1.61 | 0.525 | +1.38 | 1.21 |
+    | **adp_next (next season's ADP)** | **0.629** | **+5.18** | **0.509** | **+2.51** | 1.18 |
+    | adp (both) | 0.628 | +4.25 | 0.513 | +2.09 | 1.18 |
+    | college2 + college_qb + draft_age + adp | 0.640 | +7.83 | 0.509 | +2.70 | 1.19 |
+    The college features do not move the young players on the trees (draft capital already carries most of what college
+    production says; the misses are stars nobody's inputs flagged -- the market had Mahomes as QB16 for 2018). Next
+    season's ADP is the one strong input, and its gain is mostly next season: season 1 alone +0.036 (t 2.54), seasons 2-3
+    +0.016 (t 1.32, 7 of 8). Two cautions: it is August information (the market backtest prices in February, so its
+    edge over KTC would be overstated), and in production it is missing from January to the summer for the newest
+    season's rows -- seasons 1-2 come from the in-season model anyway, which gets the same ADP from its `preseason` group.
+    **Trees screen, in-season (cohorts 2021-24, weeks 3 / 6 / 9 / 13):** college2 + college_qb + draft_age next season
+    0.543 / 0.561 / 0.582 / 0.599 vs 0.541 / 0.556 / 0.581 / 0.597; with preseason 0.554 / 0.567 / 0.588 / 0.600. Rookies'
+    next season: model 0.41 / 0.43 / 0.47 / 0.44 vs KTC 0.41 / 0.45 / 0.46 / 0.46 on the base, no variant better (a few
+    dozen priced rookies a cohort: differences under ~0.07 are noise).
+    **The seam (Bowers):** the career seasons in production are projected from the last complete season, so they never
+    see this one. On the week-5 rows, season-3 ppg / next-season ppg (players at 10+ next season) is 0.88 under 25, 0.77 at
+    25-28, 0.81 at 29+; Bowers 14.4 next season -> 11.5 / 10.8 / 10.2 at ages 25-27 (15.5 and 14.7 ppg his first two
+    seasons, 23.7 in three games this year). The historical regression for productive under-25s is 16.8 -> 14.3, so his
+    drop is steeper than history (TE, 12 games last year, and this season unseen).
+    **Queued (`chain_young`, after the 7-season chain on Tuesday):** the 3.5 confirmation, same-day baseline
+    `tabpfn35_young_base`, then `tabpfn35_young` (college2 + college_qb + draft_age), `tabpfn35_young_adpnext`,
+    `tabpfn35_young_all`, each with the age bands. **Next levers if these stay flat:** re-anchor the career seasons on the
+    current season (the seam), and the ADP backfill into the lake (owner's go) if next season's ADP confirms on 3.5.
