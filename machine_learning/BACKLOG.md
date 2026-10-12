@@ -1765,6 +1765,16 @@ t = 1.45) stays a tie.
     horizon, `experiments.distributional_excess` = E[max(X - rep, 0)] from the player's own predictive quantiles,
     `--rescore RUN --sigma dist` re-prices; value / WAR take a precomputed `h{k}_ppg_excess`. Spec-tested. Needs one
     GPU run with the grid (~1 h 45 m), then the fixed-set verdict against band sigma; production follows if it wins.
+    **Verdict 2026-10-12 12:30 (`tabpfn35_set_stacked_blend_qg`, 1 h 39 m, rescored):** standard reading -- dist 0.644
+    vs 0.621 ordering (t = +2.25), wins error 0.498 vs 0.502 (t = +1.8), just short; band 0.636 (t = +0.8). Fixed
+    set -- dist ordering +0.025 (t 2.8, **8 of 8**), wins error cut +0.006 (t 3.0); band +0.025 (t 2.8, 7 of 8),
+    +0.005 (t 2.7). Both pass; dist marginally better. **But it barely closes the owner's gap:** realized / priced
+    value (fixed set) QB 1.12 / RB 1.21 / TE 1.15 / WR 1.12 with dist vs 1.13 / 1.23 / 1.18 / 1.13 with band. The
+    predictive distributions themselves are too narrow (20-80 coverage 0.57 vs 0.60; the residual target's are
+    calibrated, 0.60) and the level runs low at every position. Next: widen / calibrate the quantiles per position
+    and horizon (conformal: scale the spread around the median until coverage hits nominal on the holdout seasons),
+    and residual + dist. Production stays on band (dist needs the grid in the career tail: a new cache key and a
+    cold run) until one of those moves the gap.
 
 48. **Mixed checkpoint weeks (owner, 2026-10-12: "maybe we mix it up in our synth data right? Some player seasons 1,
     4, 7 ...").** The in-season TabPFN trains on weeks 3 / 6 / 9 / 13 only, so a week-5 projection (today's)
