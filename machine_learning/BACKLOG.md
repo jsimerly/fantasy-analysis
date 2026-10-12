@@ -1564,6 +1564,12 @@ t = 1.45) stays a tie.
     0.607 vs 0.611 at week 6, tie at 13; on the trees it was +0.015) and is dropped. Stage 3 (cohorts 2021-24,
     weeks 3 / 6 / 9 / 13) runs the same night in the gap before Monday's DAG. (The first stage-2 attempt died in
     four seconds: the chain named its group list `GROUPS`, a reserved bash variable.)
+    **Stage 3 base, 2026-10-12 02:50 -> 06:03 (3 h 13 m; cohorts 2021-24, weeks 3 / 6 / 9 / 13, the production 3.5
+    in-season model, no extra groups):** rest of season 0.801 / 0.770 / 0.744 / 0.688 vs the market's 0.707 / 0.677 /
+    0.648 / 0.569; next season 0.573 / 0.583 / 0.600 / 0.622 vs 0.553 / 0.564 / 0.574 / 0.582. The five-group run was
+    held back (it could not finish before the Monday refresh); it needs its own ~3.5 h night, the career tails for
+    every cohort are cached. These base numbers are also the production model's own in-season validation (the
+    page's in-season card still shows the 2026-10-07 summary; a `--publish`-style write of this run would refresh it).
 40. **Title odds: the championship lens next to WAR (owner, 2026-10-09: "maximize our
     championship odds, not our win rate ... it does show up as important in leagues where they
     are top heavy").** `machine_learning/src/title.py`: a Monte Carlo of the remaining
