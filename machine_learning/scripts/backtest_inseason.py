@@ -149,6 +149,12 @@ def par_against_outcome(snap: pl.DataFrame, rep: dict, top_n: int = 150) -> dict
             if "cs_next_ppr" in sc.columns:
                 out[f"{span}|parb_provider"] = value.spearman(pr["_cs"].fill_null(0.0).to_numpy().astype(float), real)
             out[f"{span}|parb_last_season"] = value.spearman(pr["_last"].fill_null(0.0).to_numpy().astype(float), real)
+            if span == "next" and "td_games" in pr.columns and "week" in pr.columns:     # BACKLOG 53: the players missing time now
+                inj = pr.filter((pl.col("week") - pl.col("td_games").fill_null(0)) >= 3)
+                if inj.height >= 15:
+                    ir = inj[r].to_numpy().astype(float)
+                    out["next|parb_injured_model"] = value.spearman(inj.select((pl.col(ppg_c).cast(pl.Float64).fill_null(0.0) - rep_e) * pl.col(g_c).cast(pl.Float64).fill_null(0.0)).to_series().to_numpy().astype(float), ir)
+                    out["next|parb_injured_ktc"] = value.spearman(inj["ktc_value"].to_numpy().astype(float), ir)
     return out
 
 

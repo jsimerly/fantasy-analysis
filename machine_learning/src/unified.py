@@ -163,7 +163,7 @@ def with_tier_games(df: pl.DataFrame, full_season: int = 17) -> pl.DataFrame:
 
 # groups that describe one player (not one season): valid on a to-date row as they are on a season row
 STATIC_GROUPS = {"rookie", "college", "college2", "college_qb", "draft_age", "adp_this",
-                 "is_usage", "is_role", "is_opportunity", "is_consensus", "is_preseason"}   # the last five are computed to each row's week
+                 "is_usage", "is_role", "is_opportunity", "is_consensus", "is_preseason", "is_injury_now"}   # the last five are computed to each row's week
 
 
 def mask_season_groups(df: pl.DataFrame, groups) -> pl.DataFrame:

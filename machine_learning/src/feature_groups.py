@@ -484,7 +484,8 @@ def build_adp(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
         pl.when(this_known).then(pl.col("adp_this_drafted").fill_null(0.0)).otherwise(None).alias("adp_this_drafted"))
 
 
-WEEK_GROUPS = {"is_usage": "usage", "is_role": "role", "is_opportunity": "opportunity", "is_consensus": "consensus", "is_preseason": "preseason"}
+WEEK_GROUPS = {"is_usage": "usage", "is_role": "role", "is_opportunity": "opportunity", "is_consensus": "consensus", "is_preseason": "preseason",
+               "is_injury_now": "injury_now"}
 
 
 def week_group_columns(name: str) -> list[str]:

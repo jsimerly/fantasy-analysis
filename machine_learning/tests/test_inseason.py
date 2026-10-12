@@ -503,3 +503,18 @@ def test_inseason_models_emit_each_targets_outcome_grid(monkeypatch):
     plain = inseason.InSeasonModels(bags=1, max_train_rows=40)
     monkeypatch.setattr(plain, "_new", lambda: Fake())
     assert "ros_ppg_q20" not in plain.fit(snaps, as_of_season=2022).predict(snaps.head(3)).columns
+
+
+def test_injury_now_reads_the_players_state_at_the_week():
+    """BACKLOG 53: on IR now, the injured run, weeks since he played, and the class of his latest injury."""
+    import polars as pl
+    import inseason
+    st = pl.DataFrame({"season": [2025] * 6, "week": [1, 2, 3, 4, 5, 6], "gsis_id": ["a"] * 6,
+                       "status": ["played", "played", "bye", "injured_out", "injured_reserve", "injured_reserve"],
+                       "roster_status": ["ACT", "ACT", "ACT", "ACT", "RES", "RES"],
+                       "injury_class": [None, None, None, "soft_tissue", "knee_achilles", "knee_achilles"]})
+    r = inseason.injury_now_features(st, 6).row(0, named=True)
+    assert r["ij_on_ir_now"] == 1.0 and r["ij_out_now"] == 0.0 and r["ij_injured_run"] == 3.0 and r["ij_weeks_since_played"] == 4.0
+    assert r["ij_class_knee_achilles"] == 1.0 and r["ij_class_soft_tissue"] == 0.0 and r["ij_td_knee_achilles_weeks"] == 2.0
+    early = inseason.injury_now_features(st, 3).row(0, named=True)            # the bye is neutral: healthy through week 3
+    assert early["ij_injured_run"] == 0.0 and early["ij_on_ir_now"] == 0.0 and early["ij_class_soft_tissue"] == 0.0

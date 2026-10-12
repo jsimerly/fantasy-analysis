@@ -71,6 +71,9 @@ NGS_RUSH_SRC = {"efficiency": "rush_eff", "rush_yards_over_expected_per_att": "r
 USAGE_COLS = [f"ng_{v}" for v in NGS_REC_SRC.values()] + [f"ng_{v}" for v in NGS_RUSH_SRC.values()] + ["sn_pct_td", "sn_pct_last3", "sn_trend"]
 ROLE_COLS = ["last1_fpts", "last5_ppg", "last3_targets_pg", "last3_touches_pg", "tgt_trend", "touch_trend",
              "games_since_return", "missed_last3", "td_injured_weeks", "td_dnp_weeks"]
+INJURY_CLASSES = ["knee_achilles", "soft_tissue", "concussion", "upper_body", "ankle_foot"]
+INJURY_NOW_COLS = (["ij_on_ir_now", "ij_out_now", "ij_released_now", "ij_practice_squad_now", "ij_injured_run", "ij_weeks_since_played",
+                    "ij_td_knee_achilles_weeks"] + [f"ij_class_{c}" for c in INJURY_CLASSES])
 SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahead"]
 # team_change - what changed around the player this season (known from week 1): a new starting quarterback on his
 #               team against last season's regular starter, the share of this season's offensive-line starters who
@@ -115,7 +118,7 @@ from feature_groups import COLLEGE2_COLS, COLLEGE_QB_COLS, DRAFT_AGE_COLS  # noq
 PLAYER_GROUPS = ("college2", "college_qb", "draft_age")
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
                 "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS,
-                "team_change": TEAM_CHANGE_COLS, "college2": COLLEGE2_COLS, "college_qb": COLLEGE_QB_COLS, "draft_age": DRAFT_AGE_COLS}
+                "team_change": TEAM_CHANGE_COLS, "injury_now": INJURY_NOW_COLS, "college2": COLLEGE2_COLS, "college_qb": COLLEGE_QB_COLS, "draft_age": DRAFT_AGE_COLS}
 
 
 def player_group_features(snaps: pl.DataFrame, groups: Iterable[str], ctx=None) -> pl.DataFrame:
@@ -388,6 +391,33 @@ def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> p
     return out.join(st, on=["player_id", "season"], how="full", coalesce=True)
 
 
+def injury_now_features(status: pl.DataFrame | None, week: int) -> pl.DataFrame:
+    """(player_id, season) -> the player's state at ``week`` (BACKLOG 53): his latest non-bye status (injured reserve,
+    out, released, practice squad), the run of injured weeks ending there, weeks since he last played, the class of his
+    latest injury this season (one-hot), and knee-Achilles weeks to date. Whether he missed time is in ``role``; this
+    is why, and whether it is still going on."""
+    if status is None or status.height == 0:
+        return pl.DataFrame(schema={"player_id": pl.Utf8, "season": pl.Int64})
+    s = (status.filter((pl.col("week") <= week) & (pl.col("status") != "bye"))
+               .with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64),
+                             pl.col("status").is_in(INJURED_STATUSES).alias("_inj"), (pl.col("status") == "played").alias("_pl"))
+               .sort("week"))
+    last = s.group_by("player_id", "season").agg(pl.col("status").last().alias("_st"), pl.col("roster_status").last().alias("_rs"),
+                                                 pl.col("_inj").reverse().cum_prod().sum().alias("ij_injured_run"),
+                                                 (pl.lit(week) - pl.col("week").filter(pl.col("_pl")).max()).alias("ij_weeks_since_played"),
+                                                 pl.col("injury_class").filter(pl.col("_inj") & pl.col("injury_class").is_not_null()).last().alias("_cls"),
+                                                 (pl.col("_inj") & (pl.col("injury_class") == "knee_achilles")).sum().alias("ij_td_knee_achilles_weeks"))
+    return last.with_columns(
+        (pl.col("_st") == "injured_reserve").cast(pl.Float64).alias("ij_on_ir_now"),
+        (pl.col("_st") == "injured_out").cast(pl.Float64).alias("ij_out_now"),
+        ((pl.col("_st") == "not_rostered") | (pl.col("_rs") == "CUT")).cast(pl.Float64).alias("ij_released_now"),
+        (pl.col("_st") == "practice_squad").cast(pl.Float64).alias("ij_practice_squad_now"),
+        pl.col("ij_injured_run").cast(pl.Float64), pl.col("ij_weeks_since_played").cast(pl.Float64),
+        pl.col("ij_td_knee_achilles_weeks").cast(pl.Float64),
+        *[(pl.col("_cls") == c).fill_null(False).cast(pl.Float64).alias(f"ij_class_{c}") for c in INJURY_CLASSES],
+    ).drop("_st", "_rs", "_cls")
+
+
 def schedule_features(schedules: pl.DataFrame, week: int, last_week: int = 18) -> pl.DataFrame:
     """(season, team) -> the remaining regular-season schedule after ``week``: games left, the remaining
     opponents' mean point differential per game to date (their games <= ``week``, so nothing from the
@@ -469,6 +499,8 @@ def week_group_features(wk: pl.DataFrame, w: int, gi: dict, groups: Iterable[str
             out = out.join(u, on=["player_id", "season"], how="left")
     if "role" in groups:
         out = out.join(role_features(wk, gi.get("status"), w), on=["player_id", "season"], how="left")
+    if "injury_now" in groups and gi.get("status") is not None:
+        out = out.join(injury_now_features(gi["status"], w), on=["player_id", "season"], how="left")
     if "opportunity" in groups and gi.get("opportunity") is not None:
         out = out.join(opportunity_features(gi["opportunity"], w), on=["player_id", "season"], how="left")
     if "preseason" in groups and gi.get("preseason") is not None:
@@ -489,7 +521,7 @@ def load_group_inputs(is_groups: Iterable[str], base: pl.DataFrame, ngs_dir: str
     is_groups = [g for g in is_groups if g]
     team_week = gcs_io.read_lake(TEAM_WEEK_PATH) if "team" in is_groups else None
     contracts = gcs_io.read_lake(CONTRACT_PATH) if "contract" in is_groups else None
-    status = gcs_io.read_lake(STATUS_PATH) if ("usage" in is_groups or "role" in is_groups) else None
+    status = gcs_io.read_lake(STATUS_PATH) if ("usage" in is_groups or "role" in is_groups or "injury_now" in is_groups) else None
     ngs_rec = ngs_rush = None
     if "usage" in is_groups:
         if ngs_dir:                                              # the slices pulled locally (nflreadpy) until the lake has them
@@ -529,7 +561,7 @@ def load_group_inputs(is_groups: Iterable[str], base: pl.DataFrame, ngs_dir: str
         preseason = preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
         print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
     return dict(team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush, status=status, schedules=schedules,
-                role="role" in is_groups, opportunity=ffo, consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change)
+                role="role" in is_groups, injury_now="injury_now" in is_groups, opportunity=ffo, consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change)
 
 
 def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
@@ -538,7 +570,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
                     schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None,
                     consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None,
-                    preseason: pl.DataFrame | None = None, team_change: tuple[pl.DataFrame, pl.DataFrame | None] | None = None) -> pl.DataFrame:
+                    preseason: pl.DataFrame | None = None, team_change: tuple[pl.DataFrame, pl.DataFrame | None] | None = None,
+                    injury_now: bool = False) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -567,6 +600,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                 snap = snap.join(usage, on=["player_id", "season"], how="left")
         if role:
             snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
+        if injury_now and status is not None:
+            snap = snap.join(injury_now_features(status, w), on=["player_id", "season"], how="left")
         if opportunity is not None:
             snap = snap.join(opportunity_features(opportunity, w), on=["player_id", "season"], how="left")
         if preseason is not None:                                   # season-level: the same row for every week's snapshot

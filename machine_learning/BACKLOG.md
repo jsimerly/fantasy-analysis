@@ -1959,3 +1959,20 @@ t = 1.45) stays a tie.
     ranked unfloored ((ppg - replacement) x games): floored PAR ties everyone projected below replacement at zero and
     cost it 0.01-0.06 against KTC's continuous values. The 3.5 answer (`par35_all5`, `par35_base`) runs in Monday
     night's idle gap.
+
+53. **Why next season does not beat KTC (owner, 2026-10-12: "Why is our next season not any better? That's
+    shocking?").** Broken down on the trees (the five groups, 2021-24, weeks 3 / 6 / 9 / 13, KTC-priced players, next
+    season's realized PAR): points per game among players who played -- model 0.73-0.74, KTC 0.64-0.65 (we are much
+    better at how good a player will be); games -- model 0.13-0.26, KTC 0.13-0.17 (nobody predicts availability); PAR --
+    model 0.54-0.58, KTC 0.56-0.59; the average of the two rankings 0.56-0.60 (the information is complementary). By
+    who: healthy players under 29 tie (0.590 / 0.590), healthy 29+ we win (0.560 / 0.543); players missing 3+ games at
+    the snapshot we lose (0.461 / 0.536 under 29, 0.305 / 0.477 at 29+): the model projects them 9 games next season and
+    the KTC-priced ones play 12 (most injured players come back; the market knows a hamstring from an Achilles). The
+    worst misses are hurt veterans the market marked down (Rodgers and Cousins 2023, Achilles; Diggs 2024, ACL) and
+    fringe players ordered among the zeros. **`injury_now`** (in-season group and `is_injury_now` for the career model):
+    on IR / out / released / practice squad now, the injured run, weeks since he played, the class of the latest injury,
+    knee-Achilles weeks. Trees: injured under 29 0.461 -> 0.481, 29+ 0.305 -> 0.327, all 0.561 -> 0.565 (KTC 0.576);
+    the games gap for the injured remains (8.9 projected vs 11.7 played). The benchmarks now carry the injured split
+    (`next|parb_injured_model` / `_ktc`); 3.5 runs it tonight (`par35_all5_inj` in the gap). Next lever: the games model
+    for players hurt now, conditioned on the injury class and his quality (the population's injured include the fringe
+    players who never return; the priced ones mostly do).
