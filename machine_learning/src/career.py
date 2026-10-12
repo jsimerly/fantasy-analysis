@@ -819,7 +819,7 @@ XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
 
 
 def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False, snapshot_weeks: Iterable[int] | None = None,
-                        snapshot_from: int = 2010) -> pl.DataFrame:
+                        snapshot_from: int = 2010, todate_weeks: Iterable[int] | None = None, todate_from: int = 2006) -> pl.DataFrame:
     """fact_player_season (lake) -> one-year lags -> career features -> horizon targets.
     Rows from the in-progress season are kept (they have no outcomes yet) so the latest
     complete season can be projected and the partial one inspected. With ``draft_rows`` every
@@ -839,6 +839,10 @@ def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False, snaps
         import unified
         wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
         df = unified.with_snapshot_rows(df, unified.snapshot_rows(wk, df.filter(~__import__("draft_rows").is_aux(df)), snapshot_weeks, snapshot_from))
+    if todate_weeks:                 # the season seen through week W, in the season's own columns (BACKLOG 51)
+        import unified
+        wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
+        df = unified.with_snapshot_rows(df, unified.season_to_date_rows(wk, season, todate_weeks, todate_from))
     return attach_horizon_targets(df, list(horizons))
 
 

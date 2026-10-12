@@ -53,12 +53,12 @@ class HarnessContext:
 
 def build_context(H: list[int], first_cohort: int, last_cohort: int | None, replacement_kind: str,
                   realized_replacement: str | None = None, draft_rows: bool = False, snapshot_weeks: list[int] | None = None,
-                  snapshot_from: int = 2010) -> HarnessContext:
+                  snapshot_from: int = 2010, todate_weeks: list[int] | None = None) -> HarnessContext:
     """The harness setup shared by every script that scores projections walk-forward: cohorts
     ``first_cohort``..``last_cohort`` (default: last complete season minus the horizon), replacement
     as of each cohort (``share`` / ``fill`` / ``weekly``) and KTC the following February."""
     import draft_rows as dr
-    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from)
+    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from, todate_weeks=todate_weeks)
     base = dr.drop_draft_rows(matrix)                 # played seasons: replacement levels and the regime stamp
     if snapshot_weeks:
         print(f"snapshot rows: {int(matrix.filter(pl.col('is_snapshot_row'))['player_id'].len())} at weeks {list(snapshot_weeks)} from {snapshot_from}")

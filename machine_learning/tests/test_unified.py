@@ -60,3 +60,61 @@ class TestMask:
         out = unified.mask_group_columns(df, ["inj_weeks_out", "ppg_not_there"])
         assert out["inj_weeks_out"].to_list() == [None, 2.0, 1.0] and out["ppg"].to_list() == [9.0, 8.0, 7.0]
         assert unified.mask_group_columns(df.drop("is_snapshot_row"), ["inj_weeks_out"]).equals(df.drop("is_snapshot_row"))
+
+
+# ------------------------------------------------------------ season-to-date rows (BACKLOG 51)
+def _td_weeks(player="a", season=2025, weeks=range(1, 18), fpts=10.0, **extra):
+    import polars as pl
+    return pl.DataFrame([{"player_id": player, "season": season, "week": w, "player_name": player, "position": "WR", "team": "X",
+                          "fpts": fpts, "pass_att": 0, "pass_cmp": 0, "pass_yds": 0.0, "pass_tds": 0, "pass_int": 0, "rush_att": 1,
+                          "rush_yds": 5.0, "rush_tds": 0, "targets": 8, "rec": 5, "rec_yds": 60.0, "rec_tds": 0, "target_share": 0.2, "wopr": 0.5,
+                          "birth_date": None, "draft_round": 1, "draft_pick": 10, "rookie_season": 2024, "age_at_season": 23.0,
+                          "exp_at_season": season - 2024, "is_rookie": season == 2024, "is_undrafted": False, **extra} for w in weeks])
+
+
+def test_a_season_seen_through_week_w_reads_like_a_season_with_last_season_as_its_lags():
+    import polars as pl
+    import unified
+    wk = pl.concat([_td_weeks(season=2024, fpts=8.0), _td_weeks(season=2025, fpts=10.0), _td_weeks(season=2026, weeks=range(1, 6), fpts=20.0)])
+    season = unified.rollup_to_date(wk).with_columns(pl.col("season").is_in([2024, 2025]).alias("season_complete"))
+    td = unified.season_to_date_rows(wk, season, [5, 9], from_season=2025)
+    r = {(x["season"], x["row_week"]): x for x in td.to_dicts()}
+    assert (2026, 9) not in r                                   # the current season has no week 9 yet
+    now = r[(2026, 5)]
+    assert now["games"] == 5 and now["ppg"] == 20.0 and now["lag1_ppg"] == 10.0 and now["lag2_ppg"] == 8.0
+    assert now["career_seasons"] == 3 and now["career_games"] == 17 + 17 + 5 and now["best_ppg"] == 20.0
+    assert now["is_snapshot_row"] and now["d_ppg_1"] == 10.0
+    assert r[(2025, 9)]["games"] == 9 and r[(2025, 9)]["lag1_ppg"] == 8.0 and r[(2025, 9)]["career_seasons"] == 2
+
+
+def test_the_survival_cap_tier_reads_the_games_pace_on_a_to_date_row():
+    import polars as pl
+    import unified
+    df = pl.DataFrame({"games": [3, 3, 16], "row_week": [3, 9, 18], "is_snapshot_row": [True, True, False]})
+    assert unified.with_tier_games(df)["tier_games"].to_list() == [17.0, 3 * 17 / 9, 16.0]
+
+
+def test_a_to_date_projection_lands_one_season_later_in_the_tail():
+    import polars as pl
+    import unified
+    pred = pl.DataFrame({"player_id": ["a"], "h1_ppg_hat": [15.0], "h2_ppg_hat": [14.0], "h2_games_hat": [12.0], "h2_ppg_q20": [10.0], "ppg": [20.0]})
+    out = unified.shift_to_tail(pred, [1, 2, 3])
+    assert out.columns == ["player_id", "h2_ppg_hat", "h3_ppg_hat", "h3_games_hat", "h3_ppg_q20"]
+    assert out["h3_ppg_hat"].item() == 14.0
+
+
+def test_one_random_week_per_player_season_and_the_training_table_targets():
+    import polars as pl
+    import unified
+    wk = pl.concat([_td_weeks(season=s, fpts=8.0 + s - 2022) for s in (2022, 2023, 2024, 2025)])
+    season = unified.rollup_to_date(wk).with_columns(pl.lit(True).alias("season_complete"), pl.lit(18).alias("row_week"))
+    td = unified.season_to_date_rows(wk, season, list(range(2, 17)), from_season=2023)
+    one = unified.one_week_per_season(td)
+    assert one.group_by("player_id", "season").len()["len"].max() == 1 and one.height == 3
+    table = unified.todate_training_table(season, td, [1, 2], as_of=2024)
+    snap = table.filter(pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) > 0.5)
+    assert set(snap["season"].to_list()) == {2023, 2024}         # nothing after as_of
+    r23 = snap.filter(pl.col("season") == 2023).row(0, named=True)
+    assert r23["h1_ppg"] == 10.0 and r23["h2_ppg"] == 11.0     # a to-date row's targets are the complete seasons after it
+    seasons = table.filter(pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) < 0.5)
+    assert seasons.height == 4 and seasons.filter(pl.col("season") == 2022)["h1_ppg"].item() == 9.0   # a to-date row is never a target

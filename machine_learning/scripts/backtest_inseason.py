@@ -105,6 +105,32 @@ def career_tail(season_df: pl.DataFrame, as_of: int, rep: dict, device: str, bac
     return pred, sigma, survival, m
 
 
+def career_tail_todate(base: pl.DataFrame, wk: pl.DataFrame, groups, as_of: int, cur: int, w_now: int, survival, device: str, backend: str,
+                       tabpfn_params: dict | None, cap: str, range_quantiles: tuple | None, features: list[str], stacked: bool, target: str,
+                       base_tail: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """BACKLOG 51 -- the career seasons see the current one: a career model trained on every season row plus one random
+    to-date week per complete player-season (``row_week`` says how much of the season is in), projecting each player's
+    season seen through this week. Seasons T+2 on replace the tail off the last complete season (``base_tail``); rookies
+    stay on the rookie table (a tie on the trees) and players with no row this season keep the base tail.
+    Returns (tail, the to-date projections)."""
+    import unified
+    td = unified.season_to_date_rows(wk, base, list(range(2, 17)) + [w_now], from_season=2006)
+    td = td.filter((pl.col("season") <= as_of) | ((pl.col("season") == cur) & (pl.col("row_week") == w_now)))
+    td = unified.mask_season_groups(fg.assemble(td, groups, fg.Context()), groups)
+    table = unified.todate_training_table(base, td, H, as_of)
+    now = td.filter((pl.col("season") == cur) & (pl.col("row_week") == w_now))
+    print(f"career tail through week {w_now}: {table.height:,} training rows ({table.filter(pl.col('is_snapshot_row').cast(pl.Float64, strict=False).fill_null(0.0) > 0.5).height:,} to-date), "
+          f"{now.height} players this season", flush=True)
+    m = career.HorizonModels(H, device=device, backend=backend, tabpfn_params=tabpfn_params, range_quantiles=range_quantiles,
+                             features=features, stacked=stacked, target=target).fit(table, as_of_season=as_of)
+    pred = career.apply_cap(survival, unified.with_tier_games(m.predict(now)), H, cap, tier_cols=("ppg", "tier_games"))
+    vets = pred.filter(pl.col("exp_at_season").fill_null(0) > 0)
+    td_tail = unified.shift_to_tail(vets, H)
+    keep = base_tail.filter(~pl.col("player_id").is_in(td_tail["player_id"].to_list()))
+    print(f"career tail: {td_tail.height} players from this season's rows, {keep.height} from their last complete season, rookies on the rookie table", flush=True)
+    return pl.concat([td_tail, keep.select([c for c in keep.columns if c == "player_id" or c in td_tail.columns])], how="diagonal_relaxed"), pred
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--weeks", default="3,6,9,13")
@@ -117,6 +143,8 @@ def main() -> None:
     ap.add_argument("--quantile-grid", action="store_true", help="--current: the 20-point outcome grid (plus the 20/50/80 band) from the career tail and the in-season model (BACKLOG 47)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
+    ap.add_argument("--career-todate", action="store_true",
+                    help="--current: the career seasons (T+2 on) projected from this season's to-date rows instead of the last complete season (BACKLOG 51)")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (the career tail has --backend); tabpfn shares --tabpfn-params")
     ap.add_argument("--inseason-random-weeks", type=int, default=0, help="mixed checkpoints (BACKLOG 48): K random snapshot weeks per player-season instead of the fixed training weeks")
@@ -246,6 +274,10 @@ def main() -> None:
                                             range_quantiles=GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
                                             features=feature_cols, stacked=args.stacked, target=args.target,
                                             cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
+        if args.career_todate:
+            tail, _todate_pred = career_tail_todate(base, wk, groups, last_complete, cur, w_now, survival, args.device, args.backend, tabpfn_params, args.cap,
+                                                    GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
+                                                    feature_cols, args.stacked, args.target, tail)
         backend_tag = (args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
                        + (" stacked" if args.stacked else "") + (f" {args.target}" if args.target != "level" else "") + (f" [{args.groups}]" if args.groups != "base,career" else ""))
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, range_quantiles=GRID_Q if args.quantile_grid else None, **is_kw).fit(snaps)
