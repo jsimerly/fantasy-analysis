@@ -1879,3 +1879,42 @@ t = 1.45) stays a tie.
     `tabpfn35_young_base`, then `tabpfn35_young` (college2 + college_qb + draft_age), `tabpfn35_young_adpnext`,
     `tabpfn35_young_all`, each with the age bands. **Next levers if these stay flat:** re-anchor the career seasons on the
     current season (the seam), and the ADP backfill into the lake (owner's go) if next season's ADP confirms on 3.5.
+
+51. **Careers see the current season (owner, 2026-10-12: "Careers 10000% need to see current season. This is a huge miss
+    on our part. How a player is performing right now is the most important info we can take for how well they'll do for
+    the rest of their career ... likely missing on guys like Parker Washington too").** Until now the career seasons
+    (two and more out) were projected from the last COMPLETE season's row, so the current season never reached them;
+    item 32's snapshot rows only augmented the season-end training and their in-season verdict was never recorded.
+    **Build.** `unified.season_to_date_rows`: the season fact's own rollup (data_engineering `rollup_to_season`) applied to
+    weeks 1..W, lags from the complete seasons before, the career to date through the partial season, `row_week` = W
+    (week-18 rows reproduce the season fact exactly, every column); `unified.with_tier_games` (the survival cap's tier
+    from the games pace: a starter three weeks in has 3 games and was capped as a fringe player -- found when the first
+    run under-priced 29+ players by two thirds); `one_week_per_season`, `todate_training_table`, `shift_to_tail`,
+    `mask_season_groups` (season-level groups null on a to-date row; one-player groups -- rookie, college*, draft_age,
+    adp_this -- stay). `career.build_career_matrix(todate_weeks=)`; `scripts/seam_eval.py`; `backtest_inseason.py /
+    weekly_refresh.py --career-todate` (vets' seasons T+2 on from this week's row; rookies stay on the rookie table;
+    players with no row this season keep the old tail). Off by default.
+    **Trees test (seasons T+2 and T+3 projected at week W of season T, cohorts 2015-22, the same players; ordering on the
+    union of each path's top 150):**
+    | from | week 3 | week 5 | week 9 | week 13 |
+    | --- | --- | --- | --- | --- |
+    | last complete season (production) | 0.583 | 0.587 | 0.589 | 0.588 |
+    | this season to date, 1 random training week per player-season | 0.630 | 0.650 | 0.666 | 0.696 |
+    | this season to date, 8 fixed training weeks | 0.622 | 0.636 | 0.657 | 0.685 |
+    | the season model from the complete season (reference) | 0.701 | 0.704 | 0.709 | 0.710 |
+    One random week: +0.074 (t +6.9, 27 of 32 cohort-weeks), PAR error and bias lower at every week; under-25s 0.425 ->
+    0.49-0.57; the 29+ realized / priced 1.31-1.34 -> 1.11-1.21. The same model projecting a to-date row without having
+    trained on any (treating 3 games as a season) is far worse (0.45-0.59). Training on to-date rows costs the season-end
+    projection a little (0.69 vs 0.71), so the offseason keeps the season model and in season uses the to-date one.
+    Rookies (no prior season): the to-date model ties production's rookie table (0.39-0.56 vs 0.44-0.57), so they stay
+    on the table. On this week's players (trees): Parker Washington 2028 7.2 -> 9.8 ppg (14.1 so far, 9.0 last year),
+    Bowers 12.7 -> 13.9, Smith-Njigba 13.8 -> 15.3, Chase 13.7 -> 12.4 (13.3 so far vs 15.7).
+    **The owner's volatility question (does a bad or good season move a young player more?):** next-season ppg on this
+    season and the career before it, realized vs the 3.5 model: after year two 0.70 / 0.12 vs 0.71 / 0.13; years 3-4 0.59 /
+    0.27 vs 0.65 / 0.22; year 5+ 0.59 / 0.25 vs 0.68 / 0.21. The data holds (the latest season dominates early) and the
+    model already weights it that way for next season; its bands are wider for young players too (20-80 width 5.7 ppg
+    after the rookie year, 4.0 at year 5+). What it could not do was see the current season, which this item fixes.
+    **Queued:** `seam_35` (3.5, cohorts 2016-22, weeks 5 / 9 / 13, one random training week) tonight after the in-season
+    experiments (the mixed-week chains move to Tuesday night); Tuesday, after the regular refresh, `chain_todate` re-runs
+    the production refresh with `--career-todate` if `seam_35` passes the harness rule (ordering t > 2.4, PAR error no
+    worse); the 7-season and young chains follow.
