@@ -36,7 +36,8 @@ STEPS = ["inseason", "war", "analysis", "export"]
 # the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
-                       inseason_backend="tabpfn", target="blend"),   # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
+                       inseason_backend="tabpfn", target="blend",    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
+                       market_run_date="2026-10-07"),                # the Model performance tab's market backtest: the production model's own, not the newest experiment
 }
 
 
@@ -85,6 +86,7 @@ def main() -> None:
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
+    ap.add_argument("--market-run-date", default=None, help="the backtests/market run the page's Model performance tab shows (the production preset pins it)")
     ap.add_argument("--sigma", choices=["band"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
@@ -112,7 +114,7 @@ def main() -> None:
     if "export" not in args.skip:
         out = ROOT / "projections.json"
         run([py, "scripts/export_projections.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--out", str(out)], args.dry_run)
+             "--run-date", args.run_date, "--out", str(out)] + (["--market-run-date", args.market_run_date] if args.market_run_date else []), args.dry_run)
         if not args.dry_run:
             p = gcs_io.write_ml_json(__import__("json").loads(out.read_text(encoding="utf-8")),
                                      "pages", f"season={season}", f"week={week}", f"run_date={args.run_date}", "projections.json")

@@ -33,6 +33,14 @@ import picks  # noqa: E402
 import value  # noqa: E402
 
 
+def newest_summary(paths: list[str], name: str) -> str | None:
+    """The newest ``backtests/<name>/run_date=<d>/summary.json`` among ``paths``, matching ``name`` exactly:
+    a prefix listing of ``market`` also returns ``market_trends``, which sorts after it and was served as
+    the market backtest on the 2026-10-11 refresh."""
+    hits = sorted(x for x in paths if x.endswith("summary.json") and x.split("/")[-3] == name)
+    return hits[-1] if hits else None
+
+
 def _r(x, d=1):
     return None if x is None else round(x, d)
 
@@ -228,8 +236,8 @@ def main() -> None:
             teams[lid] = tl
     # ---- model performance: latest persisted backtest summaries + the experiment leaderboard
     def latest_summary(name: str):
-        paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
-        return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
+        path = newest_summary(gcs_io.list_ml("backtests", name), name)
+        return gcs_io.read_ml_json(*path.split("/")) if path else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
     if args.market_run_date:                      # the production model's own backtest, not whichever experiment ran last
         performance["market"] = gcs_io.read_ml_json("backtests", "market", f"run_date={args.market_run_date}", "summary.json")

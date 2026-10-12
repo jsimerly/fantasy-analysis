@@ -1,16 +1,16 @@
 {
- "as_of": "2026-10-09",
+ "as_of": "2026-10-12",
  "season": 2026,
  "week": 5,
- "model": "tabpfn stacked [base,career,injury,trend,situation,rookie,college]",
+ "model": "tabpfn stacked blend [base,career,injury,trend,situation,rookie,college]",
  "headline": [
   {
    "key": "swap_test",
    "label": "The swap test: same-price trades the model would have made",
-   "value": 196.0,
-   "unit": "more fantasy points per swap over three seasons",
-   "detail": "66 swaps, cohorts 2020-2022: the player bought out-scored the one sold by that much; 104 more above a replacement-level player, ahead in 82% of swaps; in wins 73% won, +0.46 per swap",
-   "secondary": 73.0,
+   "value": 73.0,
+   "unit": "% won",
+   "detail": "66 swaps, cohorts 2020-2022, 3 years out; +0.46 wins per swap",
+   "secondary": 0.46,
    "run_date": "2026-10-07"
   },
   {
@@ -62,12 +62,12 @@
    "bought_ktc": 4974,
    "bought_delivered": 3.16,
    "gain": 3.16,
-   "sold_pts": 289.0,
-   "bought_pts": 703.0,
-   "sold_par": 16.0,
-   "bought_par": 325.0,
-   "gain_pts": 414.0,
-   "gain_par": 308.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2022,
@@ -80,12 +80,12 @@
    "bought_ktc": 5622,
    "bought_delivered": 3.48,
    "gain": 2.93,
-   "sold_pts": 541.0,
-   "bought_pts": 712.0,
-   "sold_par": 65.0,
-   "bought_par": 370.0,
-   "gain_pts": 171.0,
-   "gain_par": 304.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2020,
@@ -98,12 +98,12 @@
    "bought_ktc": 7003,
    "bought_delivered": 2.73,
    "gain": 2.69,
-   "sold_pts": 237.0,
-   "bought_pts": 794.0,
-   "sold_par": 23.0,
-   "bought_par": 424.0,
-   "gain_pts": 557.0,
-   "gain_par": 402.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2020,
@@ -116,12 +116,12 @@
    "bought_ktc": 6924,
    "bought_delivered": 3.04,
    "gain": 2.06,
-   "sold_pts": 527.0,
-   "bought_pts": 892.0,
-   "sold_par": 130.0,
-   "bought_par": 456.0,
-   "gain_pts": 365.0,
-   "gain_par": 326.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2021,
@@ -134,12 +134,12 @@
    "bought_ktc": 4900,
    "bought_delivered": 2.69,
    "gain": 1.83,
-   "sold_pts": 529.0,
-   "bought_pts": 798.0,
-   "sold_par": 59.0,
-   "bought_par": 366.0,
-   "gain_pts": 269.0,
-   "gain_par": 308.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2021,
@@ -152,12 +152,12 @@
    "bought_ktc": 4661,
    "bought_delivered": 2.62,
    "gain": 1.77,
-   "sold_pts": 543.0,
-   "bought_pts": 663.0,
-   "sold_par": 95.0,
-   "bought_par": 249.0,
-   "gain_pts": 121.0,
-   "gain_par": 155.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2022,
@@ -170,12 +170,12 @@
    "bought_ktc": 1940,
    "bought_delivered": 1.71,
    "gain": 1.71,
-   "sold_pts": 79.0,
-   "bought_pts": 795.0,
-   "sold_par": 0.0,
-   "bought_par": 199.0,
-   "gain_pts": 716.0,
-   "gain_par": 199.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   },
   {
    "cohort": 2022,
@@ -188,12 +188,12 @@
    "bought_ktc": 4377,
    "bought_delivered": 1.82,
    "gain": 1.64,
-   "sold_pts": 322.0,
-   "bought_pts": 640.0,
-   "sold_par": 19.0,
-   "bought_par": 219.0,
-   "gain_pts": 319.0,
-   "gain_par": 200.0
+   "sold_pts": null,
+   "bought_pts": null,
+   "sold_par": null,
+   "bought_par": null,
+   "gain_pts": null,
+   "gain_par": null
   }
  ],
  "swaps_by_cohort": [
@@ -202,21 +202,21 @@
    "pairs": 11,
    "win_rate": 73.0,
    "gain_mean": 0.53,
-   "gain_pts_mean": 242.0
+   "gain_pts_mean": null
   },
   {
    "cohort": 2021,
    "pairs": 17,
    "win_rate": 71.0,
    "gain_mean": 0.52,
-   "gain_pts_mean": 177.0
+   "gain_pts_mean": null
   },
   {
    "cohort": 2022,
    "pairs": 38,
    "win_rate": 74.0,
    "gain_mean": 0.42,
-   "gain_pts_mean": 192.0
+   "gain_pts_mean": null
   }
  ],
  "swaps_by_position_bought": [
@@ -225,28 +225,28 @@
    "pairs": 17,
    "win_rate": 71.0,
    "gain_mean": 0.13,
-   "gain_pts_mean": 256.0
+   "gain_pts_mean": null
   },
   {
    "position": "RB",
    "pairs": 19,
    "win_rate": 89.0,
    "gain_mean": 1.18,
-   "gain_pts_mean": 244.0
+   "gain_pts_mean": null
   },
   {
    "position": "TE",
    "pairs": 13,
    "win_rate": 54.0,
    "gain_mean": 0.09,
-   "gain_pts_mean": 82.0
+   "gain_pts_mean": null
   },
   {
    "position": "WR",
    "pairs": 17,
    "win_rate": 71.0,
    "gain_mean": 0.28,
-   "gain_pts_mean": 171.0
+   "gain_pts_mean": null
   }
  ],
  "method": "walk-forward: the model rebuilt with only what was known at the time, scored on what the players then delivered; the market (KTC) is the yardstick, never an input"
