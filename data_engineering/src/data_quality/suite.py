@@ -598,8 +598,7 @@ def fftoday_history(ctx):
 
 
 @check("dim.college_crosswalk.birth_dates", "dim_college_crosswalk", "error",
-       "the crosswalk looked for nflverse's birthdate column while production passes our birth_date: every birth date was empty and the model's college breakout age with it (2026-10-12)",
-       known_open="the fix lands with the next college rebuild (fact_college_player_season runs in the yearly college workflow; run it by hand after the merge)")
+       "the crosswalk's id table carried no birth date at all (and the crosswalk looked only for nflverse's birthdate): every birth date was empty and the model's college breakout age with it; fixed and rebuilt by hand 2026-10-12 (1,822 of 1,829 matched players dated)")
 def crosswalk_birth_dates(ctx):
     xw = ctx.table("dim_college_crosswalk")
     matched = xw.filter(pl.col("gsis_id").is_not_null())
