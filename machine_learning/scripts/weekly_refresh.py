@@ -36,7 +36,10 @@ STEPS = ["inseason", "war", "analysis", "export"]
 # the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
-                       inseason_backend="tabpfn", target="blend",    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
+                       inseason_backend="tabpfn", target="blend",
+                       # the five in-season groups (BACKLOG 39 stage 3, adopted 2026-10-12 by the owner: rest of season +0.017 to
+                       # +0.034 at every week, next season +0.001 to +0.009); this season's coverage matches past seasons
+                       inseason_groups="usage,role,opportunity,consensus,preseason",    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
                        market_run_date="2026-10-12",
                        sigma="band",
                        discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment

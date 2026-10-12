@@ -458,6 +458,58 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def load_group_inputs(is_groups: Iterable[str], base: pl.DataFrame, ngs_dir: str | None = None, ffo_dir: str | None = None,
+                      proj_dir: str | None = None, adp_dir: str | None = None, no_fftoday: bool = False) -> dict:
+    """The lake tables the named in-season groups read, as ``build_snapshots`` keyword arguments (``depth`` aside). Shared by
+    the in-season run and the career model's week-aware groups (BACKLOG 51). ``base``: the played-season frame (FFToday's
+    id bridge)."""
+    import gcs_io
+    is_groups = [g for g in is_groups if g]
+    team_week = gcs_io.read_lake(TEAM_WEEK_PATH) if "team" in is_groups else None
+    contracts = gcs_io.read_lake(CONTRACT_PATH) if "contract" in is_groups else None
+    status = gcs_io.read_lake(STATUS_PATH) if ("usage" in is_groups or "role" in is_groups) else None
+    ngs_rec = ngs_rush = None
+    if "usage" in is_groups:
+        if ngs_dir:                                              # the slices pulled locally (nflreadpy) until the lake has them
+            ngs_rec, ngs_rush = pl.read_parquet(f"{ngs_dir}/receiving.parquet"), pl.read_parquet(f"{ngs_dir}/rushing.parquet")
+        else:
+            ngs_rec, ngs_rush = gcs_io.read_lake_prefix(NGS_REC_PATH), gcs_io.read_lake_prefix(NGS_RUSH_PATH)
+    schedules = gcs_io.read_lake_prefix(SCHEDULES_PATH) if "schedule" in is_groups else None
+    team_change = None
+    if "team_change" in is_groups:
+        team_change = (__import__('feature_groups').Context().depth, gcs_io.read_lake_prefix(SNAP_COUNTS_PATH))
+    ffo = None
+    if "opportunity" in is_groups:
+        ffo = pl.read_parquet(f"{ffo_dir}/weekly.parquet") if ffo_dir else gcs_io.read_lake_prefix(FFO_PATH)
+    proj = xw_ids = ids = preseason = None
+    if "consensus" in is_groups or "consensus_line" in is_groups or "preseason" in is_groups:
+        ids = gcs_io.read_lake_prefix(FF_IDS_PATH, partition="load_date")
+        ids = ids.filter(pl.col("load_date") == ids["load_date"].max())
+    if "consensus" in is_groups or "consensus_line" in is_groups:
+        proj = pl.read_parquet(f"{proj_dir}/weekly.parquet") if proj_dir else gcs_io.read_lake_prefix(PROJ_PATH)
+        xw_ids = ids.select("sleeper_id", "gsis_id")
+        if not no_fftoday:
+            try:
+                fft = fftoday_as_consensus(gcs_io.read_lake_prefix(FFT_PATH), ids, base)
+            except Exception as e:  # noqa: BLE001
+                print("FFToday rows unavailable:", str(e)[:120], flush=True); fft = None
+            if fft is not None and fft.height:
+                have = set(int(x) for x in proj["season"].unique().to_list())
+                fft = fft.filter(~pl.col("season").is_in(sorted(have)))                 # Sleeper wins where both exist
+                print(f"consensus before Sleeper: FFToday {fft['season'].min()}..{fft['season'].max()}, {fft.height:,} player-weeks matched to gsis", flush=True)
+                proj = pl.concat([proj.with_columns(pl.col("player_id").cast(pl.Utf8)), fft.with_columns(pl.col("player_id").cast(pl.Utf8))], how="diagonal")
+                xw_ids = pl.concat([xw_ids.with_columns(pl.col("sleeper_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)), gsis_identity_rows(ids)], how="vertical")
+    if "preseason" in is_groups:
+        if adp_dir:
+            mfl, ffc = pl.read_parquet(f"{adp_dir}/mfl.parquet"), pl.read_parquet(f"{adp_dir}/ffc.parquet")
+        else:
+            mfl, ffc = gcs_io.read_lake_prefix(f"{ADP_PATH}/mfl"), gcs_io.read_lake_prefix(f"{ADP_PATH}/ffc")
+        preseason = preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
+        print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
+    return dict(team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush, status=status, schedules=schedules,
+                role="role" in is_groups, opportunity=ffo, consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change)
+
+
 def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
                     depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
                     contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,

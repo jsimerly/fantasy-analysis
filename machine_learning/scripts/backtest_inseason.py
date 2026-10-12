@@ -211,50 +211,9 @@ def main() -> None:
     if is_tabpfn:
         print(f"in-season model: tabpfn {tabpfn_params or {}} on weeks {is_train_weeks}, at most {args.inseason_max_rows:,} rows per fit", flush=True)
     extra_cols = inseason.extra_columns(is_groups)
-    team_week = gcs_io.read_lake(inseason.TEAM_WEEK_PATH) if "team" in is_groups else None
-    contracts = gcs_io.read_lake(inseason.CONTRACT_PATH) if "contract" in is_groups else None
-    status = gcs_io.read_lake(inseason.STATUS_PATH) if ("usage" in is_groups or "role" in is_groups) else None
-    ngs_rec = ngs_rush = None
-    if "usage" in is_groups:
-        if args.ngs_dir:                                              # the slices pulled locally (nflreadpy) until the lake has them
-            ngs_rec, ngs_rush = pl.read_parquet(f"{args.ngs_dir}/receiving.parquet"), pl.read_parquet(f"{args.ngs_dir}/rushing.parquet")
-        else:
-            ngs_rec, ngs_rush = gcs_io.read_lake_prefix(inseason.NGS_REC_PATH), gcs_io.read_lake_prefix(inseason.NGS_RUSH_PATH)
-    schedules = gcs_io.read_lake_prefix(inseason.SCHEDULES_PATH) if "schedule" in is_groups else None
-    team_change = None
-    if "team_change" in is_groups:
-        team_change = (fg.Context().depth, gcs_io.read_lake_prefix(inseason.SNAP_COUNTS_PATH))
-    ffo = None
-    if "opportunity" in is_groups:
-        ffo = pl.read_parquet(f"{args.ffo_dir}/weekly.parquet") if args.ffo_dir else gcs_io.read_lake_prefix(inseason.FFO_PATH)
-    proj = xw_ids = ids = preseason = None
-    if "consensus" in is_groups or "consensus_line" in is_groups or "preseason" in is_groups:
-        ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
-        ids = ids.filter(pl.col("load_date") == ids["load_date"].max())
-    if "consensus" in is_groups or "consensus_line" in is_groups:
-        proj = pl.read_parquet(f"{args.proj_dir}/weekly.parquet") if args.proj_dir else gcs_io.read_lake_prefix(inseason.PROJ_PATH)
-        xw_ids = ids.select("sleeper_id", "gsis_id")
-        if not args.no_fftoday:
-            try:
-                fft = inseason.fftoday_as_consensus(gcs_io.read_lake_prefix(inseason.FFT_PATH), ids, base)
-            except Exception as e:  # noqa: BLE001
-                print("FFToday rows unavailable:", str(e)[:120], flush=True); fft = None
-            if fft is not None and fft.height:
-                have = set(int(x) for x in proj["season"].unique().to_list())
-                fft = fft.filter(~pl.col("season").is_in(sorted(have)))                 # Sleeper wins where both exist
-                print(f"consensus before Sleeper: FFToday {fft['season'].min()}..{fft['season'].max()}, {fft.height:,} player-weeks matched to gsis", flush=True)
-                proj = pl.concat([proj.with_columns(pl.col("player_id").cast(pl.Utf8)), fft.with_columns(pl.col("player_id").cast(pl.Utf8))], how="diagonal")
-                xw_ids = pl.concat([xw_ids.with_columns(pl.col("sleeper_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)), inseason.gsis_identity_rows(ids)], how="vertical")
-    if "preseason" in is_groups:
-        if args.adp_dir:
-            mfl, ffc = pl.read_parquet(f"{args.adp_dir}/mfl.parquet"), pl.read_parquet(f"{args.adp_dir}/ffc.parquet")
-        else:
-            mfl, ffc = gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/mfl"), gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/ffc")
-        preseason = inseason.preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
-        print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
-    snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush,
-                                                        status=status, schedules=schedules, role="role" in is_groups, opportunity=ffo,
-                                                        consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change))
+    gi = inseason.load_group_inputs(is_groups, base, ngs_dir=args.ngs_dir, ffo_dir=args.ffo_dir, proj_dir=args.proj_dir,
+                                    adp_dir=args.adp_dir, no_fftoday=args.no_fftoday)
+    snaps = inseason.baselines(inseason.build_snapshots(wk, base, depth=depth, **gi))
     snaps = inseason.player_group_features(snaps, is_groups)
     if extra_cols:
         print(f"in-season groups {is_groups}: {len(extra_cols)} columns; " + ", ".join(f"{c} {snaps[c].is_not_null().mean():.0%}" for c in extra_cols[:1] + extra_cols[-1:]), flush=True)
