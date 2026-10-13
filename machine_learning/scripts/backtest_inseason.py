@@ -288,9 +288,13 @@ def main() -> None:
                                             features=feature_cols, stacked=args.stacked, target=args.target,
                                             cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
         if args.career_todate:
-            tail, _todate_pred = career_tail_todate(base, wk, groups, last_complete, cur, w_now, survival, args.device, args.backend, tabpfn_params, args.cap,
-                                                    GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
-                                                    feature_cols, args.stacked, args.target, tail)
+            try:
+                tail, _todate_pred = career_tail_todate(base, wk, groups, last_complete, cur, w_now, survival, args.device, args.backend, tabpfn_params, args.cap,
+                                                        GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
+                                                        feature_cols, args.stacked, args.target, tail)
+            except Exception as e:  # noqa: BLE001 - its first production runs: never lose the weekly refresh to it (e.g. GPU memory)
+                print(f"WARNING: the career tail from this season failed ({type(e).__name__}: {str(e)[:200]}); "
+                      f"keeping the tail from the last complete season", flush=True)
         backend_tag = (args.backend + ("(" + ",".join(f"{k}={v}" for k, v in tabpfn_params.items()) + ")" if tabpfn_params else "")
                        + (" stacked" if args.stacked else "") + (f" {args.target}" if args.target != "level" else "") + (f" [{args.groups}]" if args.groups != "base,career" else ""))
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, range_quantiles=GRID_Q if args.quantile_grid else None, **is_kw).fit(snaps)
