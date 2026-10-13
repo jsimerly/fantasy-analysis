@@ -1924,6 +1924,13 @@ t = 1.45) stays a tie.
     experiments (the mixed-week chains move to Tuesday night); Tuesday, after the regular refresh, `chain_todate` re-runs
     the production refresh with `--career-todate` if `seam_35` passes the harness rule (ordering t > 2.4, PAR error no
     worse); the 7-season and young chains follow.
+    **3.5 verdict, 2026-10-12 22:27 (`seam_35`: cohorts 2015-22, weeks 3 / 5 / 9 / 13, one random training week,
+    7 h 43 m): ADOPT.** Seasons T+2 / T+3 ordering, last complete season -> this season to date: 0.622 -> 0.666 (week 3),
+    0.621 -> 0.668 (5), 0.622 -> 0.695 (9), 0.629 -> 0.732 (13); +0.066, t +6.92, better in 29 of 32 cohort-weeks (the
+    three losses are 2021 at weeks 3 / 5 / 9); PAR error cut 1.36, t +5.91; under-25s 0.42-0.44 -> 0.52-0.59. The season
+    model from the complete season stays the offseason path (0.74-0.75). Production: `career_todate=True` in the
+    preset (only while a season is in progress: `cur > last_complete`), first run Tuesday 2026-10-13, with a fallback
+    to the old tail if the new path fails.
     **The in-season groups on the career model (owner, 2026-10-12: "and career model as well"):** `is_usage`, `is_role`,
     `is_opportunity`, `is_consensus`, `is_preseason` -- the in-season builders (`inseason.week_group_features`) run to
     each row's `row_week`: the whole season on a season row, the weeks so far on a to-date row (never masked). Trees:

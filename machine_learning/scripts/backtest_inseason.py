@@ -287,7 +287,7 @@ def main() -> None:
                                             range_quantiles=GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
                                             features=feature_cols, stacked=args.stacked, target=args.target,
                                             cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
-        if args.career_todate:
+        if args.career_todate and cur > last_complete:      # a season in progress; in the offseason the complete row is the better origin
             try:
                 tail, _todate_pred = career_tail_todate(base, wk, groups, last_complete, cur, w_now, survival, args.device, args.backend, tabpfn_params, args.cap,
                                                         GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
