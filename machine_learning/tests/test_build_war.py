@@ -33,6 +33,23 @@ def test_placeholder_rows_are_the_rostered_skill_players_without_a_projection():
     assert bw.placeholder_rows(rosters.drop("player_name"), ["00-1"]).height == 0            # an older roster frame: nothing to place
 
 
+def test_pick_leagues_in_season_then_the_latest_season_in_the_offseason():
+    """review 2026-10-13 (D11): the offseason has no in-season league; the old ``[0]`` raised IndexError."""
+    P = bw._rep.PRIMARY_LINEAGE
+    meta = pl.DataFrame({"league_id": ["a25", "a26", "b25", "b26"], "season": ["2025", "2026", "2025", "2026"],
+                         "status": ["complete", "in_season", "complete", "in_season"], "league_lineage_id": [P, P, "other", "other"]})
+    leagues, primary = bw.pick_leagues(meta, all_leagues=True)
+    assert primary == "a26" and sorted(leagues["league_id"].to_list()) == ["a26", "b26"]
+    leagues, primary = bw.pick_leagues(meta, all_leagues=False)
+    assert leagues["league_id"].to_list() == ["a26"]
+    off = meta.with_columns(pl.lit("complete").alias("status"))                       # the offseason: every league complete
+    leagues, primary = bw.pick_leagues(off, all_leagues=True)
+    assert primary == "a26" and sorted(leagues["league_id"].to_list()) == ["a26", "b26"]   # each lineage's newest season
+    import pytest
+    with pytest.raises(SystemExit, match="primary lineage"):
+        bw.pick_leagues(meta.filter(pl.col("league_lineage_id") != P), all_leagues=True)
+
+
 def test_placeholder_rows_take_the_ktc_value_by_name():
     rosters = pl.DataFrame({"roster_id": [1], "team_name": ["A"], "owner_id": ["o1"], "player_id": ["sleeper:9"], "is_taxi": [True], "is_reserve": [False],
                             "player_name": ["Jordyn Tyson"], "position": ["WR"], "status": ["taxi"]})

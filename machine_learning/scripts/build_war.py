@@ -153,6 +153,20 @@ def placeholder_rows(rosters: pl.DataFrame, projected_ids: list[str], market_his
     return miss.select("player_id", "player_name", "position", "owned_by", "status", pl.col("ktc_value").cast(pl.Float64))
 
 
+def pick_leagues(meta: pl.DataFrame, all_leagues: bool) -> tuple[pl.DataFrame, str]:
+    """The leagues to build and the primary league's id: the in-season leagues when a season is on, else each
+    lineage's latest season (review 2026-10-13, D11: the offseason has no in-season league and the old ``[0]`` raised
+    IndexError). A missing primary lineage is a clear stop, not an index error."""
+    cur = meta.filter(pl.col("status") == "in_season")
+    if cur.height == 0:                                          # offseason: the newest league of every lineage
+        cur = (meta.with_columns(pl.col("season").cast(pl.Int64, strict=False).alias("_s")).sort("_s", descending=True)
+                   .unique(subset=["league_lineage_id"], keep="first", maintain_order=True).drop("_s"))
+    primary = cur.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
+    if primary.height == 0:
+        raise SystemExit(f"no league of the primary lineage {_rep.PRIMARY_LINEAGE} in dim_leagues_meta (statuses {sorted(meta['status'].unique().to_list())})")
+    return (cur if all_leagues else primary), str(primary["league_id"][0])
+
+
 def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
     """The Sleeper user who owns a roster in every in-season league (the owner of this repo)."""
     fr = gcs_io.read_lake(FRANCHISES_PATH).filter(pl.col("league_id").is_in(leagues["league_id"].implode()))
@@ -306,9 +320,7 @@ def main() -> None:
         spec = lg.LeagueSpec.from_json(args.league)
         targets.append((spec, win_curve_for(None), None, None, "custom league: no standings or rosters; win curve from all leagues in the lake; primary league's scoring", None))
     else:
-        all_leagues = gcs_io.read_lake(LEAGUES_META_PATH).filter(pl.col("status") == "in_season")
-        leagues = all_leagues if args.all_leagues else all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
-        primary_id = all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)["league_id"][0]
+        leagues, primary_id = pick_leagues(gcs_io.read_lake(LEAGUES_META_PATH), args.all_leagues)
         primary_sc = scoring.league_scoring(settings, primary_id)
         last_season = int(weeks["season"].max())
         for lid, name, lineage in leagues.select("league_id", "league_name", "league_lineage_id").iter_rows():

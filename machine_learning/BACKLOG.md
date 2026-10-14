@@ -2078,7 +2078,9 @@ t = 1.45) stays a tie.
     prices next season with the second-year spread as the WAR column does; the exports refuse a run built by a
     non-production model (`runs.check_backend`, `--require-backend`); the page's outcome curves draw against the chosen
     league's replacement line; every harness verdict reads the level (top-150 bias) and flags an error gain whose level
-    moved further from zero (LEVEL CAUTION) -- making it part of the rule is the owner's call. Tonight after the chain: the exports
+    moved further from zero (LEVEL CAUTION) -- making it part of the rule is the owner's call; `scripts/age_gate.py`
+    reads realized / priced by age band and position on the fixed top set of one or two runs (the age gradient of the
+    review's C1, to be read beside every verdict); `build_war --source career` no longer dies in the offseason. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
     PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
     pricing waits for an age gate; the 10 % default) are in the document's last section.

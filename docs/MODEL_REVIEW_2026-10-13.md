@@ -253,9 +253,11 @@ Item 47's coupling closes the position gap and opens the age one (29+ 20 % over-
 gradient at T+2/T+3 on the production path (last-season origin ≤24 2.0 vs 29+ 1.25; rookies 2.3-3.5 on both the table
 and the to-date model). Causes are on the projection side: the survival tier held constant over the horizon, a linear
 logit on every age 22-40 that cannot bend from a flat hazard at 27 to a steep one at 34 (the "33+ too flat" the author
-measured), the rookie tail's ratios clipped at 1.15. QUEUED: realized / priced by age band × window as a gate beside the
-co-primaries (`window_report --by-age` exists); a walk-forward age-band × horizon level correction through the
-`calibrate` hook, or fix survival (fit from 27 with a bend, decay the tier) — before any switch to joint pricing (OWNER).
+measured), the rookie tail's ratios clipped at 1.15. FIXED on `feat/review-ml-queue`: `scripts/age_gate.py` — realized /
+priced by age band and position on the union top-150 set of one or two runs, with the cohort as the unit (test); the
+gate to read beside every verdict and the thing a pricing change must not worsen on either end. QUEUED: a walk-forward
+age-band × horizon level correction through the `calibrate` hook, or fix survival (fit from 27 with a bend, decay the
+tier) — before any switch to joint pricing (OWNER).
 
 ### C2. The band is too narrow to price upside with — CONFIRMED
 20-80 coverage 0.55-0.56 at one year (QB 0.52 at three), band sigma 17-22 % below the holdout residual sigma, 9 % of
@@ -295,7 +297,7 @@ with the per-player band, so the dict matters for the in-season spans and the fa
 | D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | FIXED on `feat/review-ml-queue`: the outcome curves draw against the chosen league's line (the WAR columns' line); the payload labels the internal share line (`replacement_note`). The `iv` / `v` columns still price on the internal line (QUEUED: price them per league too) |
 | D9 | The export and the page key players by name (34 same-name pairs in the fact; none among today's 496, so latent) | `export_projections.py`, the page | QUEUED: key by `player_id` |
 | D10 | The scoring league is "the lineage with the most settings rows"; a fourth league would silently re-score the fact | `fact_player_week.py` | FIXED (code, test): the pinned lineage `PRIMARY_LINEAGE_ID`, the same pin as the model's replacement line; the most-rows rule only as a loud fallback |
-| D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | QUEUED |
+| D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | FIXED on `feat/review-ml-queue`: `pick_leagues` takes the in-season leagues, else each lineage's newest season, and stops with a message when the primary lineage is absent (test) |
 | D12 | A partially loaded latest week reads as missed games (freshness is checked, completeness is not) | `data_quality/suite.py` | FIXED (check, replay test): `fact.player_week.latest_week_complete` — teams with a stat line in the latest week against 2 × the games played by today in the season's schedule partition |
 | D13 | Base features left-censored at 1999 (`career_seasons = 1, exp = 10`); `lag1_*` null for both "sat out" and "before 1999" | `career.py` | QUEUED (minor): a `career_censored` flag |
 
@@ -348,11 +350,12 @@ tonight's export carries both; the exports' backend guard (D3) on `feat/review-m
 the page republished from tonight's payload once its `metrics.json` shows the TabPFN backends; `feat/review-ml-queue`
 merged into the PR branch when the GPU chain ends (its modules are imported by the queued runs).
 
-**Queued code changes, no decision needed (QUEUED), in priority order.** C1's age-band gate → D9, D11, D13 → C2 (band
-widening, and the in-season model's own band for its spans) → D8's second half (the `iv` / `v` columns per league) → C5
-→ A6 (re-run the career eval on the production model) → A4 (the in-season model through the market test) → B6's
-consensus snapshot. Done on `feat/review-ml-queue`, merging when the chain ends: D3, D4, D5, C4, D8 (the curves), B3
-(the level read in every verdict).
+**Queued code changes, no decision needed (QUEUED), in priority order.** D9 (player_id keys) → C1's level correction
+(an age-band × horizon calibration or the survival form) → C2 (band widening, and the in-season model's own band for
+its spans) → D8's second half (the `iv` / `v` columns per league) → D13 → C5 → A6 (re-run the career eval on the
+production model) → A4 (the in-season model through the market test) → B6's consensus snapshot. Done on
+`feat/review-ml-queue`, merging when the chain ends: D3, D4, D5, D11, C4, D8 (the curves), B3 (the level read in every
+verdict), C1's gate (`scripts/age_gate.py`).
 
 **The owner's calls (OWNER).** (1) Pause `ml-weekly-refresh` or make it a dry run — today it writes a weaker model into
 the production store every Tuesday. (2) Re-pull MFL 2011-2026 at AUG15 (a lake write), then re-screen the preseason
