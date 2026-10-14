@@ -10,10 +10,19 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Reads the lake (`gcs_io.read_lake`) and reads/writes the ML bucket (`gcs_io.read_ml_*` /
   `write_ml_*`). Never writes the lake; never writes local `data/`.
 - Tests: `.venv/Scripts/python.exe -m pytest tests -q` (spec-style, ~5 s, no GCS: fixtures are synthetic).
-- **Before any change that touches the weekly path**, run it end to end on the trees (about a minute, reads the lake,
-  writes nothing): `scripts/backtest_inseason.py --current --no-write --device cpu --backend xgb --inseason-backend xgb`
-  plus the production preset's other flags (`weekly_refresh.py --preset production --dry-run` prints them). The
-  2026-10-13 refresh died four hours in on a column the unit tests never exercised; this smoke would have caught it.
+- **Before any change that touches the weekly path**, run the in-season stage end to end on the trees (about a minute,
+  reads the lake, writes nothing — `--no-write` covers the `--current` projections since 2026-10-13):
+  `scripts/backtest_inseason.py --current --no-write --device cpu --backend xgb --inseason-backend xgb` plus the
+  production preset's other flags (`weekly_refresh.py --preset production --dry-run` prints them). The 2026-10-13
+  refresh died four hours in on a column the unit tests never exercised; this smoke would have caught it. **Never run
+  `weekly_refresh.py` itself on the trees against the ML bucket:** its `build_war` / `export` steps write `war/` and
+  `pages/` at today's run date, and a trees payload at the latest run date is what the exports pick up when the GPU run
+  fails (the Cloud Run job `ml-weekly-refresh` does exactly this every Tuesday 15:00 UTC until it is paused — review
+  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`).
+- **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
+  players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
+  +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)
+  beside the ordering and the error: MAE on a zero-inflated target rewards shrinkage (review 2026-10-13, B3).
 
 ## What is where
 | Path | What |

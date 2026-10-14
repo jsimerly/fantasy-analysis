@@ -21,7 +21,9 @@ setTimeout(() => {
     const perf = d.getElementById('perf');
     const cards = [...perf.querySelectorAll('.card h3')].map(h => h.textContent);
     console.log('perf cards:', JSON.stringify(cards));
-    const mk = [...perf.querySelectorAll('.card')].find(c => /3b\./.test(c.querySelector('h3').textContent));
+    // the story tiles (review 2026-10-13): heading, number and the first words of the text, so a stale or regression-inflated claim is visible here
+    for (const t of perf.querySelectorAll('.card.tile')) console.log('tile:', (t.querySelector('.h') || {}).textContent, '|', (t.querySelector('.n') || {}).textContent, '|', ((t.querySelector('.t') || {}).textContent || '').slice(0, 110));
+    const mk = [...perf.querySelectorAll('.card')].find(c => /3b\./.test((c.querySelector('h3') || {}).textContent || ''));
     if (mk) {
       console.log('market block tables:', mk.querySelectorAll('table').length, '| h4:', [...mk.querySelectorAll('h4')].map(h => h.textContent).join(' / '));
       console.log('first table rows:', [...mk.querySelectorAll('table')][0].querySelectorAll('tbody tr').length, '| first row:', [...mk.querySelector('table tbody tr').children].map(td => td.textContent).join(' , '));

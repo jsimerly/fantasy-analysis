@@ -44,35 +44,68 @@ def scorecard(payload: dict) -> dict:
     ov = sorted(mk.get("overall") or [], key=lambda r: -r.get("horizon", 0))
     ov0 = ov[0] if ov else None
     sw0 = next((r for r in mk.get("swap_overall") or [] if ov0 and r.get("variant") == ov0.get("variant") and r.get("horizon") == ov0.get("horizon")), None)
+    # review 2026-10-13 (docs/MODEL_REVIEW_2026-10-13.md, A1-A6): the model's own unit leads the swap row (raw points mix positions),
+    # the mispricing row is net of regression to the mean when the summary carries it, the rest-of-season row scores points above
+    # replacement against the provider's own projection when the production table is there, the three-year row says "tie",
+    # and the career-error row leads with the stronger baseline and names the run
     if sw0 and sw0.get("pairs"):
-        if sw0.get("gain_pts_mean") is not None:
-            head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["gain_pts_mean"], 0), "unit": "more fantasy points per swap over three seasons",
-                         "detail": f"{sw0['pairs']} swaps made each February {feb_years(meta.get('cohorts', ''))}: three seasons later the player bought out-scored the one sold by that much; {round(sw0.get('gain_par_mean') or 0):,} more above a replacement-level player, ahead in {round((sw0.get('win_rate_par') or 0) * 100)}% of swaps; in wins {round(sw0['win_rate'] * 100)}% won, +{_f(sw0['gain_mean'], 2)} per swap",
-                         "secondary": _f(sw0["win_rate"] * 100, 0), "run_date": meta.get("run_date")})
+        wins = _f(sw0["gain_mean"], 2)
+        said = _f(sw0["model_said"], 2) if sw0.get("model_said") is not None else None
+        if sw0.get("gain_par_mean") is not None:
+            head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["gain_par_mean"], 0), "unit": "more points above replacement per swap over three seasons",
+                         "detail": (f"{sw0['pairs']} swaps made each February {feb_years(meta.get('cohorts', ''))}: three seasons later the player bought delivered that much more above a "
+                                    f"replacement-level player at his position, ahead in {round((sw0.get('win_rate_par') or 0) * 100)}% of swaps; in wins +{wins} per swap, {round(sw0['win_rate'] * 100)}% won"
+                                    + (f" (the model had said +{said})" if said is not None else "")
+                                    + (f"; {round(sw0['gain_pts_mean']):,} raw points, a number that mixes positions" if sw0.get("gain_pts_mean") is not None else "")),
+                         "secondary": wins, "run_date": meta.get("run_date")})
         else:
             head.append({"key": "swap_test", "label": "The swap test: same-price trades the model would have made", "value": _f(sw0["win_rate"] * 100, 0), "unit": "% won",
-                         "detail": f"{sw0['pairs']} swaps made each February {feb_years(meta.get('cohorts', ''))}, scored {ov0['horizon']} seasons later; +{_f(sw0['gain_mean'], 2)} wins per swap",
-                         "secondary": _f(sw0["gain_mean"], 2), "run_date": meta.get("run_date")})
+                         "detail": f"{sw0['pairs']} swaps made each February {feb_years(meta.get('cohorts', ''))}, scored {ov0['horizon']} seasons later; +{wins} wins per swap",
+                         "secondary": wins, "run_date": meta.get("run_date")})
     if ov0 and ov0.get("cheap_gap_real") is not None:
-        head.append({"key": "mispricing", "label": "The mispricing is real", "value": _f(ov0["cheap_gap_real"], 1), "unit": "ranks better",
-                     "detail": f"players the model called cheap finished that many ranks better than the market had them; the ones it called rich finished {_f(abs(ov0['rich_gap_real']), 1)} worse",
-                     "secondary": _f(ov0["rich_gap_real"], 1), "run_date": meta.get("run_date")})
+        if ov0.get("cheap_net") is not None:
+            head.append({"key": "mispricing", "label": "The mispricing column, net of regression to the mean", "value": _f(ov0["cheap_net"], 1), "unit": "ranks better than their market rank predicts",
+                         "detail": (f"players the model called cheap finished that many ranks better than a player at their market rank usually does, the ones it called rich "
+                                    f"{_f(abs(ov0['rich_net']), 1)} worse; on the disagreed players the model's rank sat {_f(ov0.get('cheap_closer'), 1)} ranks closer to the finish than the market's; "
+                                    f"the raw gap (+{_f(ov0['cheap_gap_real'], 1)} / {_f(ov0['rich_gap_real'], 1)}) is inflated by regression to the mean (a model with no skill scores about +10 on it)"),
+                         "secondary": _f(ov0["rich_net"], 1), "run_date": meta.get("run_date")})
+        else:
+            head.append({"key": "mispricing", "label": "The mispricing column, against the market (raw)", "value": _f(ov0["cheap_gap_real"], 1), "unit": "ranks better",
+                         "detail": (f"players the model called cheap finished that many ranks better than the market had them; the ones it called rich finished {_f(abs(ov0['rich_gap_real']), 1)} worse; "
+                                    "most of a raw gap is regression to the mean (a model with no skill scores about +10 on this construction)"),
+                         "secondary": _f(ov0["rich_gap_real"], 1), "run_date": meta.get("run_date")})
     ros = ins.get("ros") or []
     if ros:
         w, last = ros[0], ros[-1]
-        head.append({"key": "rest_of_season", "label": "Rest of this season: ordering players by what they go on to average", "value": _f(w.get("ros|model")), "unit": "rank agreement",
-                     "detail": f"vs the market's {_f(w.get('ros|ktc'))} at week {w.get('W')}; {_f(last.get('ros|model'))} vs {_f(last.get('ros|ktc'))} at week {last.get('W')}; cohorts {ins.get('cohorts', '')}",
-                     "secondary": _f(w.get("ros|ktc")), "run_date": ins.get("run_date")})
+        if w.get("ros|parb_model") is not None:
+            head.append({"key": "rest_of_season", "label": "Rest of this season: ordering players by the points above replacement they go on to deliver", "value": _f(w.get("ros|parb_model")), "unit": "rank agreement",
+                         "detail": (f"vs the provider's own projection {_f(w.get('ros|parb_provider'))} and the market's {_f(w.get('ros|parb_ktc'))} at week {w.get('W')}; "
+                                    f"{_f(last.get('ros|parb_model'))} vs {_f(last.get('ros|parb_provider'))} / {_f(last.get('ros|parb_ktc'))} at week {last.get('W')}; cohorts {ins.get('cohorts', '')}; "
+                                    "a dynasty price is not a rest-of-season ranking, so the provider's projection is the yardstick that counts"),
+                         "secondary": _f(w.get("ros|parb_provider")), "run_date": ins.get("run_date")})
+            nx = ins.get("next") or []
+            if nx and nx[0].get("next|parb_model") is not None:
+                n0, nl = nx[0], nx[-1]
+                head.append({"key": "next_season", "label": "Next season, from a mid-season snapshot: ordering by points above replacement", "value": _f(n0.get("next|parb_model")), "unit": "rank agreement",
+                             "detail": f"vs the market's {_f(n0.get('next|parb_ktc'))} at week {n0.get('W')}; {_f(nl.get('next|parb_model'))} vs {_f(nl.get('next|parb_ktc'))} at week {nl.get('W')}: behind or level with the market early in the season, ahead from week 9",
+                             "secondary": _f(n0.get("next|parb_ktc")), "run_date": ins.get("run_date")})
+        else:
+            head.append({"key": "rest_of_season", "label": "Rest of this season: ordering players by what they go on to average", "value": _f(w.get("ros|model")), "unit": "rank agreement",
+                         "detail": (f"vs the market's {_f(w.get('ros|ktc'))} at week {w.get('W')}; {_f(last.get('ros|model'))} vs {_f(last.get('ros|ktc'))} at week {last.get('W')}; cohorts {ins.get('cohorts', '')} "
+                                    "(an older run scored on points per game against the dynasty price; the production table scores points above replacement against the provider's projection)"),
+                         "secondary": _f(w.get("ros|ktc")), "run_date": ins.get("run_date")})
     if ov0:
-        head.append({"key": "three_years_out", "label": f"{ov0['horizon']} years out: ordering by the wins players then delivered", "value": _f(ov0.get("rho_model")), "unit": "rank agreement",
-                     "detail": f"vs the market's {_f(ov0.get('rho_ktc'))} on {ov0.get('n')} priced players, priced each February {feb_years(meta.get('cohorts', ''))}",
+        head.append({"key": "three_years_out", "label": f"{ov0['horizon']} years out: ordering by the wins players then delivered (a statistical tie)", "value": _f(ov0.get("rho_model")), "unit": "rank agreement",
+                     "detail": (f"vs the market's {_f(ov0.get('rho_ktc'))} on {ov0.get('n')} priced player-cohorts, priced each February {feb_years(meta.get('cohorts', ''))}; the difference sits inside its "
+                                "noise (a 95 % interval of about −0.02 to +0.06); the market is better on under-25s and rookies, the model on ages 25-32 and running backs"),
                      "secondary": _f(ov0.get("rho_ktc")), "run_date": meta.get("run_date")})
     mae = ce.get("mae") or []
     r3 = next((r for r in mae if r.get("horizon") == 3), mae[-1] if mae else None)
     if r3:
-        head.append({"key": "career_error", "label": f"Career projection, {r3['horizon']} years ahead: error vs repeating last season", "value": _f(-abs((r3.get("model_%_vs_carry") or 0)), 0), "unit": "% error",
-                     "detail": f"−{_f(abs((r3.get('model_%_vs_decay') or 0)), 0)}% vs an age-decay curve; {int(r3.get('n_total', 0)):,} player-seasons since {ce.get('start_season')}",
-                     "secondary": _f(-abs((r3.get("model_%_vs_decay") or 0)), 0), "run_date": ce.get("run_date")})
+        head.append({"key": "career_error", "label": f"Career projection, {r3['horizon']} years ahead: error vs an age-decay curve", "value": _f(-abs((r3.get("model_%_vs_decay") or 0)), 0), "unit": "% error",
+                     "detail": (f"−{int(round(abs(r3.get('model_%_vs_carry') or 0)))}% vs repeating last season (a baseline attrition punishes); {int(r3.get('n_total', 0)):,} player-seasons since "
+                                f"{ce.get('start_season')}, seasons never played counted as zero; the {ce.get('run_date')} evaluation ({ce.get('backend') or 'the tree walk-forward, not the production model'})"),
+                     "secondary": _f(-abs((r3.get("model_%_vs_carry") or 0)), 0), "run_date": ce.get("run_date")})
     swaps = sorted([r for r in mk.get("top_swaps") or [] if r.get("gain") is not None], key=lambda r: -r["gain"])
     named = [{"cohort": r["cohort"], "february": r["cohort"] + 1, "sold": r["sell"], "sold_pos": r["sell_pos"], "sold_ktc": r["sell_ktc"], "sold_delivered": _f(r["sell_real"], 2),
               "bought": r["buy"], "bought_pos": r["buy_pos"], "bought_ktc": r["buy_ktc"], "bought_delivered": _f(r["buy_real"], 2), "gain": _f(r["gain"], 2),
@@ -84,7 +117,9 @@ def scorecard(payload: dict) -> dict:
               for r in mk.get("swap_by_buy_pos") or [] if sw0 and r.get("variant") == sw0.get("variant") and r.get("horizon") == sw0.get("horizon")]
     return {"as_of": payload.get("run_date"), "season": payload.get("season"), "week": payload.get("week"), "model": payload.get("career_backend"),
             "headline": head, "swaps": named, "swaps_by_cohort": by_cohort, "swaps_by_position_bought": by_pos,
-            "method": "walk-forward: the model rebuilt with only what was known at the time, scored on what the players then delivered; the market (KTC) is the yardstick, never an input"}
+            "method": ("walk-forward: the model rebuilt with only what was known at the time, scored on what the players then delivered; KTC is the yardstick, never an input "
+                       "(the in-season model does read the providers' projections and preseason ADP since 2026-10-12; the career model the swap test validates reads neither); "
+                       "the unit of evidence is the test year, and the review of 2026-10-13 (docs/MODEL_REVIEW_2026-10-13.md) re-derived every number here")}
 
 
 def to_markdown(card: dict) -> str:

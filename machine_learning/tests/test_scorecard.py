@@ -39,10 +39,39 @@ def test_scorecard_leads_with_the_swap_test_and_the_mispricing():
     assert mis["value"] == 12.9 and mis["secondary"] == -10.6 and "10.6 worse" in mis["detail"]
     assert ros["value"] == 0.784 and ros["secondary"] == 0.704 and "week 13" in ros["detail"]
     assert three["value"] == 0.695 and three["secondary"] == 0.673 and "364 priced" in three["detail"]
-    assert err["value"] == -30 and "7,338 player-seasons since 2010" in err["detail"]        # the three-year row, not the last
+    # review 2026-10-13: the stronger baseline (the age curve) leads; "repeat last season" is punished by attrition
+    assert err["value"] == -8 and err["secondary"] == -30 and "7,338 player-seasons since 2010" in err["detail"]        # the three-year row, not the last
+    assert "raw gap is regression to the mean" in mis["detail"] or "regression to the mean" in mis["detail"]
     assert card["swaps"][0]["gain"] == 3.16 and card["swaps"][-1]["gain"] == -2.68 and card["swaps_by_cohort"][0]["cohort"] == 2020
     assert {r["position"]: r["win_rate"] for r in card["swaps_by_position_bought"]} == {"RB": 89, "TE": 54}
     assert card["as_of"] == "2026-10-09" and card["week"] == 5
+
+
+def test_the_production_table_scores_par_net_mispricing_and_the_model_unit():
+    """review 2026-10-13: with the re-scored market summary (cheap_net) and the production in-season table (parb_*), the card
+    leads with points above replacement, prices the mispricing net of regression to the mean, scores the rest of the season
+    against the provider's projection and adds next season against the market."""
+    m = _mod()
+    p = _payload()
+    mk = p["performance"]["market"]
+    mk["overall"][0].update({"cheap_net": 11.16, "rich_net": -6.79, "cheap_closer": 1.63, "rich_closer": 0.84})
+    mk["swap_overall"][0].update({"gain_pts_mean": 122.8, "gain_par_mean": 52.5, "win_rate_par": 0.677, "model_said": 0.779})
+    p["performance"]["inseason"] = {"run_date": "2026-10-13", "cohorts": "2021-2024",
+                                    "ros": [{"W": 3, "ros|model": 0.818, "ros|ktc": 0.707, "ros|parb_model": 0.637, "ros|parb_provider": 0.614, "ros|parb_ktc": 0.615},
+                                            {"W": 13, "ros|model": 0.722, "ros|ktc": 0.569, "ros|parb_model": 0.554, "ros|parb_provider": 0.490, "ros|parb_ktc": 0.462}],
+                                    "next": [{"W": 3, "next|parb_model": 0.530, "next|parb_ktc": 0.558}, {"W": 13, "next|parb_model": 0.606, "next|parb_ktc": 0.587}]}
+    card = m.scorecard(p)
+    keys = [h["key"] for h in card["headline"]]
+    assert keys == ["swap_test", "mispricing", "rest_of_season", "next_season", "three_years_out", "career_error"]
+    swap, mis, ros, nxt, three = card["headline"][:5]
+    assert swap["value"] == 52 and swap["unit"].startswith("more points above replacement") and swap["secondary"] == 0.46
+    assert "the model had said +0.78" in swap["detail"] and "123 raw points, a number that mixes positions" in swap["detail"]
+    assert mis["value"] == 11.2 and mis["secondary"] == -6.8 and "net of regression" in mis["label"] and "1.6 ranks closer" in mis["detail"]
+    assert ros["value"] == 0.637 and ros["secondary"] == 0.614 and "0.554 vs 0.49 / 0.462 at week 13" in ros["detail"]
+    assert nxt["value"] == 0.53 and nxt["secondary"] == 0.558 and "ahead from week 9" in nxt["detail"]
+    assert "a statistical tie" in three["label"]
+    md = m.to_markdown(card)
+    assert "| The mispricing column, net of regression to the mean | **11.2 ranks better than their market rank predicts** |" in md
 
 
 def test_markdown_table_carries_every_headline_and_the_named_swaps():
@@ -50,8 +79,8 @@ def test_markdown_table_carries_every_headline_and_the_named_swaps():
     md = m.to_markdown(m.scorecard(_payload()))
     assert md.startswith("# Model scorecard — as of 2026-10-09 (season 2026, week 5)")
     assert "| The swap test: same-price trades the model would have made | **73 % won** |" in md
-    assert "| The mispricing is real | **12.9 ranks better** |" in md
-    assert "**-30 % error**" in md
+    assert "| The mispricing column, against the market (raw) | **12.9 ranks better** |" in md
+    assert "**-8 % error**" in md
     assert "| 2022 | A, WR (5,112) | 0.00 | B, RB (4,974) | 3.16 | +3.16 |" in md                     # cohort 2021 -> the swap of February 2022
     assert "Win rate by year of the swap: February 2021: 73% of 11 · February 2022: 71% of 17." in md and "RB 89% (+1.18 wins per swap)" in md
 

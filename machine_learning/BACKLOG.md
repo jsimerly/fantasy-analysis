@@ -1,19 +1,31 @@
 # Model backlog
 
-## Status (read this, not the 1,600 lines below) — 2026-10-10
+## Status (read this, not the 2,000 lines below) — 2026-10-13, corrected by the review (item 55, `docs/MODEL_REVIEW_2026-10-13.md`)
 
 **Production** (`weekly_refresh.py --preset production`, the owner's GPU, Tuesday after the Monday games):
 TabPFN 3.5, feature set `base,career,injury,trend,situation,rookie,college`, pooled horizons 1-10, the
 **blend** target (mean of level and residual), the 20/50/80 band, age-survival cap `30+t`, weekly
-replacement, in-season on 3.5 with no extra groups yet. The career tail is cached per season; the
+replacement, in-season on 3.5 with the five groups (usage, role, opportunity, consensus, preseason — so provider
+projections and ADP ARE inputs since 2026-10-12; KTC never is), careers projected from this season's to-date rows while
+a season is in progress (item 51), each player's own band as the spread, the page at a 10 % discount (the harness
+scores at 20 %). The career tail is cached per season; the
 weekly run is the in-season stage plus the exports (timed 2026-10-11: 1 h 58 m cold, ~10 minutes warm). Page: Players / Rosters (title odds this season and next) / Model
 performance / Trades / Draft slots / Team value / Market.
 
 **Adopted, with the number that decided it** (co-primary rule: ordering `spearman_war_top` and wins
 error `mae_war_top`, |t| > 2.4 on one with the other no worse, same-day baseline):
-- TabPFN 3.5 over the trees (item 22): error 0.474 vs 0.515, t = +7.3, 8 of 8 cohorts.
-- The owner's feature set + pooled horizons on 3.5 (22): t = +7.5 vs per-horizon.
-- Blend target over level (44): error 0.502 vs 0.513, ordering tie; the residual rematch runs 2026-10-10.
+- TabPFN 3.5 over the trees (item 22): **error 0.502 vs 0.530, t = +4.8, 8 of 8; ordering 0.621 vs 0.593, t = +2.6, 7 of 8**
+  (production `tabpfn35_set_stacked_blend_w2` vs `cap30t_w_b` from the saved per-cohort rows). The "0.474 vs 0.515,
+  t +7.3" that stood here was the regime pair item 22's own correction voided (and 0.515 was TabPFN v2, not the trees).
+- The owner's feature set + pooled horizons on 3.5 (22): in the valid regime a tie at three years, ADOPT at five on
+  error only (t +5.3; ordering t +2.3). The "t +7.5" was the same void pair.
+- Blend target over level (44): error 0.502 vs 0.513 (t +3.5), ordering tie — **with a caveat (item 55): the gain is
+  MAE on a target where 30 % of the top 150 realize zero, which rewards shrinkage; the blend under-projects last year's
+  stars by ~4 points a season (the residual by 9; the level target is unbiased). To be re-judged under a level metric.**
+- Careers see this season (51): ordering +0.066 at seasons T+2 / T+3, **t +4.0 with the cohort as the unit, 7 of 8**
+  (the "+6.9" counted the four weeks of a season as independent); the gain grows with the week (+0.044 at week 3).
+- The five in-season groups (39 / 52): **rest of season +0.02-0.03, t +4.8 to +5.5 by cohort — the justification; the
+  next-season "+0.009" is not established (t ≈ 1-2 by cohort).**
 - Weekly replacement line, cap `30+t`, rank-match fair value (items 19-21): see each item.
 
 **Rejected, with the number:** draft rows on the career model (43: ordering -0.035, error +0.04);
@@ -1908,7 +1920,7 @@ t = 1.45) stays a tie.
     | this season to date, 1 random training week per player-season | 0.630 | 0.650 | 0.666 | 0.696 |
     | this season to date, 8 fixed training weeks | 0.622 | 0.636 | 0.657 | 0.685 |
     | the season model from the complete season (reference) | 0.701 | 0.704 | 0.709 | 0.710 |
-    One random week: +0.074 (t +6.9, 27 of 32 cohort-weeks), PAR error and bias lower at every week; under-25s 0.425 ->
+    One random week: +0.074 (t +6.9 over 27 of 32 cohort-weeks; **t +3.8 by cohort, 8 of 8** — item 55), PAR error and bias lower at every week; under-25s 0.425 ->
     0.49-0.57; the 29+ realized / priced 1.31-1.34 -> 1.11-1.21. The same model projecting a to-date row without having
     trained on any (treating 3 games as a season) is far worse (0.45-0.59). Training on to-date rows costs the season-end
     projection a little (0.69 vs 0.71), so the offseason keeps the season model and in season uses the to-date one.
@@ -1926,8 +1938,11 @@ t = 1.45) stays a tie.
     worse); the 7-season and young chains follow.
     **3.5 verdict, 2026-10-12 22:27 (`seam_35`: cohorts 2015-22, weeks 3 / 5 / 9 / 13, one random training week,
     7 h 43 m): ADOPT.** Seasons T+2 / T+3 ordering, last complete season -> this season to date: 0.622 -> 0.666 (week 3),
-    0.621 -> 0.668 (5), 0.622 -> 0.695 (9), 0.629 -> 0.732 (13); +0.066, t +6.92, better in 29 of 32 cohort-weeks (the
-    three losses are 2021 at weeks 3 / 5 / 9); PAR error cut 1.36, t +5.91; under-25s 0.42-0.44 -> 0.52-0.59. The season
+    0.621 -> 0.668 (5), 0.622 -> 0.695 (9), 0.629 -> 0.732 (13); +0.066, t +6.92 over 32 cohort-weeks as first
+    reported, **t +3.99 with the cohort as the unit, 7 of 8 cohorts (2021 loses)** -- the weeks of one season share
+    outcomes (review 2026-10-13, item 55); PAR error cut 1.36, t +5.91 as reported, **+3.51 by cohort**, and at week 3
+    alone t 1.6 (not significant); the gain grows with the week (+0.044 at week 3, +0.047 at 5, +0.072 at 9, +0.103 at
+    13), so the production weeks 5-6 should expect ≈ +0.045 ordering and no error gain; under-25s 0.42-0.44 -> 0.52-0.59. The season
     model from the complete season stays the offseason path (0.74-0.75). Production: `career_todate=True` in the
     preset (only while a season is in progress: `cur > last_complete`), first run Tuesday 2026-10-13, with a fallback
     to the old tail if the new path fails.
@@ -1937,7 +1952,7 @@ t = 1.45) stays a tie.
     the season-model harness 0.614 vs 0.591 (t +1.81), error 0.523 vs 0.530 (t +1.13), below the line; on the seam test
     (one random training week) every path gains -- last season 0.598 / 0.599 / 0.601 / 0.603 (was 0.583 / 0.587 /
     0.589 / 0.588), to date 0.649 / 0.655 / 0.678 / 0.701 (was 0.630 / 0.650 / 0.666 / 0.696), the season model at
-    season end 0.715-0.723 (was 0.701-0.710); to date vs last season +0.070 (t +8.6, 29 of 32). Queued on 3.5 right
+    season end 0.715-0.723 (was 0.701-0.710); to date vs last season +0.070 (t +8.6 over 29 of 32 cohort-weeks; t +6.0 by cohort, 8 of 8). Queued on 3.5 right
     after Tuesday's refresh (`seam_35_is5`, then `tabpfn35_is5` on the day's harness baseline). The production
     in-season model took the five groups the same day (item 39).
 
@@ -1951,9 +1966,13 @@ t = 1.45) stays a tie.
     season, top 150 by projected PAR, no market in the player set -- and the per cohort x week table is kept in
     `_cache/inseason_backtests/<tag>.parquet` even with `--no-write`. The raw-points scores on KTC-priced players stay as
     the secondary (the market benchmark's set). **The five in-season groups re-checked on it (trees, cohorts 2021-24,
-    weeks 3 / 6 / 9 / 13):** next-season PAR ordering +0.022 (11 of 16, t +2.33), rest of season +0.019 (11 of 16, t
-    +3.03), PAR error lower on both (t +1.28 / +1.57). The adoption stands; the 3.5 re-check on PAR is queued after the
-    main chain. Market-informed INPUTS (consensus projections, ADP) still predict real outcomes; what to watch is the
+    weeks 3 / 6 / 9 / 13):** next-season PAR ordering +0.022 (11 of 16, t +2.33 over cohort-weeks; **t +1.51, 3 of 4
+    with the cohort as the unit -- not established**), rest of season +0.019 (11 of 16, t +3.03; **t +5.46, 4 of 4 by
+    cohort**), PAR error lower on both (t +1.28 / +1.57). The adoption stands on the rest-of-season gain alone (review
+    2026-10-13, item 55). **The 3.5 re-check on PAR (`par35_all5` vs `par35_base`, 2026-10-13):** rest of season +0.030
+    (15 of 16, t +4.8 over cohort-weeks, +7.0 by cohort, 4 of 4), next season +0.009 (t +0.9 over cohort-weeks, +2.4
+    over the four cohorts -- p ≈ 0.1, not established), next-season PAR error 0.18 worse; against the market on
+    PAR the model is behind KTC at weeks 3-6 next season (0.530 / 0.552 vs 0.558 / 0.575) and ahead from week 9. Market-informed INPUTS (consensus projections, ADP) still predict real outcomes; what to watch is the
     edge over KTC -- the more the model borrows from the market, the smaller the gaps the swap test trades on.
     **Are we beating KTC and the provider projections? (owner, 2026-10-12).** On raw points (the old scoring, the
     production 3.5 model with the five groups, KTC-priced players) it looked decisive: rest of season 0.82 / 0.79 / 0.77
@@ -1982,7 +2001,9 @@ t = 1.45) stays a tie.
     the games gap for the injured remains (8.9 projected vs 11.7 played). The benchmarks now carry the injured split
     (`next|parb_injured_model` / `_ktc`); 3.5 runs it tonight (`par35_all5_inj` in the gap). Next lever: the games model
     for players hurt now, conditioned on the injury class and his quality (the population's injured include the fringe
-    players who never return; the priced ones mostly do).
+    players who never return; the priced ones mostly do). **3.5 verdict (`par35_all5_inj` vs `par35_all5`, 2026-10-13):
+    `injury_now` HURTS the injured on 3.5 -- `next|parb_injured_model` 0.496 -> 0.484, t −3.0, worse in 10 of 11
+    cohort-weeks -- the opposite of the trees. It is not in the production preset and stays out (review, item 55).**
 
 54. **The sweep (owner, 2026-10-13: "using opus 5.5 has maybe left some bugs ... do a sweep").** Two days, 42 commits,
     3,688 lines since PR #36. Every suite green (ML 226, DE 403, analysis 26), every module byte-compiles, the page's
@@ -2015,3 +2036,36 @@ t = 1.45) stays a tie.
     the gate for any change to the production path. **Reviewer notes kept, no change:** the `adp` / `adp_next` career
     groups are August information on a February as-of point (not in production); a refresh fails at the export if the
     pinned `market_run_date` summary is missing from the bucket (it is there).
+
+55. **The adversarial review (owner, 2026-10-13: "do an adversarial review of our code AND model. There should be
+    history about the decisions we made, but that doesn't mean they were all good or sound ML and stats decisions").**
+    Five read-only reads (the engineer's statistics check and four reviewers briefed to disagree), nothing trained, every
+    number from saved artifacts; the ranked review with sources is **`docs/MODEL_REVIEW_2026-10-13.md`**. What it
+    corrects in this journal: the unit of evidence is the cohort, never the cohort-week (item 51's t +6.92 is +3.99 by
+    cohort, 7 of 8; its PAR error +5.91 is +3.51; item 52's next-season +0.022 is t +1.51 by cohort and is withdrawn,
+    the rest-of-season gain t +5.46 stands); the Status header's "3.5 over the trees, 0.474 vs 0.515, t 7.3" was the
+    regime pair item 22 itself voided (valid: error 0.502 vs 0.530, t +4.79, 8 of 8; ordering 0.621 vs 0.593, t +2.56);
+    items 22 and 44 narrate the bias sign backwards (bias = realized − projected: the residual target UNDER-projects last
+    year's stars by 9 points a season, the blend by 4, the level target is unbiased) and the blend's MAE gain is
+    shrinkage on a zero-inflated target, to be re-judged under a level metric; `injury_now` on 3.5 hurts the injured
+    (next|parb_injured 0.496 -> 0.484, t −3.0, 10 of 11) and stays out of the preset. What it found: the Cloud Run job
+    `ml-weekly-refresh` writes a trees `base,career` payload into the production store every Tuesday 15:00 UTC (it ran
+    today at 11:05) and the trees smoke wrote `inseason/…/run_date=2026-10-13` because `--no-write` did not cover
+    `--current` (fixed) — if the GPU run fails, the trees payload is the latest; rostered players with no game this
+    season have no row anywhere (Josh Jacobs, Charbonnet, Higgins, Richardson, every devy QB: 24-40 per league, 86
+    priced pairs); the injury group fills 2002-2008 as "never listed" (24 % of training rows); Travis Hunter (listed CB)
+    and the fullbacks are filtered out of the week fact; the status fact stamps the rest of 2026 `not_rostered`; two
+    replacement lines and two spreads on one page; the page's "+14.4 ranks better" is mostly regression to the mean (a
+    pure-noise model scores +10 on that construction; net of the regression line +11.1 / −6.8, the model 1.6 ranks
+    closer to the outcome than KTC on the disagreed players — `market_backtest.score` now carries `cheap_net` /
+    `cheap_closer`), the swap headline is raw points across positions (+0.46 wins vs the +0.78 the model promised, +0.38
+    on the 37 swaps sharing no player, −480 KTC of resale on the bought side), the in-season card was the 2026-10-01
+    trees model against a dynasty price (fair: +0.03-0.05 over the provider on the rest of the season; next season on
+    PAR is behind KTC at weeks 3-6), "0.697 vs 0.675" is a tie (95 % interval −0.02 to +0.06), "the market is never an
+    input" is false for the in-season model since the five groups; the dominant systematic error is an age gradient
+    (realized / priced under-25s 1.22, 29+ 0.93, rookies 2.3-3.5 at T+2 / T+3; the joint pricing of item 47 would push
+    29+ to 0.80). Done today: `--no-write` covers `--current`; the net mispricing scores with tests; `scripts/cohort_t.py`;
+    two rules in the ML guide; the page's tiles, words and caveats; this header. Tonight after the chain: the exports
+    refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
+    PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
+    pricing waits for an age gate; the 10 % default) are in the document's last section.

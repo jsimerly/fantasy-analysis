@@ -195,7 +195,7 @@ def main() -> None:
     ap.add_argument("--no-tail-cache", action="store_true", help="recompute the career tail even when _cache/career_tail has it for this key (the --current run and every backtest cohort)")
     ap.add_argument("--quantile-grid", action="store_true", help="--current: the 20-point outcome grid (plus the 20/50/80 band) from the career tail and the in-season model (BACKLOG 47)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
-    ap.add_argument("--no-write", action="store_true", help="do not persist the backtest summary to the ML bucket")
+    ap.add_argument("--no-write", action="store_true", help="nothing reaches the ML bucket: neither the backtest summary nor the --current projections and metrics (the smoke)")
     ap.add_argument("--tag", default=None, help="name of the per cohort x week table kept in _cache/inseason_backtests (default: a timestamp)")
     ap.add_argument("--career-todate", action="store_true",
                     help="--current: the career seasons (T+2 on) projected from this season's to-date rows instead of the last complete season (BACKLOG 51)")
@@ -330,6 +330,9 @@ def main() -> None:
             print("\nBiggest movers since preseason in the model's own ranking (moved_up = preseason IV rank - in-season IV rank):")
             print(movers.sort("moved_up", descending=True).select(show).head(10)); print(movers.sort("moved_up").select(show).head(10))
         run = args.run_date or datetime.now(timezone.utc).date().isoformat()
+        if args.no_write:                   # the smoke (machine_learning/CLAUDE.md): nothing reaches the ML bucket (review 2026-10-13:
+            print(f"\n--no-write: the {backend_tag} run for season {cur} week {w_now} (run_date={run}) stays local; nothing written")
+            return                          # the trees smoke had written inseason/.../run_date=<today> next to the production run)
         p = gcs_io.write_ml_parquet(snap.join(cmp.select("player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank"), on="player_id", how="left")
                                     .with_columns(pl.lit(backend_tag).alias("career_backend")),
                                     "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "projections.parquet")

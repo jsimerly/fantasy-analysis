@@ -103,6 +103,14 @@ def priced_frame(frames: list[pl.DataFrame]) -> pl.DataFrame:
         exp_band(pl.col("exp_at_season").fill_null(0)).alias("exp_band"),
         tier(pl.col("ktc_rank")).alias("tier"),
     )
+    # net of regression to the mean (review 2026-10-13): "cheap" is selected on ktc_rank - model_rank, so the raw gap_real is
+    # positive for ANY model that disagrees with the market (a pure-noise model scores about +10 on 90-160 players). net_real
+    # is the finish against the within-cohort line E[real_rank | ktc_rank] (+ = better than regression to the mean alone
+    # predicts; zero under no skill); closer is how many ranks nearer the outcome the model's rank sat than KTC's
+    k, r = pl.col("ktc_rank"), pl.col("real_rank")
+    slope = ((k * r).mean().over(BY) - k.mean().over(BY) * r.mean().over(BY)) / (k.var(ddof=0).over(BY) + 1e-9)
+    line = r.mean().over(BY) + slope * (k - k.mean().over(BY))
+    df = df.with_columns((line - r).alias("net_real"), ((r - k).abs() - (r - pl.col("model_rank")).abs()).alias("closer"))
     third = (pl.col("n_cohort") // 3).cast(pl.Int64)
     gap_rank = pl.col("gap_model").rank(descending=True, method="ordinal").over(BY)
     return df.with_columns(
@@ -130,6 +138,9 @@ def score(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
             "edge_corr": _sp(g["gap_model"], g["gap_real"]),
             "cheap_n": cheap.height, "cheap_gap_real": float(cheap["gap_real"].mean()) if cheap.height else None,
             "rich_n": rich.height, "rich_gap_real": float(rich["gap_real"].mean()) if rich.height else None,
+            # the honest versions of the two above (zero under no skill; see priced_frame)
+            "cheap_net": float(cheap["net_real"].mean()) if cheap.height else None, "rich_net": float(rich["net_real"].mean()) if rich.height else None,
+            "cheap_closer": float(cheap["closer"].mean()) if cheap.height else None, "rich_closer": float(rich["closer"].mean()) if rich.height else None,
             "cheap_wins_per_1k": per_k(cheap), "rich_wins_per_1k": per_k(rich), "all_wins_per_1k": per_k(g),
             "model_mae": float((g["realized_war"] - g["war"]).abs().mean()), "model_bias": float((g["realized_war"] - g["war"]).mean()),
         })
