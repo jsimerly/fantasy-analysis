@@ -38,6 +38,7 @@ import league as lg  # noqa: E402
 import lineup  # noqa: E402
 import market  # noqa: E402
 import replacement as _rep  # noqa: E402
+import runs  # noqa: E402
 import scoring  # noqa: E402
 import value  # noqa: E402
 import war  # noqa: E402
@@ -276,11 +277,14 @@ def main() -> None:
     ap.add_argument("--replacement", choices=["weekly", "fill"], default="weekly",
                     help="replacement line: weekly = the marginal starter among players who actually played each week (injuries, byes); fill = full-season fill")
     ap.add_argument("--dump", help="also write each league's projections / teams parquet to this local directory (for comparisons)")
+    ap.add_argument("--require-backend", default=runs.PRODUCTION_BACKEND,
+                    help="refuse a run whose stamped models do not start with this (default: the production one); 'any' for a smoke or an explicitly non-production run")
     args = ap.parse_args()
 
     if args.source == "inseason" and (args.season is None or args.week is None):
         ap.error("--season/--week required for --source inseason")
     career_meta, career_run = run_meta(args)
+    runs.check_backend(career_meta, args.require_backend, "build_war")       # a trees run under a production run date is refused (review 2026-10-13)
     sigma = sigma_from_career_meta(career_meta)
     if args.source == "career":
         proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}", "projections.parquet")

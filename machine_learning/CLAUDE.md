@@ -18,7 +18,9 @@ file is the working guide for this folder; [README.md](README.md) has the longer
   `weekly_refresh.py` itself on the trees against the ML bucket:** its `build_war` / `export` steps write `war/` and
   `pages/` at today's run date, and a trees payload at the latest run date is what the exports pick up when the GPU run
   fails (the Cloud Run job `ml-weekly-refresh` does exactly this every Tuesday 15:00 UTC until it is paused — review
-  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`).
+  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`). `build_war` and `export_projections` refuse a run whose stamped
+  models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its
+  own backends are not production, so a trees refresh must say so).
 - **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
   players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
   +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)

@@ -2069,7 +2069,13 @@ t = 1.45) stays a tie.
     from Sleeper's `fantasy_positions` (Hunter and the fullbacks come in), the status grid capped at the latest observed
     week, the pinned scoring lineage, and three quality checks (latest week complete against the schedule, injury-report
     rows per season, no status rows past production) with replay tests -- the facts rebuild on the first daily run
-    after the merge. Tonight after the chain: the exports
+    after the merge. On the model side, on `feat/review-ml-queue` (the running chain imports these modules; it merges
+    when the chain ends): players with a career tail and no game yet this season get a zero-game snapshot carrying the
+    preseason projection (`inseason.no_game_snapshots`: rest of season pro-rated, zero on reserve now, next season h2),
+    rostered players with no projection at all keep a row on their roster with no wins and the KTC value by name
+    (`build_war.placeholder_rows`; smoked on the 2026-10-12 run: 27 / 35 / 41 per league, 24 / 34 / 34 priced), the
+    injury group's coverage floor is per source (reserve lists from 2002, the report from 2009), and the `iv` column
+    prices next season with the second-year spread as the WAR column does. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
     PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
     pricing waits for an age gate; the 10 % default) are in the document's last section.

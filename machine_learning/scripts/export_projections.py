@@ -32,6 +32,7 @@ import career  # noqa: E402
 import gcs_io  # noqa: E402
 import market  # noqa: E402
 import picks  # noqa: E402
+import runs  # noqa: E402
 import value  # noqa: E402
 
 
@@ -154,6 +155,8 @@ def main() -> None:
     ap.add_argument("--as-of-season", type=int, default=2025, help="career run (replacement level; the data for --source career)")
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--require-backend", default=runs.PRODUCTION_BACKEND,
+                    help="refuse a run whose stamped models do not start with this (default: the production one); 'any' for a smoke or an explicitly non-production run")
     ap.add_argument("--market-run-date", default=None, help="which backtests/market/run_date=<d> summary the performance tab shows (default: the newest)")
     args = ap.parse_args()
 
@@ -170,6 +173,7 @@ def main() -> None:
         if career_run != args.run_date:
             print(f"career build for run_date {args.run_date} not found; using {career_run}", flush=True)
         meta = gcs_io.read_ml_json(*career_base, "metrics.json")
+    runs.check_backend(meta, args.require_backend, "export_projections")    # a trees run under a production run date is refused (review 2026-10-13)
     rate = meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2))
     fc = fantasycalc_values()
     rd = redraft_values()

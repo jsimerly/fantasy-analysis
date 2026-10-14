@@ -106,13 +106,19 @@ def main() -> None:
     py = sys.executable
     season, week = current_season_week()
     print(f"season {season} through week {week}; run date {args.run_date}", flush=True)
+    # the exports refuse a run whose models are not the production ones (review 2026-10-13: a trees payload landed in the
+    # production store twice); a refresh that is explicitly not production (the trees, a smoke, the cloud job) says so
+    production = args.backend == "tabpfn" and args.inseason_backend == "tabpfn"
+    require = [] if production else ["--require-backend", "any"]
+    if not production:
+        print(f"not a production run (backend {args.backend}, in-season {args.inseason_backend}): the exports take any backend", flush=True)
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
             + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []), args.dry_run)
+             "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + require, args.dry_run)
     if "analysis" not in args.skip:
         # the page's Draft slots and Trades tabs come from these summaries (latest run in the ML bucket);
         # rebuilt here so they carry the lake's newest standings and transactions. Best-effort: a failure
@@ -129,7 +135,7 @@ def main() -> None:
     if "export" not in args.skip:
         out = ROOT / "projections.json"
         run([py, "scripts/export_projections.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--out", str(out)] + (["--market-run-date", args.market_run_date] if args.market_run_date else []), args.dry_run)
+             "--run-date", args.run_date, "--out", str(out)] + (["--market-run-date", args.market_run_date] if args.market_run_date else []) + require, args.dry_run)
         if not args.dry_run:
             p = gcs_io.write_ml_json(__import__("json").loads(out.read_text(encoding="utf-8")),
                                      "pages", f"season={season}", f"week={week}", f"run_date={args.run_date}", "projections.json")
