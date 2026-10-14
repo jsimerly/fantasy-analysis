@@ -2065,7 +2065,11 @@ t = 1.45) stays a tie.
     input" is false for the in-season model since the five groups; the dominant systematic error is an age gradient
     (realized / priced under-25s 1.22, 29+ 0.93, rookies 2.3-3.5 at T+2 / T+3; the joint pricing of item 47 would push
     29+ to 0.80). Done today: `--no-write` covers `--current`; the net mispricing scores with tests; `scripts/cohort_t.py`;
-    two rules in the ML guide; the page's tiles, words and caveats; this header. Tonight after the chain: the exports
+    two rules in the ML guide; the page's tiles, words and caveats; this header; on the data side the fantasy position
+    from Sleeper's `fantasy_positions` (Hunter and the fullbacks come in), the status grid capped at the latest observed
+    week, the pinned scoring lineage, and three quality checks (latest week complete against the schedule, injury-report
+    rows per season, no status rows past production) with replay tests -- the facts rebuild on the first daily run
+    after the merge. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
     PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
     pricing waits for an age gate; the 10 % default) are in the document's last section.

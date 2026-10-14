@@ -72,6 +72,13 @@ class TestResolveScoring:
         assert cfg["league_lineage_id"] == "L1" and cfg["league_id"] == "b"
         assert "sack" not in cfg["scoring"] and cfg["unmodeled_keys"] == []
 
+    def test_pinned_lineage_wins_over_the_lineage_with_more_rows(self):
+        """review 2026-10-13 (D10): a fourth league or a settings restatement must not silently re-score the fact."""
+        s = self._settings()
+        pinned = s.filter(pl.col("league_id") == "c").with_columns(pl.lit("d").alias("league_id"), pl.lit(fpw.PRIMARY_LINEAGE_ID).alias("league_lineage_id"))
+        cfg = fpw.resolve_league_scoring(pl.concat([s, pinned]))          # L1 has two current rows, the pinned lineage one
+        assert cfg["league_lineage_id"] == fpw.PRIMARY_LINEAGE_ID and cfg["league_id"] == "d" and cfg["scoring"]["rec"] == 1.0
+
 
 class TestTeamDates:
     def test_game_date_for_home_and_away_reg_only(self):
@@ -110,6 +117,41 @@ class TestBuild:
         assert abs(r1["fpts"] - (10 + 6 + 1.5)) < 1e-9     # 100*.1 + 1*6 + 3*.5
         assert r1["game_date"] == date(2023, 9, 10)
         assert abs(r1["age_at_season"] - 24.0) < 0.05 and r1["is_rookie"] is True
+
+
+class TestFantasyPosition:
+    """review 2026-10-13 (D6): nflverse lists a two-way player at his defensive spot (Travis Hunter: CB) and fullbacks as
+    FB, so the position filter dropped every one of their rows. The fantasy position is Sleeper's (dim_player_master)
+    when it is a skill position, else nflverse's with FB -> RB."""
+
+    def _weeks(self):
+        return _weeks([{"player_id": "hunter", "position": "CB", "receptions": 5, "receiving_yards": 60},
+                       {"player_id": "juice", "position": "FB", "receptions": 2, "receiving_yards": 27},
+                       {"player_id": "corner", "position": "CB", "receptions": 1, "receiving_yards": 8},    # a trick-play catch: stays out
+                       {"player_id": "rb1", "position": "RB", "rushing_yards": 80}])
+
+    def test_sleeper_position_wins_then_nflverse_with_fb_folded_into_rb(self):
+        # Sleeper lists Hunter at DB with fantasy positions "DB/WR": the first skill position among them is his
+        fp = pl.DataFrame({"gsis_id": ["hunter", "corner", "rb1"], "position": ["DB", "DB", "RB"], "fantasy_positions": ["DB/WR", "DB", "RB"]})
+        out = fpw.filter_offense_weeks(self._weeks(), fp)
+        got = dict(zip(out["player_id"].to_list(), out["position"].to_list()))
+        assert got == {"hunter": "WR", "juice": "RB", "rb1": "RB"}         # Hunter in as WR, the fullback as RB, the corner out
+        # the dim without the fantasy_positions column: the primary position alone decides
+        out = fpw.filter_offense_weeks(self._weeks(), pl.DataFrame({"gsis_id": ["hunter", "rb1"], "position": ["WR", "RB"]}))
+        assert dict(zip(out["player_id"].to_list(), out["position"].to_list())) == {"hunter": "WR", "juice": "RB", "rb1": "RB"}
+
+    def test_without_the_dim_only_the_fb_alias_applies(self):
+        out = fpw.filter_offense_weeks(self._weeks(), None)
+        assert dict(zip(out["player_id"].to_list(), out["position"].to_list())) == {"juice": "RB", "rb1": "RB"}
+
+    def test_build_scores_the_resolved_position(self):
+        weeks = self._weeks()
+        sched = pl.DataFrame({"season": [2023], "game_type": ["REG"], "week": [1], "gameday": ["2023-09-10"], "home_team": ["KC"], "away_team": ["DET"]})
+        bio = pl.DataFrame({"gsis_id": ["hunter"], "birth_date": ["2003-05-18"], "draft_round": [1], "draft_pick": [2], "rookie_season": [2025], "college_name": ["Colorado"]})
+        fp = pl.DataFrame({"gsis_id": ["hunter"], "position": ["WR"]})
+        out = fpw.build_fact_player_week(weeks, sched, bio, {"rec": 0.5, "rec_yd": 0.1, "bonus_rec_te": 0.5}, fantasy_positions=fp)
+        h = out.filter(pl.col("player_id") == "hunter").to_dicts()[0]
+        assert h["position"] == "WR" and abs(h["fpts"] - 8.5) < 1e-9        # 5 x 0.5 + 60 x 0.1, no TE bonus
 
 
 class TestDuplicateWeeks:

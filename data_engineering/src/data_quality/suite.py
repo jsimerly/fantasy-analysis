@@ -528,6 +528,58 @@ def injury_keeps_up(ctx):
     return _keeps_up(ctx, "fact_player_injury_week", 1)
 
 
+@check("fact.player_week.latest_week_complete", "fact_player_week", "error",
+       "a partially loaded latest week (the nflverse job landing before Monday night's stats) reads as games missed: td_missed + 1, "
+       "a short rest of season and a played=False status week for every player in the late game (review 2026-10-13, D12)")
+def fpw_latest_week_complete(ctx):
+    if ctx.nfl_phase() not in ("regular", "playoffs"):
+        return x.ok("offseason: not enforced")
+    season = ctx.nfl_season()
+    fpw = ctx.table("fact_player_week").filter(pl.col("season") == season)
+    if fpw.height == 0:
+        return x.ok("no current-season production yet")
+    wk = int(fpw["week"].max())
+    blob = f"bronze/nflverse/schedules/season={season}/data.parquet"
+    if not ctx.has(blob):
+        return x.ok(f"no schedules partition for {season}: not checked")
+    sched = ctx.blob(blob).filter((pl.col("game_type") == "REG") & (pl.col("week").cast(pl.Int64) == wk))
+    played = sched.filter(pl.col("gameday").cast(pl.Utf8).str.slice(0, 10).str.to_date(strict=False) <= ctx.today)
+    expected, observed = 2 * played.height, int(fpw.filter(pl.col("week") == wk)["team"].n_unique())
+    msg = f"week {wk}: {observed} teams with a stat line, {expected} expected from the {played.height} games played by {ctx.today}"
+    return x.ok(msg, observed) if observed >= expected else x.fail(msg, observed)
+
+
+@check("fact.player_injury_week.report_rows_per_season", "fact_player_injury_week", "warn",
+       "the injury report starts in 2009 while the fact carries reserve-only rows from 2002; the model's injury group once filled "
+       "2002-2008 as 'never listed' from the fact's first season (24 % of its training rows; review 2026-10-13, D5)")
+def injury_report_rows_per_season(ctx):
+    t = ctx.table("fact_player_injury_week")
+    if "on_injury_report" not in t.columns:
+        return x.fail("on_injury_report column missing")
+    per = t.group_by("season").agg(pl.col("on_injury_report").fill_null(False).sum().alias("n_report")).sort("season")
+    rows = [(int(s), int(n)) for s, n in per.select("season", "n_report").iter_rows()]
+    missing = [s for s, n in rows if s >= 2009 and n == 0]
+    early = [s for s, n in rows if s < 2009 and n > 0]
+    with_report = [s for s, n in rows if n > 0]
+    msg = f"seasons {rows[0][0]}-{rows[-1][0]}, report rows from {min(with_report) if with_report else None}"
+    if missing or early:
+        return x.fail(msg + f"; seasons from 2009 without report rows {missing}; report rows before 2009 {early}", len(missing) + len(early))
+    return x.ok(msg, 0)
+
+
+@check("fact.player_week_status.no_rows_past_production", "fact_player_week_status", "warn",
+       "the status grid once ran to the schedule's last week in an in-progress season, stamping every unplayed week not_rostered "
+       "(11,414 rows of 2026 on 2026-10-13; review D7); it must end at production's latest week")
+def status_no_rows_past_production(ctx):
+    wk = _current_week(ctx)
+    if wk is None:
+        return x.ok("no current-season production yet")
+    t = ctx.table("fact_player_week_status").filter(pl.col("season") == ctx.nfl_season())
+    mx = None if t.height == 0 else int(t["week"].max())
+    msg = f"status grid to week {mx}, production at week {wk}"
+    return x.ok(msg, mx or 0) if mx is None or mx <= wk else x.fail(msg, mx)
+
+
 @check("fact.depth_chart_week.keeps_up", "fact_depth_chart_week", "warn", "depth charts feed the situation group")
 def depth_keeps_up(ctx):
     return _keeps_up(ctx, "fact_depth_chart_week", 1)

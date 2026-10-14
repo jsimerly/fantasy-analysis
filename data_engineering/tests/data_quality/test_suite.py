@@ -76,11 +76,19 @@ def healthy() -> tuple[dict, dict]:
     for lg, _, _ in LEAGUES:
         frames[f"bronze/sleeper/transactions/transactions/daily/league_id={lg}/data.parquet"] = pl.DataFrame({"created": [int(datetime(2026, 10, 5).timestamp() * 1000)]})
     # production facts
-    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5, "season": [2026] * 5, "week": [1, 2, 3, 4, 5], "game_date": [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)]})
+    game_dates = [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)]
+    # two players on the two teams of each week's one scheduled game: the latest week is complete when both teams have a stat line
+    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5 + ["p2"] * 5, "season": [2026] * 10, "week": [1, 2, 3, 4, 5] * 2,
+                                               "team": ["KC"] * 5 + ["BUF"] * 5, "game_date": game_dates * 2})
+    frames["bronze/nflverse/schedules/season=2026/data.parquet"] = pl.DataFrame({"season": [2026] * 5, "game_type": ["REG"] * 5, "week": [1, 2, 3, 4, 5],
+                                                                                 "gameday": [d.isoformat() for d in game_dates], "home_team": ["KC"] * 5, "away_team": ["BUF"] * 5})
     frames["fact_player_season"] = pl.DataFrame({"player_id": ["p1", "p1"], "season": [2025, 2026], "games": [17, 5], "fpts": [170.0, 50.0], "ppg": [10.0, 10.0],
                                                  "scored_under_league_id": ["L", "L"], "season_complete": [True, False]})
     for t in ("fact_player_week_status", "fact_player_injury_week", "fact_depth_chart_week", "fact_team_week_strength"):
-        frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13})
+        frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13,
+                                  "on_injury_report": [True] * 18})
+    # the status grid ends at production's latest week (review 2026-10-13, D7), not the schedule's
+    frames["fact_player_week_status"] = frames["fact_player_week_status"].filter(pl.col("week") <= 5)
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
     frames["fact_player_contract_season"] = pl.DataFrame({"season": [2026] * 1600, "gsis_id": [str(i) for i in range(1600)]})
     frames["fact_college_player_season"] = pl.DataFrame({"season": [2023, 2024, 2024, 2025], "cfbd_id": ["a", "a", "b", "b"], "class_year": [1, 2, 3, 4]})
@@ -242,6 +250,23 @@ def test_production_facts_keep_up_and_stay_consistent():
     assert "fact.player_season.ppg_consistent" in failed(run(frames, parts, only="player_season"))
     frames["fact_player_week"] = frames["fact_player_week"].filter(pl.col("week") <= 2)   # production two weeks behind
     assert "fact.player_week.current_week_present" in failed(run(frames, parts, only="player_week"))
+
+
+def test_the_review_checks_catch_a_partial_week_a_report_gap_and_a_grid_past_production():
+    """review 2026-10-13 (D5, D7, D12): a latest week missing Monday night's teams, a season from 2009 with no injury-report
+    rows (or report rows before 2009), and a status grid running past production's latest week."""
+    frames, parts = healthy()
+    frames["fact_player_week"] = frames["fact_player_week"].filter(~((pl.col("player_id") == "p2") & (pl.col("week") == 5)))   # BUF's stats not in yet
+    assert "fact.player_week.latest_week_complete" in failed(run(frames, parts, only="latest_week"))
+    frames, parts = healthy()
+    frames["fact_player_injury_week"] = pl.DataFrame({"season": [2005, 2005, 2026, 2026], "week": [1, 2, 1, 2], "on_injury_report": [True, False, False, False]})
+    f = failed(run(frames, parts, only="report_rows"))
+    assert "fact.player_injury_week.report_rows_per_season" in f
+    s = str(f["fact.player_injury_week.report_rows_per_season"])
+    assert "[2026]" in s and "[2005]" in s                  # the season without report rows, and the pre-2009 season with them
+    frames, parts = healthy()
+    frames["fact_player_week_status"] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13})   # the old grid: to the schedule's week 18
+    assert "fact.player_week_status.no_rows_past_production" in failed(run(frames, parts, only="past_production"))
 
 
 def test_a_crashing_check_is_a_failed_row_not_a_crashed_run():

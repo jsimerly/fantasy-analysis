@@ -285,14 +285,14 @@ with the per-player band, so the dict matters for the in-season spans and the fa
 | D2 | `ml-weekly-refresh` (Cloud Run, Tuesdays 15:00 UTC) writes a trees `base,career` payload at the latest run date | `.github/workflows/deploy-machine-learning.yaml`, the scheduler | OWNER: pause, or run it `--dry-run` |
 | D3 | `build_war` / `export_projections` take the latest run whatever its backend | both scripts | TONIGHT: refuse a non-production backend unless `--allow-backend` |
 | D4 | Players with no game this season have no row (`to_date_features` emits only players with a stat line): no projection, no roster slot, unpriceable | `inseason.py`, `build_war.py` | QUEUED first: a zero-game snapshot per rostered / tailed player carrying the preseason career h1/h2 (pro-rated, zero on IR), `tail_origin="preseason"`; a check that every rostered skill player is in `teams.parquet` |
-| D5 | The injury group fills "never on the report" for 2002-2008 (the fact has reserve-only rows from 2002, the report from 2009): 3,646 of 15,267 training rows | `feature_groups.py` `_coverage_fill` | QUEUED: a floor per source; a DQ check (report rows in every season ≥ 2009, none before); a replay test |
-| D6 | The position filter drops offensive production by players nflverse lists at CB / FB: Travis Hunter has no rows at all, Juszczyk's receiving is gone | `fact_player_week.py` | QUEUED (DE; the lake rebuild is OWNER): fantasy position from the id bridge / Sleeper, FB → RB, keep any row with an offensive stat |
-| D7 | `fact_player_week_status` stamps weeks 6-18 of 2026 `not_rostered` (11,414 rows); the career `weekly` group would read every 2026 player as cut for 13 weeks | `fact_player_week_status.py` | QUEUED (DE): cap the grid at the latest week with a roster or stat row; a DQ check |
+| D5 | The injury group fills "never on the report" for 2002-2008 (the fact has reserve-only rows from 2002, the report from 2009): 3,646 of 15,267 training rows | `feature_groups.py` `_coverage_fill` | QUEUED: a floor per source with a replay test (a feature change: after the running chain). FIXED: the quality check `fact.player_injury_week.report_rows_per_season` |
+| D6 | The position filter drops offensive production by players nflverse lists at CB / FB: Travis Hunter has no rows at all, Juszczyk's receiving is gone | `fact_player_week.py` | FIXED (code, tests): the fantasy position is Sleeper's — the primary position, else the first skill position among the positions he may fill (`dim_players_master.fantasy_positions`, "DB/WR" for Hunter) — and only then nflverse's with FB → RB; the facts rebuild on the first daily run after the merge |
+| D7 | `fact_player_week_status` stamps weeks 6-18 of 2026 `not_rostered` (11,414 rows); the career `weekly` group would read every 2026 player as cut for 13 weeks | `fact_player_week_status.py` | FIXED (code, tests): the grid ends at the latest week any roster row or stat line carries; the quality check `fact.player_week_status.no_rows_past_production` |
 | D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | QUEUED: export only the per-league lines |
 | D9 | The export and the page key players by name (34 same-name pairs in the fact; none among today's 496, so latent) | `export_projections.py`, the page | QUEUED: key by `player_id` |
-| D10 | The scoring league is "the lineage with the most settings rows"; a fourth league would silently re-score the fact | `fact_player_week.py` | QUEUED: pin the lineage |
+| D10 | The scoring league is "the lineage with the most settings rows"; a fourth league would silently re-score the fact | `fact_player_week.py` | FIXED (code, test): the pinned lineage `PRIMARY_LINEAGE_ID`, the same pin as the model's replacement line; the most-rows rule only as a loud fallback |
 | D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | QUEUED |
-| D12 | A partially loaded latest week reads as missed games (freshness is checked, completeness is not) | `data_quality/suite.py` | QUEUED: teams with a stat line in the latest week == 2 × games scheduled |
+| D12 | A partially loaded latest week reads as missed games (freshness is checked, completeness is not) | `data_quality/suite.py` | FIXED (check, replay test): `fact.player_week.latest_week_complete` — teams with a stat line in the latest week against 2 × the games played by today in the season's schedule partition |
 | D13 | Base features left-censored at 1999 (`career_seasons = 1, exp = 10`); `lag1_*` null for both "sat out" and "before 1999" | `career.py` | QUEUED (minor): a `career_censored` flag |
 
 ---
@@ -327,17 +327,22 @@ with the per-player band, so the dict matters for the in-season spans and the fa
 "closer" mispricing scores with tests; `scripts/cohort_t.py`; the ML guide's two rules (the smoke writes nothing and
 never runs the refresh on the trees against the bucket; the unit of evidence is the cohort); the page's performance
 tiles, words and caveats; the picks label and the payload-driven copy; the leaderboard filter; BACKLOG status header
-and items 51-53 corrected, item 55 added; MODEL_PERFORMANCE rewritten with the honest numbers.
+and items 51-53 corrected, item 55 added; MODEL_PERFORMANCE rewritten with the honest numbers. On the data side (the
+GPU refresh never loads it): the fantasy position from Sleeper's `fantasy_positions` (D6, Travis Hunter and the
+fullbacks come in), the status grid capped at the latest observed week (D7), the pinned scoring lineage (D10), and
+three quality checks — the latest week's completeness against the schedule (D12), injury-report rows per season (D5's
+guard), no status rows past production (D7's guard) — each with a replay test; the facts rebuild on the first daily
+run after the merge.
 
 **Tonight, after the GPU refresh and its chain finish (TONIGHT).** `build_war` / `export_projections` refuse a
 non-production backend; the scorecard's head rows; the 2026-10-12 market summary re-scored from its saved frames with
 the new fields; the in-season card rebuilt from the production model's PAR table; the page republished from tonight's
 payload after its `metrics.json` shows the TabPFN backends.
 
-**Queued code changes, no decision needed (QUEUED), in priority order.** D4 (the missing players) → D5 (injury floor +
-DQ) → D8 (one replacement line) → B3 (a level metric in the acceptance rule) → C1's age-band gate → D6 / D7 (DE, the
-rebuild on the go) → C4 (one spread) → D9-D13 → C2 (band widening) → C5 → A6 (re-run the career eval on the production
-model) → A4 (the in-season model through the market test) → B6's consensus snapshot.
+**Queued code changes, no decision needed (QUEUED), in priority order.** D4 (the missing players) → D5 (the injury
+group's floor per source) → D8 (one replacement line) → B3 (a level metric in the acceptance rule) → C1's age-band gate
+→ C4 (one spread) → D9, D11, D13 → C2 (band widening) → C5 → A6 (re-run the career eval on the production model) → A4
+(the in-season model through the market test) → B6's consensus snapshot.
 
 **The owner's calls (OWNER).** (1) Pause `ml-weekly-refresh` or make it a dry run — today it writes a weaker model into
 the production store every Tuesday. (2) Re-pull MFL 2011-2026 at AUG15 (a lake write), then re-screen the preseason
