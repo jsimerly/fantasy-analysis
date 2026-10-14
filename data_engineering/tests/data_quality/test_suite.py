@@ -88,6 +88,11 @@ def healthy() -> tuple[dict, dict]:
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})   # the coming week's projections are in
     for s in range(2010, 2018):                   # FFToday's weekly projections 2010-2017, the consensus before Sleeper (one-time scrape)
         frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
+    # ADP: a preseason partition per source for last season and this one
+    for src, n in (("ffc", 8470), ("mfl", 605)):
+        parts[f"bronze/adp/{src}/"] = [(str(y), f"bronze/adp/{src}/season={y}/data.parquet") for y in (2025, 2026)]
+        for y in (2025, 2026):
+            frames[f"bronze/adp/{src}/season={y}/data.parquet"] = pl.DataFrame({"season": [y], "adp": [1.0], "total_drafts": [n], "end_date": [f"{y}-09-01"]})
     return frames, parts
 
 
@@ -294,3 +299,15 @@ def test_the_college_birth_dates_and_class_years_are_checked():
     r = failed(run(frames, parts, only="college"))
     assert "0% of the 2 matched players have a birth date" in r["dim.college_crosswalk.birth_dates"]["observed"]
     assert "100% of multi-season players have one class year" in r["fact.college_player_season.class_year_varies"]["observed"]
+
+
+def test_the_adp_windows_and_the_coming_season_are_checked():
+    """An ADP partition written from an in-season window (FFC 2026 on 2026-10-12: 109 drafts, Sep 18-25) is flagged, and
+    the season's partition must be there from June."""
+    frames, parts = healthy()
+    assert not failed(run(frames, parts, only="bronze.adp"))
+    frames["bronze/adp/ffc/season=2026/data.parquet"] = pl.DataFrame({"season": [2026], "adp": [1.0], "total_drafts": [109], "end_date": ["2026-09-25"]})
+    f = failed(run(frames, parts, only="bronze.adp"))
+    assert "bronze.adp.windows_are_preseason" in f and "ffc 2026: 109 drafts" in str(f["bronze.adp.windows_are_preseason"])
+    parts["bronze/adp/mfl/"] = [("2025", "bronze/adp/mfl/season=2025/data.parquet")]
+    assert "bronze.adp.coming_season_present" in failed(run(frames, parts, only="bronze.adp"))

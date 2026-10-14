@@ -403,7 +403,7 @@ def injury_now_features(status: pl.DataFrame | None, week: int) -> pl.DataFrame:
                              pl.col("status").is_in(INJURED_STATUSES).alias("_inj"), (pl.col("status") == "played").alias("_pl"))
                .sort("week"))
     last = s.group_by("player_id", "season").agg(pl.col("status").last().alias("_st"), pl.col("roster_status").last().alias("_rs"),
-                                                 pl.col("_inj").reverse().cum_prod().sum().alias("ij_injured_run"),
+                                                 pl.col("_inj").cast(pl.Int8).reverse().cum_prod().sum().alias("ij_injured_run"),
                                                  (pl.lit(week) - pl.col("week").filter(pl.col("_pl")).max()).alias("ij_weeks_since_played"),
                                                  pl.col("injury_class").filter(pl.col("_inj") & pl.col("injury_class").is_not_null()).last().alias("_cls"),
                                                  (pl.col("_inj") & (pl.col("injury_class") == "knee_achilles")).sum().alias("ij_td_knee_achilles_weeks"))
@@ -979,8 +979,9 @@ def joint_excess(df: pl.DataFrame, span: str, rep: dict[str, float], grid: tuple
     g_q = [g * scale for g in g_raw]
     dep = pl.sum_horizontal([a * b for a, b in zip(ex_q, g_q)]) / len(grid)
     ind = (pl.sum_horizontal(ex_q) / len(grid)) * games
-    e = pl.when(games > 0.01).then((coupling * dep + (1 - coupling) * ind) / games).otherwise(0.0)
-    return df.select(e.fill_null(0.0).alias(f"{span}_ppg_excess")).to_series()
+    has_grid = pl.all_horizontal([pl.col(c).is_not_null() for c in pq + gq])
+    e = pl.when(~has_grid).then(None).when(games > 0.01).then((coupling * dep + (1 - coupling) * ind) / games).otherwise(0.0)
+    return df.select(e.alias(f"{span}_ppg_excess")).to_series()            # null where the row has no grid: excess() falls back per row
 
 
 def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int, dict[str, float]] | None) -> pl.DataFrame:
@@ -1050,16 +1051,19 @@ def inseason_value(
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
         pre = mu_col.replace("_ppg_hat", "_ppg_excess")
-        if pre in df.columns and df[pre].null_count() < df.height:
-            return df[pre].fill_null(0.0).to_numpy().astype(float)
+        pre_arr = df[pre].to_numpy().astype(float) if pre in df.columns and df[pre].null_count() < df.height else None
+        if pre_arr is not None and not np.isnan(pre_arr).any():
+            return pre_arr
         own = mu_col.replace("_ppg_hat", "_ppg_sigma")
         if own in df.columns and df[own].null_count() < df.height:
-            return _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
-        if sigma and k in sigma:
+            fb = _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
+        elif sigma and k in sigma:
             s = df["position"].replace_strict({p: v for p, v in sigma[k].items() if p != "__all__"},
                                               default=sigma[k]["__all__"], return_dtype=pl.Float64).to_numpy()
-            return _value.expected_excess(mu, s, rep_arr)
-        return np.maximum(mu - rep_arr, 0.0)
+            fb = _value.expected_excess(mu, s, rep_arr)
+        else:
+            fb = np.maximum(mu - rep_arr, 0.0)
+        return fb if pre_arr is None else np.where(np.isnan(pre_arr), fb, pre_arr)   # a row priced off its grid keeps that; the rest fall back
 
     ros = excess("ros_ppg_hat", 1) * df["ros_games_hat"].to_numpy()
     nxt = excess("next_ppg_hat", 1) * df["next_games_hat"].to_numpy()

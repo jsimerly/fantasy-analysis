@@ -10,6 +10,10 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Reads the lake (`gcs_io.read_lake`) and reads/writes the ML bucket (`gcs_io.read_ml_*` /
   `write_ml_*`). Never writes the lake; never writes local `data/`.
 - Tests: `.venv/Scripts/python.exe -m pytest tests -q` (spec-style, ~5 s, no GCS: fixtures are synthetic).
+- **Before any change that touches the weekly path**, run it end to end on the trees (about a minute, reads the lake,
+  writes nothing): `scripts/backtest_inseason.py --current --no-write --device cpu --backend xgb --inseason-backend xgb`
+  plus the production preset's other flags (`weekly_refresh.py --preset production --dry-run` prints them). The
+  2026-10-13 refresh died four hours in on a column the unit tests never exercised; this smoke would have caught it.
 
 ## What is where
 | Path | What |

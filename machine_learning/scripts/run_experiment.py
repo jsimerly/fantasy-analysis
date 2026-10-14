@@ -80,7 +80,6 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
 
     spec = pool = None
     if "share" != replacement_kind or (realized_replacement and realized_replacement != "share"):
-        import lineup
         spec = lg.LeagueSpec.from_settings(gcs_io.read_lake(SETTINGS_PATH))
         pool = base.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
 

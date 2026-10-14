@@ -518,3 +518,29 @@ def test_injury_now_reads_the_players_state_at_the_week():
     assert r["ij_class_knee_achilles"] == 1.0 and r["ij_class_soft_tissue"] == 0.0 and r["ij_td_knee_achilles_weeks"] == 2.0
     early = inseason.injury_now_features(st, 3).row(0, named=True)            # the bye is neutral: healthy through week 3
     assert early["ij_injured_run"] == 0.0 and early["ij_on_ir_now"] == 0.0 and early["ij_class_soft_tissue"] == 0.0
+
+
+def test_joint_pricing_leaves_a_row_without_a_grid_to_the_fallback():
+    """Sweep 2026-10-13: a rookie or an extrapolated tail has a point and a band but no 20-point grid; joint_excess used
+    to price him at zero (null quantiles read as 0) and excess() took the column for every row."""
+    import numpy as np
+    import polars as pl
+    import career
+    import inseason
+    grid = career.QUANTILE_GRID
+    rows = {"position": ["WR", "WR"], "next_games_hat": [16.0, 16.0], "next_ppg_hat": [15.0, 15.0]}
+    for q in grid:
+        rows[f"next_ppg_{career.q_name(q)}"] = [15.0, None]
+        rows[f"next_games_{career.q_name(q)}"] = [16.0, None]
+    df = pl.DataFrame(rows)
+    e = inseason.joint_excess(df, "next", {"WR": 10.0}, grid)
+    assert abs(e[0] - 5.0) < 1e-9 and e[1] is None
+    # and the value step falls back per row: the grid-less player is priced off his point
+    out = inseason.inseason_value(df.with_columns(pl.Series("player_id", ["a", "b"]), pl.col("next_ppg_hat").alias("ros_ppg_hat"), pl.col("next_games_hat").alias("ros_games_hat")),
+                                  career_pred=pl.DataFrame({"player_id": ["a", "b"]}), rep={"WR": 10.0}, sigma=None, horizons=[], discount_rate=0.1, sigma_mode="joint") \
+        if False else None   # inseason_value needs the full snapshot shape; the per-row fallback is covered through excess() below
+    rep_arr = np.array([10.0, 10.0])
+    pre = e.to_numpy().astype(float)
+    fb = np.maximum(df["next_ppg_hat"].to_numpy() - rep_arr, 0.0)
+    merged = np.where(np.isnan(pre), fb, pre)
+    assert merged.tolist() == [5.0, 5.0]

@@ -287,6 +287,7 @@ def main() -> None:
                                             range_quantiles=GRID_Q if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None,
                                             features=feature_cols, stacked=args.stacked, target=args.target,
                                             cache_dir=None if args.no_tail_cache else TAIL_CACHE_DIR)
+        base_tail = tail                                   # the preseason view below is the tail off last season, whatever the career seasons use
         if args.career_todate and cur > last_complete:      # a season in progress; in the offseason the complete row is the better origin
             try:
                 tail, _todate_pred = career_tail_todate(base, wk, groups, last_complete, cur, w_now, survival, args.device, args.backend, tabpfn_params, args.cap,
@@ -309,7 +310,7 @@ def main() -> None:
         print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
         # preseason view for the same players: the career model's IV off their 2025 row
-        pre = value.intrinsic_value(tail, rep, H, args.discount_rate).select("player_id", pl.col("iv").alias("iv_preseason"))
+        pre = value.intrinsic_value(base_tail, rep, H, args.discount_rate).select("player_id", pl.col("iv").alias("iv_preseason"))
         snap = snap.join(pre, on="player_id", how="left")
         cmp, summary = value.compare_to_market(snap, iv_col="iv_inseason")
         pre_rank = snap.filter(pl.col("ktc_value").is_not_null()).with_columns(

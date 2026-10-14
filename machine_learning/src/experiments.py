@@ -481,6 +481,8 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
             rep = rep_for(T)
             if sigma_mode == "dist":
                 f = distributional_excess(f.drop([c for c in f.columns if c.endswith("_ppg_excess")]), H, rep)
+                if not any(f"h{k}_ppg_excess" in f.columns for k in H):
+                    raise ValueError("sigma_mode 'dist' needs the quantile grid in the saved frames: run the source with --quantile-grid")
             else:
                 f = apply_sigma_mode(f, H, sigma_mode)
             f = value.intrinsic_value(f, rep, H, cfg.discount_rate)

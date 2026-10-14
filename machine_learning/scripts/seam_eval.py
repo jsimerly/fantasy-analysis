@@ -23,6 +23,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")      # the tables use box characters; the Windows console code page is cp1252
 import time
 from pathlib import Path
 

@@ -70,9 +70,9 @@ def scorecard(payload: dict) -> dict:
     mae = ce.get("mae") or []
     r3 = next((r for r in mae if r.get("horizon") == 3), mae[-1] if mae else None)
     if r3:
-        head.append({"key": "career_error", "label": f"Career projection, {r3['horizon']} years ahead: error vs repeating last season", "value": _f(-abs(r3.get("model_%_vs_carry", 0)), 0), "unit": "% error",
-                     "detail": f"−{_f(abs(r3.get('model_%_vs_decay', 0)), 0)}% vs an age-decay curve; {int(r3.get('n_total', 0)):,} player-seasons since {ce.get('start_season')}",
-                     "secondary": _f(-abs(r3.get("model_%_vs_decay", 0)), 0), "run_date": ce.get("run_date")})
+        head.append({"key": "career_error", "label": f"Career projection, {r3['horizon']} years ahead: error vs repeating last season", "value": _f(-abs((r3.get("model_%_vs_carry") or 0)), 0), "unit": "% error",
+                     "detail": f"−{_f(abs((r3.get('model_%_vs_decay') or 0)), 0)}% vs an age-decay curve; {int(r3.get('n_total', 0)):,} player-seasons since {ce.get('start_season')}",
+                     "secondary": _f(-abs((r3.get("model_%_vs_decay") or 0)), 0), "run_date": ce.get("run_date")})
     swaps = sorted([r for r in mk.get("top_swaps") or [] if r.get("gain") is not None], key=lambda r: -r["gain"])
     named = [{"cohort": r["cohort"], "february": r["cohort"] + 1, "sold": r["sell"], "sold_pos": r["sell_pos"], "sold_ktc": r["sell_ktc"], "sold_delivered": _f(r["sell_real"], 2),
               "bought": r["buy"], "bought_pos": r["buy_pos"], "bought_ktc": r["buy_ktc"], "bought_delivered": _f(r["buy_real"], 2), "gain": _f(r["gain"], 2),

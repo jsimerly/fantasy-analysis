@@ -374,7 +374,8 @@ BREAKOUT_PCT = 0.97          # a breakout season: dominator in the top 3 % of th
 
 def college2_per_player(fact: pl.DataFrame, xw: pl.DataFrame, births: pl.DataFrame) -> pl.DataFrame:
     """One row per NFL player (gsis id) with college production read against his position (BACKLOG 50).
-    ``births``: (player_id = gsis id, birth_date) from the NFL season fact -- the crosswalk's own birth dates are empty.
+    ``births``: (player_id = gsis id, birth_date) from the NFL season fact (100 % filled; the crosswalk's were empty until
+    the 2026-10-13 rebuild and are still the thinner source).
     Age in a college season = age on 1 September of that season. Percentiles are within (season, position) over every
     FBS player at the position with a team passing game (team_pass_att > 0)."""
     x = xw.filter(pl.col("gsis_id").is_not_null()).select(pl.col("cfbd_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)).unique("cfbd_id")

@@ -1983,3 +1983,35 @@ t = 1.45) stays a tie.
     (`next|parb_injured_model` / `_ktc`); 3.5 runs it tonight (`par35_all5_inj` in the gap). Next lever: the games model
     for players hurt now, conditioned on the injury class and his quality (the population's injured include the fringe
     players who never return; the priced ones mostly do).
+
+54. **The sweep (owner, 2026-10-13: "using opus 5.5 has maybe left some bugs ... do a sweep").** Two days, 42 commits,
+    3,688 lines since PR #36. Every suite green (ML 226, DE 403, analysis 26), every module byte-compiles, the page's
+    headless checks 0 errors, ruff (F / E9) only unused imports and empty f-strings, nearly all older than the window.
+    Two reviewers read the whole diff. **Found and fixed:**
+    - *Production, would have broken tonight's page:* the merged career tail gave a veteran with a row this season but
+      none last season a null spread, `value.intrinsic_value` priced it NaN, the export wrote the bare token `NaN` and
+      the page's JSON.parse rejects it. The preseason view now comes off last season's tail (its meaning: what the
+      offseason saw), a null spread prices as the point, the export rounds NaN to null and scrubs the payload before
+      the dump (`allow_nan=False`). Caught after the refresh had started: the export step loads the fixed code.
+    - *Production (the morning's crash):* the merged tail had dropped every column but the projections (item 51).
+    - *ADP windows (data):* FFC serves one window per year -- the frozen final preseason week for a past year
+      (2025: 8,470 drafts), the latest in-season window for the current one (2026 on 2026-10-13: 109 drafts, Sep
+      18-25) -- and MFL's `ALL` period keeps growing in season (2025: 856 vs 642 in the August-15 window), so the
+      "preseason" group's current season moved every day and past seasons carried in-season drafts. The job pulls MFL
+      `AUG15`, writes FFC only from a preseason window (the rows carry the window's dates), pulls last season as the
+      canary (a 400 / 404 on the coming season is "not published yet" only when last season answered), and two
+      data-quality checks watch the partitions. The lake still holds the `ALL` pulls: the re-pull of MFL 2011-2026 with
+      AUG15 is the owner's call (it changes the preseason group's inputs for every backtest and this week's run; FFC
+      2026 corrects itself when FFC freezes it).
+    - *College crosswalk (data):* the nflverse half of its id table joined on the pick WITHIN THE ROUND (Nacua: round 5,
+      pick 42, overall 177), so a first-round defender at overall 42 could take a receiver's id. `draft_ovr` now;
+      rebuilt: 3,535 of 4,300 draftees matched (was 1,829), 3,505 with birth dates.
+    - *Joint pricing (behind flags):* a player without the 20-point grid (rookies, extrapolated tails) was priced at
+      zero for every career season; a grid-less row now falls back per row to the band.
+    - *Smaller:* `--rescore --sigma dist` on a run without the grid now errors instead of silently rescoring plain
+      under the `_sd` name; the scorecard tolerates a null career-eval number; the injured-run counter is an explicit
+      integer; two report scripts print UTF-8 on the Windows console; unused imports in the window's files.
+    **Process:** the weekly path now has a one-minute end-to-end smoke on the trees (machine_learning/CLAUDE.md); it is
+    the gate for any change to the production path. **Reviewer notes kept, no change:** the `adp` / `adp_next` career
+    groups are August information on a February as-of point (not in production); a refresh fails at the export if the
+    pinned `market_run_date` summary is missing from the bucket (it is there).

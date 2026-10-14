@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -43,7 +44,20 @@ def newest_summary(paths: list[str], name: str) -> str | None:
 
 
 def _r(x, d=1):
-    return None if x is None else round(x, d)
+    if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
+        return None                                  # a NaN would serialize as the bare token NaN, which the page's JSON.parse rejects
+    return round(x, d)
+
+
+def _finite(obj):
+    """The payload with every NaN / inf float replaced by null, recursively (the page parses strict JSON)."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite(v) for v in obj]
+    return obj
 
 
 def fantasycalc_values() -> pl.DataFrame:
@@ -318,7 +332,7 @@ def main() -> None:
         "spearman": spearman, "rows": rows,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
+    args.out.write_text(json.dumps(_finite(out), separators=(",", ":"), allow_nan=False), encoding="utf-8")
     print(f"wrote {args.out} ({args.out.stat().st_size // 1024} KB, {len(rows)} players, {out['n_priced']} priced; {as_of})")
 
 

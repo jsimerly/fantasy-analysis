@@ -597,6 +597,39 @@ def fftoday_history(ctx):
     return x.ok(f"{len(FFTODAY_SEASONS)} seasons, 16+ weeks and 2,000+ rows each", 0)
 
 
+ADP_FFC_MIN_DRAFTS, ADP_MFL_MIN_DRAFTS = 300, 100      # a preseason window (FFC 2012, the smallest past year: 303; MFL AUG15: 600+)
+ADP_WINDOW_END = "-09-10"
+
+
+@check("bronze.adp.windows_are_preseason", "bronze/adp", "warn",
+       "FFC serves a rolling in-season window for the current year (2026-10-13: 109 drafts, Sep 18-25) and MFL's ALL period grows all season; a partition written from either is not the preseason consensus the model's preseason group means",
+       known_open="ffc season=2026 was pulled 2026-10-12 from an in-season window (109 drafts); FFC serves the frozen final preseason week only once the year is past, and the model reads MFL for any season that has MFL rows. MFL 2011-2026 were pulled with PERIOD=ALL; the re-pull with AUG15 waits for the owner's go")
+def adp_windows_preseason(ctx):
+    bad = []
+    for source, floor in (("ffc", ADP_FFC_MIN_DRAFTS), ("mfl", ADP_MFL_MIN_DRAFTS)):
+        for season, blob in ctx.partitions(f"bronze/adp/{source}/", key="season"):
+            df = ctx.blob(blob)
+            n = int(df["total_drafts"].drop_nulls().max() or 0) if "total_drafts" in df.columns and df.height else 0
+            end = str(df["end_date"].drop_nulls().max()) if "end_date" in df.columns and df["end_date"].null_count() < df.height else None
+            if n < floor or (end is not None and end > f"{season}{ADP_WINDOW_END}"):
+                bad.append(f"{source} {season}: {n} drafts" + (f", window to {end}" if end else ""))
+    if bad:
+        return x.fail(f"{len(bad)} partition(s) not a preseason view", len(bad), "; ".join(bad))
+    return x.ok("every ADP partition is a preseason window", 0)
+
+
+@check("bronze.adp.coming_season_present", "bronze/adp", "warn",
+       "the in-season preseason group and the career model's adp_next need the season's ADP as soon as the providers publish it (owner, 2026-10-12): adp-daily pulls it every day; this says when June has come and it has not landed")
+def adp_coming_season(ctx):
+    if ctx.today.month < 6:
+        return x.ok("before June: the season's drafts have not started", 0)
+    season = str(ctx.today.year)
+    missing = [s for s in ("ffc", "mfl") if season not in {v for v, _ in ctx.partitions(f"bronze/adp/{s}/", key="season")}]
+    if missing:
+        return x.fail(f"season={season} missing for {', '.join(missing)}", len(missing))
+    return x.ok(f"season={season} present for ffc and mfl", 0)
+
+
 @check("dim.college_crosswalk.birth_dates", "dim_college_crosswalk", "error",
        "the crosswalk's id table carried no birth date at all (and the crosswalk looked only for nflverse's birthdate): every birth date was empty and the model's college breakout age with it; fixed and rebuilt by hand 2026-10-12 (1,822 of 1,829 matched players dated)")
 def crosswalk_birth_dates(ctx):
