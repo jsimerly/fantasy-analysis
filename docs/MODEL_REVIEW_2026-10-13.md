@@ -207,7 +207,9 @@ t +3.5, ordering tie) has exactly that signature: level target bias on the prior
 +0.05 / +3.8, residual +0.14 / +9.3 — the code's bias is realized − projected, so **the residual target under-projects
 last year's stars by nine points a season and the blend by four; the level target is the unbiased one**, and items 22
 and 44 narrate the sign the other way. Every later value-side fix (band, dist, joint) is partly undoing model-side
-shrinkage; the production tail runs ~10 % low on the top 150 before pricing (1.10; RB / WR ~1.20). The "fixed set"
+shrinkage; the production tail runs ~10 % low on the top 150 before pricing (1.10; RB / WR ~1.20), and `age_gate.py`
+shows it is further from level than the trees it replaced on the same features (1.11 vs 1.05, t +4.1 over 8 cohorts;
+under-25s 1.30 vs 1.21) — the error gain and the level loss are two faces of one change. The "fixed set"
 reading (item 45) was proposed after band sigma failed the standard reading and then used to pass dist sigma too.
 FIXED on `feat/review-ml-queue`: every verdict now reads the level (the top-150 bias, A vs B) beside the co-primaries
 and appends LEVEL CAUTION when an error gain comes with the candidate's level moving further from zero (test). OWNER:
@@ -255,7 +257,11 @@ and the to-date model). Causes are on the projection side: the survival tier hel
 logit on every age 22-40 that cannot bend from a flat hazard at 27 to a steep one at 34 (the "33+ too flat" the author
 measured), the rookie tail's ratios clipped at 1.15. FIXED on `feat/review-ml-queue`: `scripts/age_gate.py` — realized /
 priced by age band and position on the union top-150 set of one or two runs, with the cohort as the unit (test); the
-gate to read beside every verdict and the thing a pricing change must not worsen on either end. QUEUED: a walk-forward
+gate to read beside every verdict and the thing a pricing change must not worsen on either end. On the production run's
+saved frames (as-run pricing, 8 cohorts): all 1.10 — under-25s **1.28**, 25-28 1.03, 29+ **0.80**; QB 0.97, RB 1.21,
+WR 1.18, TE 1.09. Against the trees on the same features (`xgb_set_c1`) the production 3.5 blend run is *further* from
+level everywhere that matters: all 1.11 vs 1.05 (t +4.1 over cohorts), under-25s 1.30 vs 1.21 (t +4.1), RB 1.23 vs 1.14
+(t +4.8), WR 1.19 vs 1.08 — the shrinkage of B3 made visible. QUEUED: a walk-forward
 age-band × horizon level correction through the `calibrate` hook, or fix survival (fit from 27 with a bend, decay the
 tier) — before any switch to joint pricing (OWNER).
 
