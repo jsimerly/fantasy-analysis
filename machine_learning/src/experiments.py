@@ -358,7 +358,7 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 
 PRIMARY = "spearman_war_top"
 RUNS_PREFIX = ("experiments", "runs")
-PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err",
+PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "share_abs_err",
                   "ppg_pinball", "ppg_cover_2080", "ppg_skew", "mae_h1_train", "gap_h1"]
 
 
@@ -610,6 +610,7 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS, warn: bo
 
 
 T_GAIN, T_NO_WORSE = 2.4, -1.0
+LEVEL_SLACK = 0.02                        # wins: a candidate whose top-150 bias moves further from zero by more than this, with an error gain, is flagged (B3)
 
 
 def verdict(table: pl.DataFrame) -> str:
@@ -642,6 +643,13 @@ def verdict(table: pl.DataFrame) -> str:
         if "ppg_cover_2080" in rows:
             c = rows["ppg_cover_2080"]
             stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
+    if "bias_war_top" in rows:                # the level read (review 2026-10-13, B3): MAE on a zero-inflated target rewards shrinkage
+        lv = rows["bias_war_top"]             # bias = realized - projected on the top 150: + means the projections run low
+        stats += f" | level (bias, top 150, + = projections low) A {lv['a']:+.3f} vs B {lv['b']:+.3f}"
+        if gain_e and abs(lv["a"]) > abs(lv["b"]) + LEVEL_SLACK:
+            state += " + LEVEL CAUTION"
+            stats += (f" -- the error gain comes with the candidate's level moving further from zero (|{lv['a']:.3f}| vs |{lv['b']:.3f}|): "
+                      "an MAE gain by shrinkage is not a better projection; check realized / priced on the fixed set (window_report --by-age)")
     if "gap_h1" in rows:                      # the overfitting read: out-of-sample minus in-sample season-points error next year
         g = rows["gap_h1"]
         stats += f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts (in-sample A {rows['mae_h1_train']['a']:.1f} vs B {rows['mae_h1_train']['b']:.1f})" if "mae_h1_train" in rows else f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts"

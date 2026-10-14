@@ -209,8 +209,10 @@ last year's stars by nine points a season and the blend by four; the level targe
 and 44 narrate the sign the other way. Every later value-side fix (band, dist, joint) is partly undoing model-side
 shrinkage; the production tail runs ~10 % low on the top 150 before pricing (1.10; RB / WR ~1.20). The "fixed set"
 reading (item 45) was proposed after band sigma failed the standard reading and then used to pass dist sigma too.
-QUEUED: a level metric (realized / priced on the fixed set, or bias with MAE's weight) in the acceptance rule for
-model-side changes; re-judge level vs blend under it; the cheap candidate is level + joint pricing.
+FIXED on `feat/review-ml-queue`: every verdict now reads the level (the top-150 bias, A vs B) beside the co-primaries
+and appends LEVEL CAUTION when an error gain comes with the candidate's level moving further from zero (test). OWNER:
+making the level a hard part of the rule; re-judging level vs blend under it (the cheap candidate is level + joint
+pricing).
 
 ### B4. Multiplicity and the winner's curse — PLAUSIBLE
 114 horizon-3 runs on cohorts 2015-2022 (59 since 2026-10-07), 31 "ADOPT" mentions; a simulated per-candidate false
@@ -290,7 +292,7 @@ with the per-player band, so the dict matters for the in-season spans and the fa
 | D5 | The injury group fills "never on the report" for 2002-2008 (the fact has reserve-only rows from 2002, the report from 2009): 3,646 of 15,267 training rows | `feature_groups.py` `_coverage_fill` | FIXED on `feat/review-ml-queue` (a feature change: merges when the running chain ends; the tail cache re-keys itself): the reserve lists floor at the fact's first season, the report-derived columns and their lags at the first season with a report row, with a replay test. FIXED: the quality check `fact.player_injury_week.report_rows_per_season` |
 | D6 | The position filter drops offensive production by players nflverse lists at CB / FB: Travis Hunter has no rows at all, Juszczyk's receiving is gone | `fact_player_week.py` | FIXED (code, tests): the fantasy position is Sleeper's — the primary position, else the first skill position among the positions he may fill (`dim_players_master.fantasy_positions`, "DB/WR" for Hunter) — and only then nflverse's with FB → RB; the facts rebuild on the first daily run after the merge |
 | D7 | `fact_player_week_status` stamps weeks 6-18 of 2026 `not_rostered` (11,414 rows); the career `weekly` group would read every 2026 player as cut for 13 weeks | `fact_player_week_status.py` | FIXED (code, tests): the grid ends at the latest week any roster row or stat line carries; the quality check `fact.player_week_status.no_rows_past_production` |
-| D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | QUEUED: export only the per-league lines |
+| D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | FIXED on `feat/review-ml-queue`: the outcome curves draw against the chosen league's line (the WAR columns' line); the payload labels the internal share line (`replacement_note`). The `iv` / `v` columns still price on the internal line (QUEUED: price them per league too) |
 | D9 | The export and the page key players by name (34 same-name pairs in the fact; none among today's 496, so latent) | `export_projections.py`, the page | QUEUED: key by `player_id` |
 | D10 | The scoring league is "the lineage with the most settings rows"; a fourth league would silently re-score the fact | `fact_player_week.py` | FIXED (code, test): the pinned lineage `PRIMARY_LINEAGE_ID`, the same pin as the model's replacement line; the most-rows rule only as a loud fallback |
 | D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | QUEUED |
@@ -346,10 +348,11 @@ tonight's export carries both; the exports' backend guard (D3) on `feat/review-m
 the page republished from tonight's payload once its `metrics.json` shows the TabPFN backends; `feat/review-ml-queue`
 merged into the PR branch when the GPU chain ends (its modules are imported by the queued runs).
 
-**Queued code changes, no decision needed (QUEUED), in priority order.** D8 (one replacement line) → B3 (a level
-metric in the acceptance rule) → C1's age-band gate → D9, D11, D13 → C2 (band widening, and the in-season model's own
-band for its spans) → C5 → A6 (re-run the career eval on the production model) → A4 (the in-season model through the
-market test) → B6's consensus snapshot. Done on `feat/review-ml-queue`, merging when the chain ends: D4, D5, C4.
+**Queued code changes, no decision needed (QUEUED), in priority order.** C1's age-band gate → D9, D11, D13 → C2 (band
+widening, and the in-season model's own band for its spans) → D8's second half (the `iv` / `v` columns per league) → C5
+→ A6 (re-run the career eval on the production model) → A4 (the in-season model through the market test) → B6's
+consensus snapshot. Done on `feat/review-ml-queue`, merging when the chain ends: D3, D4, D5, C4, D8 (the curves), B3
+(the level read in every verdict).
 
 **The owner's calls (OWNER).** (1) Pause `ml-weekly-refresh` or make it a dry run — today it writes a weaker model into
 the production store every Tuesday. (2) Re-pull MFL 2011-2026 at AUG15 (a lake write), then re-screen the preseason

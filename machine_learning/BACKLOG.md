@@ -2075,7 +2075,10 @@ t = 1.45) stays a tie.
     rostered players with no projection at all keep a row on their roster with no wins and the KTC value by name
     (`build_war.placeholder_rows`; smoked on the 2026-10-12 run: 27 / 35 / 41 per league, 24 / 34 / 34 priced), the
     injury group's coverage floor is per source (reserve lists from 2002, the report from 2009), and the `iv` column
-    prices next season with the second-year spread as the WAR column does. Tonight after the chain: the exports
+    prices next season with the second-year spread as the WAR column does; the exports refuse a run built by a
+    non-production model (`runs.check_backend`, `--require-backend`); the page's outcome curves draw against the chosen
+    league's replacement line; every harness verdict reads the level (top-150 bias) and flags an error gain whose level
+    moved further from zero (LEVEL CAUTION) -- making it part of the rule is the owner's call. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
     PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
     pricing waits for an age gate; the 10 % default) are in the document's last section.

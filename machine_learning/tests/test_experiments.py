@@ -122,6 +122,20 @@ def test_range_scores_record_the_bands_asymmetry_and_the_verdict_prints_the_dist
     assert "distribution" not in ex.verdict(_paired_table(-0.5, 3.0))
 
 
+def test_the_verdict_reads_the_level_and_flags_an_error_gain_by_shrinkage():
+    """review 2026-10-13 (B3): MAE on a zero-inflated target rewards shrinkage (the blend target was adopted on it); the
+    verdict shows the top-150 bias beside the co-primaries and flags an error gain whose level moved further from zero."""
+    import experiments as ex
+    assert "bias_war_top" in ex.PAIRED_METRICS
+    level = lambda a, b: pl.DataFrame({"metric": ["bias_war_top"], "a": [a], "b": [b], "diff_b_minus_a": [b - a], "se": [0.01], "t": [0.0], "b_wins": [4], "cohorts": [8]})
+    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.09, 0.01)]))      # error gain, the candidate runs 0.09 wins low
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT + LEVEL CAUTION") and "level (bias, top 150" in v and "shrinkage" in v
+    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.01, 0.05)]))      # error gain with a level closer to zero: no flag
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "LEVEL CAUTION" not in v
+    v = ex.verdict(pl.concat([_paired_table(-3.0, 0.5), level(0.09, 0.01)]))     # an ordering gain is not flagged
+    assert "LEVEL CAUTION" not in v and "A +0.090 vs B +0.010" in v
+
+
 def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
     return pl.DataFrame({"metric": ["spearman_war_top", "mae_war_top"], "a": [0.61, 0.50], "b": [0.60, 0.52],
                          "diff_b_minus_a": [-0.01, 0.02], "se": [0.004, 0.008], "t": [t_order_b_minus_a, t_err_b_minus_a], "b_wins": [2, 7], "cohorts": [8, 8]})

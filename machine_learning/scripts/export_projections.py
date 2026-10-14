@@ -332,7 +332,11 @@ def main() -> None:
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
-        "replacement_ppg": meta["replacement_ppg"], "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
+        "replacement_ppg": meta["replacement_ppg"],
+        # review 2026-10-13 (D8): the model's internal share line, behind iv / v only; every league's own weekly line is in
+        # leagues[].replacement and prices the WAR columns, the roster views and the outcome curves
+        "replacement_note": "the model's internal line (share fill); each league's weekly line is leagues[].replacement",
+        "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
         "spearman": spearman, "rows": rows,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

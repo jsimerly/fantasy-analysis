@@ -437,7 +437,10 @@
     const skewOf = s => { if (s.md == null || s.lo == null || s.hi == null) return ''; const up = s.hi - s.md, dn = s.md - s.lo; if (up > 1.25 * dn + 0.05) return ' <span class="skew up" title="right-skewed: more upside than downside (mean above median)">▲</span>'; if (dn > 1.25 * up + 0.05) return ' <span class="skew dn" title="left-skewed: more downside than upside (mean below median)">▼</span>'; return ''; };
     const bandTd = s => hasBand ? `<td>${s.lo == null ? '<span class="dim">–</span>' : `${fmt(s.pg, 1)}${s.md == null ? '' : ` <span class="dim">med ${fmt(s.md, 1)}</span>`} <span class="dim">(${fmt(s.lo, 1)}–${fmt(s.hi, 1)})</span>${skewOf(s)}`}</td>` : '';
     const wTd = s => hasW ? `<td>${s.wl == null ? '<span class="dim">–</span>' : `${fmt(s.wl, 2)}–${fmt(s.wh, 2)}`}</td>` : '';
-    const repPos = data.replacement_ppg ? data.replacement_ppg[r.pos] : null;
+    // review 2026-10-13 (D8): the curves are drawn against THIS league's replacement line (the one the WAR columns use), not the
+    // model's internal share line in data.replacement_ppg (QB 15.4 vs the league's 13.5: a QB at 14.5 ppg read as below replacement)
+    const lgRep = (leagueOf(st.league) || {}).replacement;
+    const repPos = lgRep && lgRep[r.pos] != null ? lgRep[r.pos] : (data.replacement_ppg ? data.replacement_ppg[r.pos] : null);
     const curves = r.dist ? outcomeCurve(r.dist.next, repPos, `Next season (${L[1] || 'next'})`) + outcomeCurve(r.dist.ros, repPos, `Rest of this season (${L[0] || 'ROS'})`) : '';
     return `<div class="dgrid"><div class="facts">${facts.map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` + curves +
       `<table class="small spans"><thead><tr><th class="l">Season</th><th>Proj pts</th>${bandTh}<th>PAR</th><th>WAR</th>${wTh}<th>Weight</th></tr></thead><tbody>${spans.map(s => `<tr><td class="l">${esc(s.lab)}</td><td>${fmt(s.pts)}</td>${bandTd(s)}<td>${fmt(s.par)}</td><td>${fmt(s.war, 2)}</td>${wTd(s)}<td class="dim">${s.w ? s.w.toFixed(2) : '0'}</td></tr>`).join('')}</tbody></table>` +
