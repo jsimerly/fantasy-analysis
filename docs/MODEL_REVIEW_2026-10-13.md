@@ -261,9 +261,21 @@ gate to read beside every verdict and the thing a pricing change must not worsen
 saved frames (as-run pricing, 8 cohorts): all 1.10 — under-25s **1.28**, 25-28 1.03, 29+ **0.80**; QB 0.97, RB 1.21,
 WR 1.18, TE 1.09. Against the trees on the same features (`xgb_set_c1`) the production 3.5 blend run is *further* from
 level everywhere that matters: all 1.11 vs 1.05 (t +4.1 over cohorts), under-25s 1.30 vs 1.21 (t +4.1), RB 1.23 vs 1.14
-(t +4.8), WR 1.19 vs 1.08 — the shrinkage of B3 made visible. QUEUED: a walk-forward
-age-band × horizon level correction through the `calibrate` hook, or fix survival (fit from 27 with a bend, decay the
-tier) — before any switch to joint pricing (OWNER).
+(t +4.8), WR 1.19 vs 1.08 — the shrinkage of B3 made visible. **The correction, built 2026-10-14 on the owner's
+"let's get this done tonight" (on `feat/review-ml-queue`, in the production preset):** `value.age_scale_factors`
+multiplies the points above replacement of the career model's spans by the player's age band (≤ 24 / 25-28 / 29+). In
+the harness it is fitted walk-forward exactly like the positional scale — realized / priced by band on the cohorts
+complete by each test season, on their own top-150, shrunk n / (n + 1), clipped 0.6-1.6 (`--rescore RUN
+--walk-age-scale`): ordering unchanged (0.621 = 0.621), wins error within noise (0.507 vs 0.502, t −1.3), bias halved
+(0.042 vs 0.059), under-25s 1.285 → 1.178 (t −2.3), 29+ 0.80 → 0.87 (t +2.6), RB 1.21 → 1.15; it only reaches the
+cohorts from 2018 (nothing is complete before) and is shrunk, so it closes about 40 % of the gap in the test. Production
+takes the table fitted on all eight test seasons with no shrinkage (`experiments.age_scale_table`: ≤ 24 ×1.27, 25-28
+×1.03, 29+ ×0.80; by horizon the young side grows, 1.23 / 1.26 / 1.38 for h1 / h2 / h3, the old side 0.80 / 0.76 /
+0.85) on the career spans only — the in-season model's own level is not measured, so rest of season and next season
+are untouched — in `inseason_value`, the preseason view and `build_war` from the run's `metrics.json`. Not fixed by it:
+the cause. QUEUED: the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every
+age, cannot bend from a flat hazard at 27 to a steep one at 34), the rookie tail's ratios clipped at 1.15, and a
+per-horizon table once the seven-year windows are in; joint pricing stays off until then (OWNER).
 
 ### C2. The band is too narrow to price upside with — CONFIRMED
 20-80 coverage 0.55-0.56 at one year (QB 0.52 at three), band sigma 17-22 % below the holdout residual sigma, 9 % of
@@ -352,9 +364,13 @@ per source, C4 (one spread for next season), each with tests, the roster side sm
 **Also done on 2026-10-13, after the first commit.** The scorecard's head rows (with tests); the 2026-10-12 market
 summary re-scored in place from its saved frames with the net-of-regression fields (317 prior values identical); the
 in-season card's summary rebuilt from the production model's PAR table (`backtests/inseason/run_date=2026-10-13`), so
-tonight's export carries both; the exports' backend guard (D3) on `feat/review-ml-queue`. **Still to come (TONIGHT):**
-the page republished from tonight's payload once its `metrics.json` shows the TabPFN backends; `feat/review-ml-queue`
-merged into the PR branch when the GPU chain ends (its modules are imported by the queued runs).
+tonight's export carries both; the exports' backend guard (D3) on `feat/review-ml-queue`. **The night of 2026-10-14
+(owner, 00:35: "when I come back in the morning we've addressed some of the larger gaps ... young talent and old
+talent"):** the experiment chain is halted the moment the first refresh exits; `feat/review-ml-queue` merges into the
+PR branch, the ML guide's smoke runs on the trees, and a second production refresh runs on the merged code (the age-band
+correction, the zero-game players, the injury floor, one spread, the backend guard) — the page is republished from
+it; the halted experiments restart afterwards under the merged code with a fresh baseline (`tabpfn35_young_base2`) so
+every pairing is like for like, with the window report by age and the age gate on each (`chain_night2.sh`).
 
 **Queued code changes, no decision needed (QUEUED), in priority order.** D9 (player_id keys) → C1's level correction
 (an age-band × horizon calibration or the survival form) → C2 (band widening, and the in-season model's own band for
