@@ -71,7 +71,12 @@ def age_scale_factors(df: pl.DataFrame, age_scale: dict[str, float] | None) -> n
         return np.ones(df.height)
     table = {k: float(v) for k, v in age_scale.items()}
     band = age_band_expr()
-    fac = band.replace_strict({k: v for k, v in table.items() if "|" not in k}, default=1.0, return_dtype=pl.Float64)
+    fac = band.replace_strict({k: v for k, v in table.items() if "|" not in k and not k.startswith("age:")}, default=1.0, return_dtype=pl.Float64)
+    by_age = {k: v for k, v in table.items() if k.startswith("age:")}   # "age:28": the curve's value at that year of age (owner 2026-10-14:
+    if by_age:                                                          # a curve fitted to how far off we are, not three steps)
+        ages = sorted(int(k[4:]) for k in by_age)
+        key = pl.concat_str([pl.lit("age:"), pl.col("age_at_season").floor().clip(ages[0], ages[-1]).cast(pl.Int64).cast(pl.Utf8)])
+        fac = pl.coalesce([key.replace_strict(by_age, default=None, return_dtype=pl.Float64), fac])
     by_pos = {k: v for k, v in table.items() if "|" in k}          # "RB|29+": a position's own cell, the band as the fallback
     if by_pos and "position" in df.columns:
         key = pl.concat_str([pl.col("position").cast(pl.Utf8), pl.lit("|"), band])

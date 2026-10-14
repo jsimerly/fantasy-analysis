@@ -119,7 +119,8 @@ def rescore_cli(args) -> None:
     meta = meta[0] if meta else {}
     groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
     H = sorted(int(c[1:-9]) for c in frames.columns if c.startswith("h") and c.endswith("_fpts_hat") and c[1:-9].isdigit())   # the horizons the frames hold
-    suffix = (("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + (("_wap" if args.age_by_position else "_wa") if args.walk_age_scale else "")
+    suffix = (("_fs" if fixed else "") + ("_ws" if args.walk_scale else "")
+              + (("_wac" if args.age_curve else "_wap" if args.age_by_position else "_wa") if args.walk_age_scale else "")
               + ({"band": "_sb", "dist": "_sd", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else ""))
     name = args.as_name or (src_name + (suffix or "_rescored"))
     backend = str(meta.get("backend") or args.backend)
@@ -133,7 +134,7 @@ def rescore_cli(args) -> None:
         rep_for, curve = bc.rep_for, bc.curve
     got: list = []
     per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src, sigma_mode=args.sigma, rep_for=rep_for, curve=curve,
-                                     walk_age_scale=args.walk_age_scale, collect=got, age_by_position=args.age_by_position)
+                                     walk_age_scale=args.walk_age_scale, collect=got, age_by_position=args.age_by_position, age_curve=args.age_curve)
     summary["regime"] = str(src["regime"][0]) if src is not None and "regime" in src.columns else ""
     summary["backend"] = backend + f" rescored<{args.rescore}>"
     per_cohort = per_cohort.with_columns(pl.lit(summary["regime"]).alias("regime"))
@@ -201,6 +202,8 @@ def main() -> None:
     ap.add_argument("--no-ledger", action="store_true", help="--rescore: save the run and its frames but do not touch the ledger (a GPU chain may be appending to it)")
     ap.add_argument("--age-by-position", action="store_true",
                     help="with --walk-age-scale: a cell per position and age band, shrunk toward the band (owner 2026-10-14: 29+ running backs realize a third of their price)")
+    ap.add_argument("--age-curve", action="store_true",
+                    help="with --walk-age-scale: the level as a kernel-smoothed curve over each year of age instead of three bands (owner 2026-10-14)")
     ap.add_argument("--sigma", choices=["band", "dist", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
     ap.add_argument("--top-n", type=int, default=None, help="the top-N projected players the ordering and error metrics score (default: the config)")
     ap.add_argument("--list-groups", action="store_true")

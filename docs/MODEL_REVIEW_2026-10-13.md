@@ -279,7 +279,16 @@ WR 0.71, **RB 0.32** (28 player-cohorts, per-season spread 0.47). A position × 
 band, `--age-by-position`), walk-forward: ordering 0.620 vs the band table's 0.621, wins error 0.511 vs 0.507 (t −2.2
 against the base), RB 29+ unchanged at 0.33, QB 25-28 0.86 → 0.92, WR 29+ 0.71 → 0.81, TE 29+ overshooting to 1.04.
 Not adopted: a scale cannot express a cliff in games, and the cells are noisy; the per-position answer is the survival
-curve. QUEUED: the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every age,
+curve. **A curve and the variance (owner, 2026-10-14 afternoon):** by single year of age the level is smooth (1.3 at
+22 to 0.75 at 33, flat after) and a kernel-smoothed curve was built (`--age-scale-curve`), but walk-forward it is no
+better than the bands (ordering 0.617 vs 0.621, error t −1.8) — and the season-by-season table explains every "NO"
+here: **the level drifts.** Under 25 is stable (1.15-1.26 every season since 2016); 29-31 was 0.46-0.71 in 2015-17 and
+about 1.0 since 2018; 32+ was level to 2019 and 0.2-0.5 since. A correction fitted on older seasons over-corrects the
+recent 29-31s, the three-band table on the page included. Adopted in the preset instead: four bands fitted to the recent
+seasons and each shrunk toward 1 by its own season-to-season variance (≤ 24 ×1.18, 25-28 ×1.06, 29-31 ×0.93, 32+ ×0.80;
+`experiments.age_table_recent`), which on the recent seasons leaves the bands at 1.02 / 1.02 / 1.08 / 0.74. It reaches
+the page with the next refresh. QUEUED: the spread by age for the uncertainty band (coverage 52-59 % against 60 %, the
+young missing high and the old low); the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every age,
 cannot bend from a flat hazard at 27 to a steep one at 34; the quadratic variant per position and tier,
 `tabpfn35_surv_q`, runs in the chain), the rookie tail's ratios clipped at 1.15, and a per-horizon table once the
 seven-year windows are in; joint pricing stays off until then (OWNER).

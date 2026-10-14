@@ -2119,4 +2119,18 @@ t = 1.45) stays a tie.
     vs the band table's 0.621, wins error 0.511 vs 0.507 (t −2.2 against the base, past the no-worse line), RB 29+ still
     0.33, QB 25-28 0.86 -> 0.92, WR 29+ 0.71 -> 0.81, TE 29+ overshoots to 1.04. NOT adopted: the cells are noisy and the
     one that matters is a cliff in games, not a scale; the band table stays in production and the per-position answer is
-    the survival curve (`tabpfn35_surv_q`, quadratic logit per position and tier, in the night chain).
+    the survival curve (`tabpfn35_surv_q`, quadratic logit per position and tier, in the night chain). **A curve instead of
+    bands, and the variance (owner, 15:10: "a band or curve custom fit to how far we're off ... and the variance of those
+    bands")?** By single year of age the level is smooth: 1.25-1.32 at 21-23, 1.20 at 24, 1.11 at 25, ~1.05 at 26-27, 0.81 at
+    28, 0.77 at 29, ~0.8 at 32-34, 0.70 at 36. A kernel-smoothed curve (`--age-curve` / `--age-scale-curve`) walk-forward:
+    ordering 0.617 vs 0.621, error 0.509 vs 0.502 (t −1.8) -- marginally worse than the bands, and the by-year table showed
+    why every walk-forward verdict here is NO: **the level drifts across test seasons.** Under 25 is stable (1.15-1.26 every
+    season since 2016); 29-31 was 0.46-0.71 in 2015-17 and ~1.0 since 2018; 32+ was level to 2019 and 0.2-0.5 since. A
+    correction fitted on the older seasons over-corrects the recent 29-31s (1.15-1.24 after it), which the three-band
+    table on the page (29+ x0.80) also does. **Adopted in the preset (`age_scale_recent=True`):** four bands (≤ 24 / 25-28 /
+    29-31 / 32+) fitted to the recent seasons (weights 0.8 per year back) and each shrunk toward 1 by its own
+    season-to-season variance (factor = 1 + (m − 1) τ² / (τ² + se²), τ = 0.15): ≤ 24 x1.18 (mean 1.25, se 0.09), 25-28
+    x1.06 (1.07, 0.04), 29-31 x0.93 (0.90, 0.10), 32+ x0.80 (0.66, 0.12). On the recent seasons it leaves the bands at 1.02 /
+    1.02 / 1.08 / 0.74 against the three-band table's 0.95 / 1.05 / 1.26 / 0.75 (in-sample: the mechanics, not a test). It
+    reaches the page with the next refresh; the spread by age (the 20-80 band covers 52-59 %, the young miss high, the old
+    low) is the next calibration layer.

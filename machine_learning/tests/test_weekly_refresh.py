@@ -21,6 +21,7 @@ def test_production_preset_sets_the_adopted_configuration():
     assert a.sigma == "band"                                     # each player's own band prices his upside (BACKLOG 45)
     assert a.discount_rate == 0.1                                # the page's dynasty default (owner, 2026-10-12)
     assert a.age_scale == "tabpfn35_set_stacked_blend_w2"       # the age-band level correction on the career spans (review C1; owner, 2026-10-14)
+    assert a.age_scale_recent is True                            # four bands from the recent seasons, variance-shrunk (owner, 2026-10-14 afternoon)
     assert out.groups == "base,career,injury,trend,situation,rookie,college" and out.device == "cuda"
     b = m.apply_preset(argparse.Namespace(preset=None, backend="xgb", stacked=False))
     assert b.backend == "xgb" and b.stacked is False and set(m.PRESETS) == {"production"}

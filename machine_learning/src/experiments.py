@@ -425,28 +425,98 @@ age_band_expr = value.age_band_expr      # the bands of value.AGE_BANDS (<= 24 /
 
 
 def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6, by_position: bool = False,
-                           shrink_n: float = 20.0, lo_pos: float = 0.4) -> dict[str, float]:
+                           shrink_n: float = 20.0, lo_pos: float = 0.4, curve: bool = False, recent: bool = False) -> dict[str, float]:
     """The production table: realized / priced WAR by age band (and position with ``by_position``) on every cohort's own
     top-``top_n``, clipped, with no shrinkage toward 1 (production prices seasons after the last test season, so every
-    cohort is a prior); a position's cell is still shrunk toward its band by n / (n + ``shrink_n``)."""
+    cohort is a prior); a position's cell is still shrunk toward its band by n / (n + ``shrink_n``). ``recent`` adds the
+    four-band, recency-weighted, variance-shrunk steps of ``age_table_recent`` (they take precedence over the bands)."""
     done = cohorts.filter(pl.col("realized_iv").is_not_null())
     top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
                .with_columns(age_band_expr().alias("_ab")))
-    return _age_scale_table(top, 1.0, lo, hi, by_position, shrink_n, lo_pos)
+    out = _age_scale_table(top, 1.0, lo, hi, by_position, shrink_n, lo_pos, curve)
+    if recent:
+        out.update(age_table_recent(top))
+    return out
 
 
-def age_scale_table(run: str, top_n: int = 150, by_position: bool = False) -> dict[str, float]:
+def age_scale_table(run: str, top_n: int = 150, by_position: bool = False, curve: bool = False, recent: bool = False) -> dict[str, float]:
     """``age_scales_from_frames`` on a run's saved cohort frames (``--save-cohorts``), for the weekly refresh."""
-    return age_scales_from_frames(load_cohorts(run), top_n, by_position=by_position)
+    return age_scales_from_frames(load_cohorts(run), top_n, by_position=by_position, curve=curve, recent=recent)
 
 
-def _age_scale_table(top: pl.DataFrame, w: float, lo: float, hi: float, by_position: bool, shrink_n: float, lo_pos: float) -> dict[str, float]:
+AGE_CURVE_RANGE = (21, 36)        # the curve's years of age; outside, the end value
+AGE_CURVE_KERNEL = 1.5            # years: the Gaussian kernel of the smoother
+
+
+def age_curve(top: pl.DataFrame, w: float, lo: float, hi: float, kernel: float = AGE_CURVE_KERNEL) -> dict[str, float]:
+    """The level as a smooth curve over age (owner, 2026-10-14: "a band or curve custom fit to how far we're off"):
+    realized / priced WAR per year of age on the top set, kernel-smoothed over neighbouring years with the priced wins as
+    the weights (no parametric form to get wrong; the raw curve runs ~1.3 at 22 to ~0.75 at 33 and flat after), shrunk
+    toward 1 by ``w`` and clipped. Keys ``"age:NN"``; ``value.age_scale_factors`` resolves a row's floor(age)."""
+    a0, a1 = AGE_CURVE_RANGE
+    g = (top.with_columns(pl.col("age_at_season").floor().clip(a0, a1).cast(pl.Int64).alias("_a"))
+            .group_by("_a").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")))
+    ages = g["_a"].to_numpy().astype(float); p = g["p"].to_numpy().astype(float); r = g["r"].to_numpy().astype(float)
+    out = {}
+    for a in range(a0, a1 + 1):
+        kw = np.exp(-0.5 * ((ages - a) / kernel) ** 2)
+        pp, rr = float((kw * p).sum()), float((kw * r).sum())
+        if pp <= 0:
+            continue
+        out[f"age:{a}"] = float(min(hi, max(lo, 1.0 + w * (rr / pp - 1.0))))
+    return out
+
+
+AGE_BANDS4 = (("<=24", 0.0, 25.0), ("25-28", 25.0, 29.0), ("29-31", 29.0, 32.0), ("32+", 32.0, 200.0))
+
+
+def age_table_recent(top: pl.DataFrame, recency: float = 0.8, tau: float = 0.15, lo: float = 0.4, hi: float = 1.6) -> dict[str, float]:
+    """The level by four age bands, fitted to what the recent test seasons say and shrunk by each band's own
+    season-to-season variance (owner, 2026-10-14: "if we know how far off we are at certain bands and the variance of those
+    bands, we can build that into the model"). Per band: the per-season ratios realized / priced, their recency-weighted
+    mean m (weights ``recency`` ** (latest season - season)) and standard error se; the factor is 1 + (m - 1) x tau^2 /
+    (tau^2 + se^2), a prior of sd ``tau`` on the true offset -- a band whose level swings between seasons (29-31: 0.46 to
+    1.39) is corrected little, a stable one (under 25: 1.15-1.26 every season) in full. Delivered as ``age:NN`` steps so
+    ``value.age_scale_factors`` needs nothing new."""
+    latest = int(top["cohort"].max())
+    band4 = pl.when(pl.col("age_at_season") < 25).then(pl.lit("<=24")).when(pl.col("age_at_season") < 29).then(pl.lit("25-28")) \
+              .when(pl.col("age_at_season") < 32).then(pl.lit("29-31")).otherwise(pl.lit("32+"))
+    per = (top.with_columns(band4.alias("_b4")).group_by("cohort", "_b4")
+              .agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")).filter(pl.col("p") > 0)
+              .with_columns((pl.col("r") / pl.col("p")).alias("ratio"), (recency ** (latest - pl.col("cohort"))).alias("w")))
+    factors = {}
+    for b, lo_a, hi_a in AGE_BANDS4:
+        g = per.filter(pl.col("_b4") == b)
+        if g.height < 2:
+            continue
+        x, wt = g["ratio"].to_numpy().astype(float), g["w"].to_numpy().astype(float)
+        m = float((wt * x).sum() / wt.sum())
+        var = float((wt * (x - m) ** 2).sum() / wt.sum()); n_eff = float(wt.sum() ** 2 / (wt ** 2).sum())
+        se2 = var / max(n_eff, 1.0)
+        factor = 1.0 + (m - 1.0) * tau ** 2 / (tau ** 2 + se2)
+        factors[b] = (float(min(hi, max(lo, factor))), m, float(np.sqrt(se2)))
+    a0, a1 = AGE_CURVE_RANGE
+    out = {}
+    for a in range(a0, a1 + 1):
+        for b, lo_a, hi_a in AGE_BANDS4:
+            if lo_a <= a < hi_a and b in factors:
+                out[f"age:{a}"] = factors[b][0]
+    out.update({f"{b}_mean": round(v[1], 3) for b, v in factors.items()})       # the evidence beside the factor, for the metrics
+    out.update({f"{b}_se": round(v[2], 3) for b, v in factors.items()})
+    return out
+
+
+def _age_scale_table(top: pl.DataFrame, w: float, lo: float, hi: float, by_position: bool, shrink_n: float, lo_pos: float,
+                     curve: bool = False) -> dict[str, float]:
     """The table from a banded top set: band -> scale, and with ``by_position`` "POS|band" -> scale, each cell shrunk
     toward its band by n / (n + ``shrink_n``) (the 29+ running backs are 28 player-cohorts over eight seasons), then
-    toward 1 by ``w`` and clipped (the position cells down to ``lo_pos``: 29+ running backs realize a third of their price)."""
+    toward 1 by ``w`` and clipped (the position cells down to ``lo_pos``: 29+ running backs realize a third of their price).
+    With ``curve`` the smooth per-year curve (``age_curve``) is added and takes precedence over the bands."""
     g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
     band = {b: r_ / p_ for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
     out = {b: float(min(hi, max(lo, 1.0 + w * (ratio - 1.0)))) for b, ratio in band.items()}
+    if curve:
+        out.update(age_curve(top, w, lo, hi))
     if by_position:
         gp = top.group_by("position", "_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"), pl.len().alias("n"))
         for pos, b, p_, r_, n_ in gp.iter_rows():
@@ -458,7 +528,8 @@ def _age_scale_table(top: pl.DataFrame, w: float, lo: float, hi: float, by_posit
 
 
 def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: int = 150, lo: float = 0.6, hi: float = 1.6,
-                            prior_cohorts: float = 1.0, by_position: bool = False, shrink_n: float = 20.0, lo_pos: float = 0.4) -> dict[str, float]:
+                            prior_cohorts: float = 1.0, by_position: bool = False, shrink_n: float = 20.0, lo_pos: float = 0.4,
+                            curve: bool = False) -> dict[str, float]:
     """Per-age-band value scale for cohort ``T`` from the cohorts whose outcomes are complete by then: realized WAR over
     projected WAR by band on each complete cohort's own top-``top_n`` by projected WAR (the players a manager weighs),
     pooled, shrunk toward 1 by n / (n + ``prior_cohorts``) and clipped to [lo, hi]. The age gradient of the review
@@ -471,7 +542,7 @@ def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: 
     top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
                .with_columns(age_band_expr().alias("_ab")))
     w = top["cohort"].n_unique() / (top["cohort"].n_unique() + prior_cohorts)
-    return _age_scale_table(top, w, lo, hi, by_position, shrink_n, lo_pos)
+    return _age_scale_table(top, w, lo, hi, by_position, shrink_n, lo_pos, curve)
 
 
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
@@ -515,7 +586,7 @@ def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float],
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
             src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
             rep_for: Callable[[int], dict[str, float]] | None = None, curve=None, walk_age_scale: bool = False,
-            collect: list | None = None, age_by_position: bool = False) -> tuple[pl.DataFrame, dict]:
+            collect: list | None = None, age_by_position: bool = False, age_curve: bool = False) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
     multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
     ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
@@ -547,7 +618,7 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         if scales:
             sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
             f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
-        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n, by_position=age_by_position) if walk_age_scale else {}
+        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n, by_position=age_by_position, curve=age_curve) if walk_age_scale else {}
         if ascales:                               # the age-band level correction (C1), walk-forward like the positional one; the value
             fac = value.age_scale_factors(f, ascales)   # layer resolves both the band keys and the "POS|band" cells
             f = f.with_columns([pl.Series(c, f[c].fill_null(0.0).to_numpy().astype(float) * fac) for c in SCALE_COLS if c in f.columns])

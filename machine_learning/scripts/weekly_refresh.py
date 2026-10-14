@@ -49,6 +49,10 @@ PRESETS = {
                        # tonight"): realized / priced by age band on the production run's own eight test seasons, under-25s x1.27,
                        # 25-28 x1.03, 29+ x0.80; walk-forward in the harness it halves the gradient with ordering unchanged
                        age_scale="tabpfn35_set_stacked_blend_w2",
+                       # four bands fitted to the recent test seasons and shrunk by each band's own season-to-season variance (owner,
+                       # 2026-10-14 afternoon): the 29-31 level drifted to ~1.0 since 2018 (the three-band 0.80 was too harsh for them),
+                       # the 32+ to ~0.5 (too mild); under 25 is stable at 1.15-1.26 and keeps the full correction
+                       age_scale_recent=True,
                        discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 
@@ -110,6 +114,9 @@ def main() -> None:
     ap.add_argument("--age-scale", default=None, metavar="RUN",
                     help="the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (backtest_inseason --age-scale; review C1, owner 2026-10-14)")
     ap.add_argument("--age-scale-by-position", action="store_true", help="with --age-scale: a cell per position and age band (backtest_inseason --age-scale-by-position)")
+    ap.add_argument("--age-scale-curve", action="store_true", help="with --age-scale: the level as a smooth curve over each year of age (backtest_inseason --age-scale-curve)")
+    ap.add_argument("--age-scale-recent", action="store_true",
+                    help="with --age-scale: four bands fitted to the recent test seasons, shrunk by each band's variance (backtest_inseason --age-scale-recent)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
     if args.no_career_todate:
@@ -127,7 +134,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--age-scale-by-position"] if args.age_scale and getattr(args, "age_scale_by_position", False) else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--age-scale-by-position"] if args.age_scale and getattr(args, "age_scale_by_position", False) else []) + (["--age-scale-curve"] if args.age_scale and getattr(args, "age_scale_curve", False) else []) + (["--age-scale-recent"] if args.age_scale and getattr(args, "age_scale_recent", False) else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + require, args.dry_run)

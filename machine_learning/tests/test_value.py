@@ -144,6 +144,15 @@ class TestAgeScale:
         assert value.age_scale_factors(df, table).tolist() == [0.45, 0.85, 0.8, 1.27]        # the cell, the cell, the band, the band
         assert value.age_scale_factors(df.drop("position"), table).tolist() == [0.8, 0.8, 0.8, 1.27]   # no position column: bands only
 
+    def test_the_curve_by_year_of_age_wins_over_the_band_and_clips_to_its_ends(self):
+        """owner, 2026-10-14: a curve fitted to how far off we are, not three steps -- "age:NN" keys, a row's floor(age)."""
+        df = pl.DataFrame({"position": ["WR"] * 5, "age_at_season": [19.5, 22.4, 28.9, 33.0, 41.0]})
+        curve = {f"age:{a}": round(1.3 - 0.05 * (a - 21), 3) for a in range(21, 37)}            # 1.30 at 21 ... 0.55 at 36
+        table = {"<=24": 1.27, "25-28": 1.03, "29+": 0.80, **curve}
+        got = value.age_scale_factors(df, table).tolist()
+        assert got == [curve["age:21"], curve["age:22"], curve["age:28"], curve["age:33"], curve["age:36"]]   # the ends clip, 28.9 -> 28
+        assert value.age_scale_factors(df.with_columns(pl.lit(None, pl.Float64).alias("age_at_season")), table).tolist() == [1.0] * 5
+
 
 class TestMarketComparison:
     def test_spearman(self):

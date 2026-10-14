@@ -271,6 +271,35 @@ class TestRescore:
         wp = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n, by_position=True)
         assert all(k in wp and wp[k] == ws[k] for k in ws) and any("|" in k for k in wp)
         assert all(0.4 <= v <= 1.6 for k, v in wp.items() if "|" in k)
+        # the curve by year of age (owner 2026-10-14): one key per year of the range, clipped, the bands kept as the fallback
+        wc = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n, curve=True)
+        a0, a1 = ex.AGE_CURVE_RANGE
+        assert all(f"age:{a}" in wc for a in range(a0, a1 + 1)) and all(k in wc for k in ws)
+        assert all(0.6 <= wc[f"age:{a}"] <= 1.6 for a in range(a0, a1 + 1))
+        # a steep synthetic shape smooths into a monotone curve: young realize 1.5x, old 0.6x of their price
+        syn = pl.DataFrame({"cohort": [2020] * 400, "player_id": [f"p{i}" for i in range(400)], "age_at_season": [21.0 + (i % 16) for i in range(400)],
+                            "position": ["WR"] * 400, "war": [1.0] * 400, "realized_iv": [1.0] * 400})
+        syn = syn.with_columns(pl.when(pl.col("age_at_season") < 29).then(1.5).otherwise(0.6).alias("realized_war"))
+        c = ex.age_curve(syn.with_columns(ex.age_band_expr().alias("_ab")), w=1.0, lo=0.4, hi=1.8)
+        assert c["age:22"] > 1.35 and c["age:34"] < 0.75 and c["age:28"] > c["age:29"] > c["age:30"]      # smooth through the step
+
+    def test_the_recent_table_corrects_a_stable_band_in_full_and_a_swinging_one_little(self):
+        """owner 2026-10-14: "how far off we are at certain bands and the variance of those bands". Per season the young
+        realize 1.2x every year (stable); the 29-31 swing between 0.5 and 1.5 around 1.0; the 32+ fall from 1.0 to 0.5
+        in the recent seasons (recency-weighted toward 0.5)."""
+        rows = []
+        for i, T in enumerate(range(2015, 2023)):
+            for j in range(60):
+                age = 22.0 if j < 30 else (30.0 if j < 45 else 34.0)
+                real = 1.2 if age < 25 else ((0.5 if i % 2 else 1.5) if age < 32 else (1.0 if T < 2019 else 0.5))
+                rows.append({"cohort": T, "player_id": f"p{j}", "age_at_season": age, "position": "WR", "war": 1.0, "realized_war": real, "realized_iv": 1.0})
+        t = ex.age_table_recent(pl.DataFrame(rows).with_columns(ex.age_band_expr().alias("_ab")))
+        assert abs(t["age:22"] - 1.2) < 0.02 and t["age:24"] == t["age:22"]                     # stable: the full correction, one step per band
+        assert abs(t["age:30"] - 1.0) < 0.12                                                    # swinging around 1: shrunk to near 1
+        # drifted down recently: the recency-weighted mean is ~0.6, but a band that swung between 1.0 and 0.5 is uncertain, so
+        # the variance shrinkage keeps most of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
+        assert 0.75 < t["age:34"] < 1.0 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
+        assert "<=24_mean" in t and "<=24_se" in t and "32+_mean" in t                           # the evidence travels with the table
         got = []
         walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
         assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()

@@ -201,6 +201,11 @@ def main() -> None:
                     help="--current: the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (review 2026-10-13 C1; owner 2026-10-14)")
     ap.add_argument("--age-scale-by-position", action="store_true",
                     help="with --age-scale: a cell per position and age band, shrunk toward the band (owner 2026-10-14: 29+ running backs realize a third of their price)")
+    ap.add_argument("--age-scale-curve", action="store_true",
+                    help="with --age-scale: the level as a kernel-smoothed curve over each year of age instead of three bands (owner 2026-10-14)")
+    ap.add_argument("--age-scale-recent", action="store_true",
+                    help="with --age-scale: four bands (<=24 / 25-28 / 29-31 / 32+) fitted to the recent test seasons and shrunk by each band's "
+                         "season-to-season variance (owner 2026-10-14: the 29-31 level drifted to ~1.0 since 2018, the 32+ to ~0.5)")
     ap.add_argument("--career-todate", action="store_true",
                     help="--current: the career seasons (T+2 on) projected from this season's to-date rows instead of the last complete season (BACKLOG 51)")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
@@ -318,9 +323,10 @@ def main() -> None:
         age_scale = None
         if args.age_scale:                          # the age-band level correction, fitted on every test season of RUN's saved frames
             import experiments as _ex
-            age_scale = _ex.age_scale_table(args.age_scale, by_position=args.age_scale_by_position)
-            print(f"age-band level correction from {args.age_scale} (career spans{', by position' if args.age_scale_by_position else ''}): "
-                  + ", ".join(f"{b} x{v:.2f}" for b, v in sorted(age_scale.items())), flush=True)
+            age_scale = _ex.age_scale_table(args.age_scale, by_position=args.age_scale_by_position, curve=args.age_scale_curve, recent=args.age_scale_recent)
+            print(f"age level correction from {args.age_scale} (career spans{', by position' if args.age_scale_by_position else ''}"
+                  f"{', the curve by year of age' if args.age_scale_curve else ''}{', four bands from the recent seasons, variance-shrunk' if args.age_scale_recent else ''}): "
+                  + ", ".join(f"{b} x{v:.2f}" for b, v in sorted(age_scale.items()) if not (b.endswith("_mean") or b.endswith("_se"))), flush=True)
         snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl, sigma_mode=args.sigma, age_scale=age_scale)
         print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
@@ -356,6 +362,7 @@ def main() -> None:
             "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target, "draft_rows": args.draft_rows, "snapshot_weeks": args.snapshot_weeks, "inseason_groups": args.inseason_groups, "inseason_backend": args.inseason_backend,
             "sigma_mode": args.sigma, "quantile_grid": args.quantile_grid,
             "age_scale": age_scale, "age_scale_run": args.age_scale, "age_scale_by_position": args.age_scale_by_position,   # build_war prices the career spans with the same table
+            "age_scale_curve": args.age_scale_curve, "age_scale_recent": args.age_scale_recent,
             "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
             "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
         }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")
