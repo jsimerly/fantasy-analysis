@@ -141,8 +141,8 @@ class TestAgeSurvival:
         rng = np.random.default_rng(7)
         ages = rng.uniform(22, 40, 3000)
         p = np.where(ages < 30, 0.92, 1 / (1 + np.exp(-(9.0 - 0.3 * ages))))          # 0.92 flat, then 0.5 at 30 -> 0.14 at 36
-        t = pl.DataFrame({"position": ["RB"] * 3000, "age_at_season": ages, "games": [10] * 3000, "h1_observable": [True] * 3000,
-                          "h1_played": rng.random(3000) < p})
+        t = pl.DataFrame({"position": ["RB"] * 3000, "age_at_season": ages, "games": [14] * 3000, "ppg": [15.0] * 3000,
+                          "h1_observable": [True] * 3000, "h1_played": rng.random(3000) < p})
         lin, quad = career.AgeSurvival().fit(t), career.AgeSurvival(quadratic=True).fit(t)
         assert len(quad.coef["RB"]) == 3 and len(lin.coef["RB"]) == 2
         old, young = np.array([36.0]), np.array([25.0])
