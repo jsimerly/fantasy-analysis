@@ -241,10 +241,18 @@ def build_injury(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
                      pl.col("inj_weeks_out").alias("lag1_inj_weeks_out"),
                      pl.col("inj_soft_tissue_weeks").alias("lag1_inj_soft_tissue_weeks"),
                      pl.col("inj_structural_weeks").alias("lag1_inj_structural_weeks"))
-    first = int(agg["season"].min())
+    # two coverages (review 2026-10-13, D5): the reserve lists come from the weekly rosters (2002 on), the injury report
+    # from 2009. One floor at the fact's first season taught the model that 2002-2008 (24 % of its rows) were never
+    # listed and never out; the report-derived columns are unknown before the first season with a report row
+    first_reserve = int(agg["season"].min())
+    reported = inj.filter(pl.col("on_injury_report").fill_null(False))
+    first_report = int(reported["season"].min()) if reported.height else None
+    reserve_cols = ["inj_reserve_weeks"]
+    report_cols = [c for c in INJURY_COLS if not c.startswith("lag1_") and c not in reserve_cols]
     out = matrix.join(agg, on=KEY, how="left").join(lag, on=KEY, how="left")
-    out = _coverage_fill(out, [c for c in INJURY_COLS if not c.startswith("lag1_")], first)
-    return _coverage_fill(out, [c for c in INJURY_COLS if c.startswith("lag1_")], first + 1)
+    out = _coverage_fill(out, reserve_cols, first_reserve)
+    out = _coverage_fill(out, report_cols, first_report)
+    return _coverage_fill(out, [c for c in INJURY_COLS if c.startswith("lag1_")], None if first_report is None else first_report + 1)
 
 
 # -------------------------------------------------------------------------------- role

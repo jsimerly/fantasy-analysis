@@ -301,6 +301,11 @@ def main() -> None:
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, range_quantiles=GRID_Q if args.quantile_grid else None, **is_kw).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
+        # players with a career tail and no game yet this season (review 2026-10-13, D4): a zero-game snapshot carrying the
+        # preseason projection -- the rest of this season pro-rated to the games left (zero on reserve now), next season h2
+        snap = inseason.no_game_snapshots(snap, base_tail, cur, w_now, status=gi.get("status"))
+        n_ng = snap.filter(pl.col("snapshot_origin") == "no_game_yet").height
+        print(f"no game yet this season but a career tail: {n_ng} zero-game snapshots (rest of season pro-rated, zero on reserve)", flush=True)
         rookie_tbl = inseason.rookie_tail_table(base, H, through=last_complete)
         if args.sigma == "band" and not args.range:
             raise SystemExit("--sigma band needs --range (the band comes from the TabPFN career tail)")

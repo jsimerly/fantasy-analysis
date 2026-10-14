@@ -126,6 +126,55 @@ class TestInSeasonValue:
         b = out.filter(pl.col("player_id") == "b").to_dicts()[0]        # no career tail -> only ros/next
         assert b["vorp_ros"] == 0.0 and b["vorp_next"] == 32.0 and abs(b["iv_inseason"] - 16.0) < 1e-9
 
+    def test_next_season_is_priced_with_the_second_year_spread(self):
+        """review 2026-10-13 (C4): next season off a T-1 row is year two -- sigma[2], the spread build_war prices it with;
+        the iv column had used sigma[1] (a narrower upside than the WAR column for the same player)."""
+        snaps = pl.DataFrame({"player_id": ["a"], "position": ["WR"], "ros_ppg_hat": [10.0], "ros_games_hat": [10.0],
+                              "next_ppg_hat": [10.0], "next_games_hat": [10.0]})
+        career_pred = pl.DataFrame({"player_id": ["a"], "h3_ppg_hat": [10.0], "h3_games_hat": [10.0]})
+        sigma = {1: {"__all__": 0.001}, 2: {"__all__": 4.0}, 3: {"__all__": 0.001}}       # only year two has a real spread
+        out = inseason.inseason_value(snaps, career_pred, {"WR": 10.0}, sigma, [1, 2, 3], discount_rate=0.0).row(0, named=True)
+        assert out["vorp_ros"] < 0.1 and out["h3_vorp_hat"] < 0.1                     # at the replacement line with no spread: nothing
+        assert out["vorp_next"] > 10.0                                                 # the same projection priced with sigma[2]: the upside term
+
+
+class TestNoGameSnapshots:
+    """review 2026-10-13 (D4): a player with a career tail and no stat line this season had no row anywhere."""
+
+    def _tail(self):
+        return pl.DataFrame({"player_id": ["played", "hurt", "ir", "nohat"], "season": [2025] * 4, "player_name": ["P", "H", "I", "N"],
+                             "position": ["RB", "RB", "WR", "TE"], "team": ["GB", "SEA", "DAL", "NYG"], "age_at_season": [27.0, 24.0, 29.0, 25.0],
+                             "exp_at_season": [5, 2, 7, 3], "fpts": [200.0, 150.0, 120.0, 50.0], "ppg": [12.5, 10.0, 8.0, 5.0], "games": [16, 15, 15, 10],
+                             "h1_ppg_hat": [12.0, 11.0, 9.0, None], "h1_games_hat": [15.0, 14.0, 14.0, None],
+                             "h2_ppg_hat": [11.0, 10.5, 8.0, None], "h2_games_hat": [14.0, 13.0, 12.0, None],
+                             "h3_ppg_hat": [10.0, 10.0, 7.0, 4.0], "h3_games_hat": [12.0, 12.0, 10.0, 8.0]})
+
+    def test_zero_game_rows_carry_the_preseason_projection_pro_rated(self):
+        snap = pl.DataFrame({"player_id": ["played"], "season": [2026], "week": [5], "position": ["RB"], "td_games": [5],
+                             "ros_ppg_hat": [13.0], "ros_games_hat": [11.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+        status = pl.DataFrame({"season": [2026] * 4, "week": [4, 5, 4, 5], "gsis_id": ["hurt", "hurt", "ir", "ir"],
+                               "status": ["injured_out", "injured_out", "injured_reserve", "injured_reserve"],
+                               "roster_status": ["ACT", "ACT", "RES", "RES"], "injury_class": ["soft_tissue", "soft_tissue", "knee_achilles", "knee_achilles"]})
+        out = inseason.no_game_snapshots(snap, self._tail(), 2026, 5, status=status).sort("player_id")
+        by = {r["player_id"]: r for r in out.to_dicts()}
+        assert set(by) == {"played", "hurt", "ir"}                                       # a tail without h1 adds no row
+        assert by["played"]["snapshot_origin"] == "played" and by["played"]["ros_ppg_hat"] == 13.0   # the model's own rows untouched
+        h = by["hurt"]
+        assert h["snapshot_origin"] == "no_game_yet" and h["td_games"] == 0 and h["td_missed"] == 5 and h["season"] == 2026 and h["week"] == 5
+        assert h["age_at_season"] == 25.0 and h["exp_at_season"] == 3 and h["prev_ppg"] == 10.0 and h["prev_games"] == 15
+        assert h["ros_ppg_hat"] == 11.0 and abs(h["ros_games_hat"] - 14.0 * 12 / 17) < 1e-9     # h1 pro-rated to the 12 games left
+        assert h["next_ppg_hat"] == 10.5 and h["next_games_hat"] == 13.0 and abs(h["next_fpts_hat"] - 136.5) < 1e-9
+        assert by["ir"]["ros_games_hat"] == 0.0 and by["ir"]["next_games_hat"] == 12.0          # on reserve now: nothing this season, next season stands
+
+    def test_values_through_the_in_season_pricing(self):
+        snap = pl.DataFrame({"player_id": ["played"], "season": [2026], "week": [5], "position": ["RB"],
+                             "ros_ppg_hat": [13.0], "ros_games_hat": [11.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+        tail = self._tail()
+        out = inseason.inseason_value(inseason.no_game_snapshots(snap, tail, 2026, 5), tail, {"RB": 10.0, "WR": 8.0, "TE": 5.0}, None, [1, 2, 3], discount_rate=0.0)
+        h = out.filter(pl.col("player_id") == "hurt").row(0, named=True)
+        assert abs(h["vorp_ros"] - 1.0 * 14.0 * 12 / 17) < 1e-9 and abs(h["vorp_next"] - 0.5 * 13.0) < 1e-9 and h["h3_vorp_hat"] == 0.0
+        assert h["iv_inseason"] > 0 and "played" in out["player_id"].to_list()
+
 
 def _team_week():
     rows = []
