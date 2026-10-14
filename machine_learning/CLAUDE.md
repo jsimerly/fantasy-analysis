@@ -21,6 +21,13 @@ file is the working guide for this folder; [README.md](README.md) has the longer
   2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`). `build_war` and `export_projections` refuse a run whose stamped
   models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its
   own backends are not production, so a trees refresh must say so).
+- **Is the run working? `scripts/run_status.py <log>`** (owner, 2026-10-14): the live processes, the log's last line and
+  its age, the stage against its cumulative budget, the GPU's power — and a verdict. The 2026-10-13/14 refresh sat ten
+  hours in the to-date career tail at 100 % utilization and 91 W: utilization says busy, power says the card is waiting
+  on memory. A GPU run is STALLED when its log has not moved for an hour, or the card draws under 120 W at full
+  utilization; every unattended GPU run gets a wall-time budget (`timeout -k 60s 6h` in the chain) and the refresh has a
+  fallback (`--no-career-todate`). The career model's pooled fit and its per-horizon predictions print their rows and
+  seconds, so the tail is no longer one silent call.
 - **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
   players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
   +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)

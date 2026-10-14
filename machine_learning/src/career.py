@@ -337,11 +337,22 @@ class HorizonModels:
             w = self._weights(played); wp.append(w if w is not None else np.ones(played.height))
             if self.target == "blend":
                 yr.append(y - played["ppg"].fill_null(0.0).to_numpy().astype(float))
+        # heartbeat (2026-10-14: a refresh sat ten hours in this stage with nothing in the log): rows and seconds per pooled fit
+        import time as _time
+        t0 = _time.time()
         g = self._new().fit(np.vstack(Xg), np.concatenate(yg), sample_weight=np.concatenate(wg) if self.weight else None)
+        if self.backend != "xgb":
+            print(f"    pooled games model: {sum(len(y) for y in yg):,} rows x {len(self.horizons)} horizons fitted in {_time.time() - t0:.0f} s", flush=True)
+        t0 = _time.time()
         p = self._new().fit(np.vstack(Xp), np.concatenate(yp), sample_weight=np.concatenate(wp) if self.weight else None)
+        if self.backend != "xgb":
+            print(f"    pooled ppg model: {sum(len(y) for y in yp):,} rows fitted in {_time.time() - t0:.0f} s", flush=True)
         self.stacked_models = {"games": g, "ppg": p}
         if self.target == "blend":
+            t0 = _time.time()
             self.stacked_models["ppg_res"] = self._new().fit(np.vstack(Xp), np.concatenate(yr), sample_weight=np.concatenate(wp) if self.weight else None)
+            if self.backend != "xgb":
+                print(f"    pooled residual model fitted in {_time.time() - t0:.0f} s", flush=True)
         for k in self.horizons:                      # the per-horizon slots point at the shared models
             self.games_models[k], self.ppg_models[k] = g, p
 
@@ -578,9 +589,14 @@ class HorizonModels:
         X = self.feature_frame(df).to_numpy()
         cols = []
         sigma = getattr(self, "sigma", None)
+        import time as _time
+        t_all = _time.time()
         for k in self.horizons:
+            t0 = _time.time()
             games = np.clip((self.stacked_models["games"].predict(self._stack_X(df, k)) if self.stacked else self.games_models[k].predict(X)), 0.0, MAX_GAMES)
             ppg = self._ppg_hat(k, X, df)
+            if self.backend != "xgb":            # heartbeat: the TabPFN tail is one long silent call per horizon otherwise
+                print(f"    horizon {k}: {df.height:,} rows projected in {_time.time() - t0:.0f} s ({_time.time() - t_all:.0f} s so far)", flush=True)
             if self.games_table:
                 games = self._apply_games_table(df, k, games)
             if self.calibration:
