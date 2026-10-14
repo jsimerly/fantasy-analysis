@@ -370,7 +370,12 @@ talent"):** the experiment chain is halted the moment the first refresh exits; `
 PR branch, the ML guide's smoke runs on the trees, and a second production refresh runs on the merged code (the age-band
 correction, the zero-game players, the injury floor, one spread, the backend guard) — the page is republished from
 it; the halted experiments restart afterwards under the merged code with a fresh baseline (`tabpfn35_young_base2`) so
-every pairing is like for like, with the window report by age and the age gate on each (`chain_night2.sh`).
+every pairing is like for like, with the window report by age and the age gate on each (`chain_night2.sh`). **Outcome:**
+none of it ran overnight — the first refresh's career tail from this season computed for ten hours (its usual two and a
+half) after a CUDA allocator warning at the start of the run, so the stopper never fired. Killed 09:57; the branch
+merged (f2ee8fe, 249 tests), the smoke passed end to end on the trees (701 players projected, 205 zero-game snapshots,
+the age correction applied), and the chain relaunched at 09:59 with a six-hour budget on the refresh and a fallback
+off the last complete season's tail (`weekly_refresh --no-career-todate`).
 
 **Queued code changes, no decision needed (QUEUED), in priority order.** D9 (player_id keys) → C1's level correction
 (an age-band × horizon calibration or the survival form) → C2 (band widening, and the in-season model's own band for

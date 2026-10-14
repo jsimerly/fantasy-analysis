@@ -2102,4 +2102,12 @@ t = 1.45) stays a tie.
     00:35):** chain_prod halted after its refresh; the branch merged, smoked, a second production refresh on the merged
     code, the page republished from it; the experiments restarted under the merged code with a fresh baseline
     (`chain_night2.sh`: tabpfn35_young_base2, is5, the young variants with the window report by age and the age gate,
-    the seven-year run, the in-season week variants).
+    the seven-year run, the in-season week variants). **What happened (2026-10-14 09:55):** nothing of it -- the first
+    refresh never finished. Its career tail from this season computed from 00:05 to 09:57, ten hours against its usual
+    two and a half, after a CUDA allocator warning two minutes into the run (free: 0 of 17 GB) that most likely left
+    TabPFN on its memory-saving path; the base tail is cached, the to-date one never returned, so the stopper never
+    fired and no merge, refresh, publish or experiment ran. Killed at 09:57; the branch merged (f2ee8fe, 249 tests), the
+    smoke on the trees passed end to end (701 players projected, 205 of them zero-game snapshots; the age-band
+    correction applied), and the chain was relaunched at 09:59 with a six-hour budget on the refresh and a fallback
+    (`weekly_refresh --no-career-todate`, new) off the last complete season's tail. A to-date tail that hangs is now a
+    known failure: watch for the allocator warning at the start of a run and the tail's wall time.
