@@ -282,6 +282,19 @@ class TestRescore:
         syn = syn.with_columns(pl.when(pl.col("age_at_season") < 29).then(1.5).otherwise(0.6).alias("realized_war"))
         c = ex.age_curve(syn.with_columns(ex.age_band_expr().alias("_ab")), w=1.0, lo=0.4, hi=1.8)
         assert c["age:22"] > 1.35 and c["age:34"] < 0.75 and c["age:28"] > c["age:29"] > c["age:30"]      # smooth through the step
+        got = []
+        walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
+        assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert all(c not in walked.columns or walked[c].null_count() == walked.height for c in ("age_scale_<=24", "age_scale_29+"))   # nothing complete: unscaled
+        # a frame with a complete earlier cohort: the scale is applied to the later one's value columns
+        later = pl.concat([frames, frames.filter(pl.col("cohort") == 2021).with_columns(pl.lit(2023).alias("cohort"))], how="diagonal")
+        cfg3 = ex.ExperimentConfig(name="t", groups=cfg.groups, horizons=H, cohorts=[2020, 2021, 2023], params=cfg.params)
+        got = []
+        scaled, _ = ex.rescore(later, cfg3, walk_age_scale=True, collect=got)
+        f23 = got[-1]; base = later.filter(pl.col("cohort") == 2023)
+        sc = ex.walk_forward_age_scales(later, 2023, H, top_n=cfg.top_n)
+        exp = base.with_columns(ex.age_band_expr().alias("b")).with_columns(pl.col("b").replace_strict(sc, default=1.0, return_dtype=pl.Float64).alias("s"))
+        assert f23["war"].to_list() == pytest.approx((exp["war"] * exp["s"]).to_list())
 
     def test_the_recent_table_corrects_a_stable_band_in_full_and_a_swinging_one_little(self):
         """owner 2026-10-14: "how far off we are at certain bands and the variance of those bands". Per season the young
@@ -297,22 +310,9 @@ class TestRescore:
         assert abs(t["age:22"] - 1.2) < 0.02 and t["age:24"] == t["age:22"]                     # stable: the full correction, one step per band
         assert abs(t["age:30"] - 1.0) < 0.12                                                    # swinging around 1: shrunk to near 1
         # drifted down recently: the recency-weighted mean is ~0.6, but a band that swung between 1.0 and 0.5 is uncertain, so
-        # the variance shrinkage keeps most of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
+        # the variance shrinkage keeps part of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
         assert 0.55 < t["age:34"] < 0.95 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
         assert "<=24_mean" in t and "<=24_se" in t and "32+_mean" in t                           # the evidence travels with the table
-        got = []
-        walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
-        assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()
-        assert all(c not in walked.columns or walked[c].null_count() == walked.height for c in ("age_scale_<=24", "age_scale_29+"))   # nothing complete: unscaled
-        # a frame with a complete earlier cohort: the scale is applied to the later one's value columns
-        later = pl.concat([frames, frames.filter(pl.col("cohort") == 2021).with_columns(pl.lit(2023).alias("cohort"))], how="diagonal")
-        cfg3 = ex.ExperimentConfig(name="t", groups=cfg.groups, horizons=H, cohorts=[2020, 2021, 2023], params=cfg.params)
-        got = []
-        scaled, _ = ex.rescore(later, cfg3, walk_age_scale=True, collect=got)
-        f23 = got[-1]; base = later.filter(pl.col("cohort") == 2023)
-        sc = ex.walk_forward_age_scales(later, 2023, H, top_n=cfg.top_n)
-        exp = base.with_columns(ex.age_band_expr().alias("b")).with_columns(pl.col("b").replace_strict(sc, default=1.0, return_dtype=pl.Float64).alias("s"))
-        assert f23["war"].to_list() == pytest.approx((exp["war"] * exp["s"]).to_list())
 
     def test_band_sigma_prices_each_players_own_spread(self):
         import pytest
