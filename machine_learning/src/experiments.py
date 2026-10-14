@@ -424,36 +424,54 @@ def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float =
 age_band_expr = value.age_band_expr      # the bands of value.AGE_BANDS (<= 24 / 25-28 / 29+); the window scores' AGE_BANDS below share the cuts
 
 
-def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6) -> dict[str, float]:
-    """The production table: realized / priced WAR by age band on every cohort's own top-``top_n``, clipped, with no
-    shrinkage (production prices seasons after the last test season, so every cohort is a prior)."""
+def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6, by_position: bool = False,
+                           shrink_n: float = 20.0, lo_pos: float = 0.4) -> dict[str, float]:
+    """The production table: realized / priced WAR by age band (and position with ``by_position``) on every cohort's own
+    top-``top_n``, clipped, with no shrinkage toward 1 (production prices seasons after the last test season, so every
+    cohort is a prior); a position's cell is still shrunk toward its band by n / (n + ``shrink_n``)."""
     done = cohorts.filter(pl.col("realized_iv").is_not_null())
     top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
                .with_columns(age_band_expr().alias("_ab")))
-    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
-    return {b: float(min(hi, max(lo, r_ / p_))) for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
+    return _age_scale_table(top, 1.0, lo, hi, by_position, shrink_n, lo_pos)
 
 
-def age_scale_table(run: str, top_n: int = 150) -> dict[str, float]:
+def age_scale_table(run: str, top_n: int = 150, by_position: bool = False) -> dict[str, float]:
     """``age_scales_from_frames`` on a run's saved cohort frames (``--save-cohorts``), for the weekly refresh."""
-    return age_scales_from_frames(load_cohorts(run), top_n)
+    return age_scales_from_frames(load_cohorts(run), top_n, by_position=by_position)
+
+
+def _age_scale_table(top: pl.DataFrame, w: float, lo: float, hi: float, by_position: bool, shrink_n: float, lo_pos: float) -> dict[str, float]:
+    """The table from a banded top set: band -> scale, and with ``by_position`` "POS|band" -> scale, each cell shrunk
+    toward its band by n / (n + ``shrink_n``) (the 29+ running backs are 28 player-cohorts over eight seasons), then
+    toward 1 by ``w`` and clipped (the position cells down to ``lo_pos``: 29+ running backs realize a third of their price)."""
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    band = {b: r_ / p_ for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
+    out = {b: float(min(hi, max(lo, 1.0 + w * (ratio - 1.0)))) for b, ratio in band.items()}
+    if by_position:
+        gp = top.group_by("position", "_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"), pl.len().alias("n"))
+        for pos, b, p_, r_, n_ in gp.iter_rows():
+            if b not in band or not p_ or p_ <= 0:
+                continue
+            cell = (n_ * (r_ / p_) + shrink_n * band[b]) / (n_ + shrink_n)
+            out[f"{pos}|{b}"] = float(min(hi, max(lo_pos, 1.0 + w * (cell - 1.0))))
+    return out
 
 
 def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: int = 150, lo: float = 0.6, hi: float = 1.6,
-                            prior_cohorts: float = 1.0) -> dict[str, float]:
+                            prior_cohorts: float = 1.0, by_position: bool = False, shrink_n: float = 20.0, lo_pos: float = 0.4) -> dict[str, float]:
     """Per-age-band value scale for cohort ``T`` from the cohorts whose outcomes are complete by then: realized WAR over
     projected WAR by band on each complete cohort's own top-``top_n`` by projected WAR (the players a manager weighs),
     pooled, shrunk toward 1 by n / (n + ``prior_cohorts``) and clipped to [lo, hi]. The age gradient of the review
     (2026-10-13, C1: under-25s realize ~1.3x their price, 29+ ~0.8x) corrected walk-forward (owner, 2026-10-14).
-    Empty when no earlier cohort is complete (scale 1)."""
+    ``by_position`` adds a cell per position and band (owner, 2026-10-14: "a curve by position"; the 29+ gradient is a
+    running-back story, 0.32, against 0.84 for quarterbacks). Empty when no earlier cohort is complete (scale 1)."""
     done = cohorts.filter((pl.col("cohort") + max(H) <= T) & pl.col("realized_iv").is_not_null())
     if done.height == 0:
         return {}
     top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
                .with_columns(age_band_expr().alias("_ab")))
     w = top["cohort"].n_unique() / (top["cohort"].n_unique() + prior_cohorts)
-    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
-    return {b: float(min(hi, max(lo, 1.0 + w * (r_ / p_ - 1.0)))) for b, p_, r_ in g.iter_rows() if p_ and p_ > 0}
+    return _age_scale_table(top, w, lo, hi, by_position, shrink_n, lo_pos)
 
 
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
@@ -497,7 +515,7 @@ def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float],
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
             src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
             rep_for: Callable[[int], dict[str, float]] | None = None, curve=None, walk_age_scale: bool = False,
-            collect: list | None = None) -> tuple[pl.DataFrame, dict]:
+            collect: list | None = None, age_by_position: bool = False) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
     multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
     ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
@@ -529,10 +547,10 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         if scales:
             sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
             f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
-        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n) if walk_age_scale else {}
-        if ascales:                               # the age-band level correction (C1), walk-forward like the positional one
-            sa = age_band_expr().replace_strict({k: float(v) for k, v in ascales.items()}, default=1.0, return_dtype=pl.Float64)
-            f = f.with_columns([(pl.col(c) * sa).alias(c) for c in SCALE_COLS if c in f.columns])
+        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n, by_position=age_by_position) if walk_age_scale else {}
+        if ascales:                               # the age-band level correction (C1), walk-forward like the positional one; the value
+            fac = value.age_scale_factors(f, ascales)   # layer resolves both the band keys and the "POS|band" cells
+            f = f.with_columns([pl.Series(c, f[c].fill_null(0.0).to_numpy().astype(float) * fac) for c in SCALE_COLS if c in f.columns])
         if collect is not None:
             collect.append(f)
         fit = {}

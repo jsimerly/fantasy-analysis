@@ -267,6 +267,10 @@ class TestRescore:
             p_, r_ = float(grp["war"].sum()), float(grp["realized_war"].sum())
             if p_ > 0:
                 assert ws[b] == pytest.approx(min(1.6, max(0.6, 1.0 + 0.5 * (r_ / p_ - 1.0))))    # one cohort: half-way toward its ratio
+        # by position (owner 2026-10-14): the band keys unchanged, a "POS|band" cell per position between its raw ratio and the band
+        wp = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n, by_position=True)
+        assert all(k in wp and wp[k] == ws[k] for k in ws) and any("|" in k for k in wp)
+        assert all(0.4 <= v <= 1.6 for k, v in wp.items() if "|" in k)
         got = []
         walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
         assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()

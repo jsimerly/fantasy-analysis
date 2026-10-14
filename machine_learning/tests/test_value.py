@@ -137,6 +137,13 @@ class TestAgeScale:
         y3 = tail_only.filter(pl.col("player_id") == "young").row(0, named=True)
         assert y3["h1_vorp_hat"] == 80 and y3["h2_vorp_hat"] == 80 and y3["h3_vorp_hat"] == 100     # the in-season spans untouched
 
+    def test_a_position_cell_wins_over_its_band_and_the_band_is_the_fallback(self):
+        """owner, 2026-10-14: a curve by position -- 29+ running backs realize a third of their price, quarterbacks 0.84."""
+        df = pl.DataFrame({"position": ["RB", "QB", "WR", "RB"], "age_at_season": [30.0, 31.0, 32.0, 23.0]})
+        table = {"29+": 0.8, "RB|29+": 0.45, "QB|29+": 0.85, "<=24": 1.27}
+        assert value.age_scale_factors(df, table).tolist() == [0.45, 0.85, 0.8, 1.27]        # the cell, the cell, the band, the band
+        assert value.age_scale_factors(df.drop("position"), table).tolist() == [0.8, 0.8, 0.8, 1.27]   # no position column: bands only
+
 
 class TestMarketComparison:
     def test_spearman(self):

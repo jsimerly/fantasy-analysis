@@ -69,7 +69,13 @@ def age_scale_factors(df: pl.DataFrame, age_scale: dict[str, float] | None) -> n
     without a table, an age column, or an age."""
     if not age_scale or "age_at_season" not in df.columns:
         return np.ones(df.height)
-    fac = age_band_expr().replace_strict({k: float(v) for k, v in age_scale.items()}, default=1.0, return_dtype=pl.Float64)
+    table = {k: float(v) for k, v in age_scale.items()}
+    band = age_band_expr()
+    fac = band.replace_strict({k: v for k, v in table.items() if "|" not in k}, default=1.0, return_dtype=pl.Float64)
+    by_pos = {k: v for k, v in table.items() if "|" in k}          # "RB|29+": a position's own cell, the band as the fallback
+    if by_pos and "position" in df.columns:
+        key = pl.concat_str([pl.col("position").cast(pl.Utf8), pl.lit("|"), band])
+        fac = pl.coalesce([key.replace_strict(by_pos, default=None, return_dtype=pl.Float64), fac])
     return df.select(fac).to_series().fill_null(1.0).to_numpy().astype(float)
 
 

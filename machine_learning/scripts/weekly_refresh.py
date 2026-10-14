@@ -109,6 +109,7 @@ def main() -> None:
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--age-scale", default=None, metavar="RUN",
                     help="the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (backtest_inseason --age-scale; review C1, owner 2026-10-14)")
+    ap.add_argument("--age-scale-by-position", action="store_true", help="with --age-scale: a cell per position and age band (backtest_inseason --age-scale-by-position)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
     if args.no_career_todate:
@@ -126,7 +127,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--age-scale-by-position"] if args.age_scale and getattr(args, "age_scale_by_position", False) else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + require, args.dry_run)

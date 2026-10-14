@@ -55,12 +55,12 @@ def test_a_production_refresh_lets_the_exports_require_the_production_backend(mo
     monkeypatch.setattr(m, "current_season_week", lambda: (2026, 6))
     monkeypatch.setattr(m.power, "keep_awake", lambda *a, **k: True)
     monkeypatch.setattr(sys, "argv", ["weekly_refresh.py", "--dry-run", "--run-date", "2026-10-14", "--backend", "tabpfn", "--inseason-backend", "tabpfn",
-                                      "--age-scale", "some_run", "--skip", "analysis", "export"])
+                                      "--age-scale", "some_run", "--age-scale-by-position", "--skip", "analysis", "export"])
     m.main()
     war = next(c for c in seen if any("build_war.py" in str(x) for x in c))
     assert "--require-backend" not in war
     ins = next(c for c in seen if any("backtest_inseason.py" in str(x) for x in c))
-    assert ins[ins.index("--age-scale") + 1] == "some_run"                       # the age-band correction reaches the in-season run
+    assert ins[ins.index("--age-scale") + 1] == "some_run" and "--age-scale-by-position" in ins   # the correction, by position, reaches the in-season run
 
 
 def test_no_career_todate_overrides_the_preset(monkeypatch):

@@ -273,9 +273,16 @@ takes the table fitted on all eight test seasons with no shrinkage (`experiments
 ×1.03, 29+ ×0.80; by horizon the young side grows, 1.23 / 1.26 / 1.38 for h1 / h2 / h3, the old side 0.80 / 0.76 /
 0.85) on the career spans only — the in-season model's own level is not measured, so rest of season and next season
 are untouched — in `inseason_value`, the preseason view and `build_war` from the run's `metrics.json`. Not fixed by it:
-the cause. QUEUED: the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every
-age, cannot bend from a flat hazard at 27 to a steep one at 34), the rookie tail's ratios clipped at 1.15, and a
-per-horizon table once the seven-year windows are in; joint pricing stays off until then (OWNER).
+the cause. **By position (owner, 2026-10-14 afternoon):** realized / priced by position × band on the test seasons —
+under 25 every position 1.18-1.31; 25-28 QB 0.86 (over-priced) against RB / WR / TE 1.06-1.11; 29+ QB 0.84, TE 0.88,
+WR 0.71, **RB 0.32** (28 player-cohorts, per-season spread 0.47). A position × band table (each cell shrunk toward its
+band, `--age-by-position`), walk-forward: ordering 0.620 vs the band table's 0.621, wins error 0.511 vs 0.507 (t −2.2
+against the base), RB 29+ unchanged at 0.33, QB 25-28 0.86 → 0.92, WR 29+ 0.71 → 0.81, TE 29+ overshooting to 1.04.
+Not adopted: a scale cannot express a cliff in games, and the cells are noisy; the per-position answer is the survival
+curve. QUEUED: the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every age,
+cannot bend from a flat hazard at 27 to a steep one at 34; the quadratic variant per position and tier,
+`tabpfn35_surv_q`, runs in the chain), the rookie tail's ratios clipped at 1.15, and a per-horizon table once the
+seven-year windows are in; joint pricing stays off until then (OWNER).
 
 ### C2. The band is too narrow to price upside with — CONFIRMED
 20-80 coverage 0.55-0.56 at one year (QB 0.52 at three), band sigma 17-22 % below the holdout residual sigma, 9 % of

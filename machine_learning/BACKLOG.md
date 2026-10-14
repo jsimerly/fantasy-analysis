@@ -2110,4 +2110,13 @@ t = 1.45) stays a tie.
     smoke on the trees passed end to end (701 players projected, 205 of them zero-game snapshots; the age-band
     correction applied), and the chain was relaunched at 09:59 with a six-hour budget on the refresh and a fallback
     (`weekly_refresh --no-career-todate`, new) off the last complete season's tail. A to-date tail that hangs is now a
-    known failure: watch for the allocator warning at the start of a run and the tail's wall time.
+    known failure: watch for the allocator warning at the start of a run and the tail's wall time. **The second refresh
+    (09:59-14:44) is on the page: 701 players (205 zero-game snapshots), the age-band correction, 15-18 roster placeholders
+    per league. **By position (owner, 14:50: "a curve by position")?** Realized / priced on the test seasons by position x
+    band: under 25 every position 1.18-1.31; 25-28 QB 0.86 (over-priced) vs RB / WR / TE 1.06-1.11; 29+ QB 0.84, TE 0.88,
+    WR 0.71, **RB 0.32** (28 player-cohorts, a per-season spread of 0.47). A position x band table (`--age-by-position`,
+    `--age-scale-by-position`; each cell shrunk toward its band by n / (n + 20), floor 0.4), walk-forward: ordering 0.620
+    vs the band table's 0.621, wins error 0.511 vs 0.507 (t −2.2 against the base, past the no-worse line), RB 29+ still
+    0.33, QB 25-28 0.86 -> 0.92, WR 29+ 0.71 -> 0.81, TE 29+ overshoots to 1.04. NOT adopted: the cells are noisy and the
+    one that matters is a cliff in games, not a scale; the band table stays in production and the per-position answer is
+    the survival curve (`tabpfn35_surv_q`, quadratic logit per position and tier, in the night chain).
