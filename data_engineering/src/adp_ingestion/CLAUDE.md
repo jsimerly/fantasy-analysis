@@ -18,8 +18,10 @@ carry `start_date` / `end_date`). MFL's export takes a period: `ALL` keeps growi
 canary (a 400 / 404 on the coming season counts as "not published yet" only when last season answered) and FFC's
 frozen final week catches up once the year is past; the model's `adp_next` and the in-season `preseason` group get
 the new season the day it lands. By hand: `adp-yearly` (`ADP_SEASONS=current` or a range); `ADP_DRY_RUN=1`.
-**Lake state:** 2009-2026 were backfilled 2026-10-12 with MFL `ALL` and FFC's then-current windows; the re-pull of
-MFL 2011-2026 with `AUG15` waits for the owner's go, FFC 2026 corrects itself when FFC freezes it (the
+**Lake state:** 2009-2026 were backfilled 2026-10-12 with MFL `ALL`; MFL 2011-2026 were re-pulled 2026-10-14 at `AUG15` on
+the owner's go (every partition carries `period`), FFC's past seasons rewritten from their frozen preseason windows
+with their dates; FFC 2026 is still the 2026-10-12 in-season window (109 drafts, the quality check's known-open
+row) and is unused -- the model's preseason group takes MFL wherever a season has it; FFC 2026 corrects itself when FFC freezes it (the
 `bronze.adp.windows_are_preseason` check says which partitions are not a preseason view).
 The model reads both (`inseason.preseason_features`: MFL by id where a season has it, FFC by name
 otherwise) as the `preseason` group, and the career model will take the same columns per season.
