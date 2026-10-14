@@ -20,7 +20,7 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-BANDS = [("<25", 0.0, 25.0), ("25-28", 25.0, 29.0), ("29+", 29.0, 99.0)]
+BANDS = [("<=24", 0.0, 25.0), ("25-28", 25.0, 29.0), ("29+", 29.0, 99.0)]     # the cuts of experiments.AGE_BANDS (< 25, < 29, else)
 POSITIONS = ["QB", "RB", "WR", "TE"]
 
 

@@ -45,6 +45,10 @@ PRESETS = {
                        career_todate=True,    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
                        market_run_date="2026-10-12",
                        sigma="band",
+                       # the age-band level correction on the career spans (review 2026-10-13 C1; owner 2026-10-14: "let's get this done
+                       # tonight"): realized / priced by age band on the production run's own eight test seasons, under-25s x1.27,
+                       # 25-28 x1.03, 29+ x0.80; walk-forward in the harness it halves the gradient with ordering unchanged
+                       age_scale="tabpfn35_set_stacked_blend_w2",
                        discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 
@@ -100,6 +104,8 @@ def main() -> None:
     ap.add_argument("--career-todate", action="store_true",
                     help="the career seasons (T+2 on) projected from this season's to-date rows, not the last complete season (BACKLOG 51)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
+    ap.add_argument("--age-scale", default=None, metavar="RUN",
+                    help="the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (backtest_inseason --age-scale; review C1, owner 2026-10-14)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
@@ -115,7 +121,7 @@ def main() -> None:
 
     if "inseason" not in args.skip:
         run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
              "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + require, args.dry_run)

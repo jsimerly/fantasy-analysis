@@ -177,7 +177,8 @@ def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
 def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, comps: list[war.Component], sigma: dict,
                  season_fact: pl.DataFrame, rate: float, rosters: pl.DataFrame | None, owner_id: str | None, span: str,
                  note: str = "", scale: pl.DataFrame | None = None, weeks: pl.DataFrame | None = None,
-                 replacement: str = "weekly", market_hist: tuple | None = None) -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+                 replacement: str = "weekly", market_hist: tuple | None = None,
+                 age_scale: dict | None = None) -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
     """``replacement``: "weekly" fills the league's lineups each week from the players who actually played
     (injuries and byes push the marginal starter deeper; lineup.replacement_weekly, needs ``weeks``),
     "fill" is the full-season fill (every starter assumed to play every week)."""
@@ -199,8 +200,9 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
     print(f"  starters by position (explicit fill, {last}): {starters}; replacement ({replacement}, {hist[0]}-{hist[-1]}): " + ", ".join(f"{p} {v:.1f}" for p, v in rep.items())
           + ("" if replacement != "weekly" else "; full-season fill would be " + ", ".join(f"{p} {v:.1f}" for p, v in rep_full.items())))
     print(f"  win curve: mean {curve.mean_points:.1f} sd {curve.sd_points:.1f} n={curve.n}; +10 ppg for an average team = +{10 * curve.slope_at_mean:.3f} win/week")
-    out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma)
-    out = war.wins_range(out, rep, curve, comps, rate)          # floor / ceiling wins where the projection carries a band
+    min_k = 1 if span == "career" else 3                       # the career spans only; the in-season model's level is not measured
+    out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma, age_scale=age_scale, age_scale_min_k=min_k)
+    out = war.wins_range(out, rep, curve, comps, rate, age_scale=age_scale, age_scale_min_k=min_k)   # floor / ceiling wins where the projection carries a band
     out = out.with_columns(pl.col("war").rank(method="ordinal", descending=True).cast(pl.Int64).alias("war_rank_all"))
     cmp_cols = ["player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"]
     summary = {"n": 0, "spearman": None}
@@ -300,6 +302,9 @@ def main() -> None:
     career_meta, career_run = run_meta(args)
     runs.check_backend(career_meta, args.require_backend, "build_war")       # a trees run under a production run date is refused (review 2026-10-13)
     sigma = sigma_from_career_meta(career_meta)
+    age_scale = career_meta.get("age_scale") or None          # the run's age-band level correction (review C1): the same table here
+    if age_scale:
+        print("age-band level correction on the career spans: " + ", ".join(f"{b} x{float(v):.2f}" for b, v in sorted(age_scale.items())))
     if args.source == "career":
         proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}", "projections.parquet")
         H = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_ppg_hat"))
@@ -346,7 +351,7 @@ def main() -> None:
         display = next((n for i, n, _ in gcs_io.read_lake(LEAGUES_META_PATH).select("league_id", "league_name", "league_lineage_id").iter_rows() if i == lid), spec.name) if lid else spec.name
         out, teams_df, meta = build_league(spec, curve, proj, comps, sigma, season_fact, args.discount_rate, rosters,
                                            owner_id if args.teams and not args.league else None, span, note, scale=scale,
-                                           weeks=weeks, replacement=args.replacement, market_hist=market_hist)
+                                           weeks=weeks, replacement=args.replacement, market_hist=market_hist, age_scale=age_scale)
         meta.update({"display_name": display, "lineage_id": lineage, "league_id": lid, "replacement": args.replacement})
         if args.dump:
             Path(args.dump).mkdir(parents=True, exist_ok=True)

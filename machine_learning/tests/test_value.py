@@ -110,6 +110,34 @@ class TestIntrinsicValue:
         assert c["realized_iv"] == 0.0                                 # never played
 
 
+class TestAgeScale:
+    """review 2026-10-13 C1 / owner 2026-10-14: the age-band level correction on the career spans."""
+
+    def _proj(self):
+        return pl.DataFrame({"player_id": ["young", "mid", "old", "noage"], "position": ["WR"] * 4, "age_at_season": [23.5, 26.0, 31.0, None],
+                             "h1_ppg_hat": [15.0] * 4, "h1_games_hat": [16.0] * 4, "h2_ppg_hat": [15.0] * 4, "h2_games_hat": [16.0] * 4,
+                             "h3_ppg_hat": [15.0] * 4, "h3_games_hat": [16.0] * 4})
+
+    def test_bands_cut_at_25_and_29_and_a_missing_age_is_unbanded(self):
+        bands = self._proj().select(value.age_band_expr()).to_series().to_list()
+        assert bands == ["<=24", "25-28", "29+", None]
+        assert pl.DataFrame({"age_at_season": [24.995, 28.999, 29.0]}).select(value.age_band_expr()).to_series().to_list() == ["<=24", "25-28", "29+"]
+        f = value.age_scale_factors(self._proj(), {"<=24": 1.27, "29+": 0.8})
+        assert f.tolist() == [1.27, 1.0, 0.8, 1.0]                                # an unlisted band and a missing age are 1
+        assert value.age_scale_factors(self._proj(), None).tolist() == [1.0] * 4
+
+    def test_intrinsic_value_scales_the_points_above_replacement_by_band_from_min_k(self):
+        rep = {"WR": 10.0}
+        base = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0)
+        out = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8})
+        y, o, m = (out.filter(pl.col("player_id") == p).row(0, named=True) for p in ("young", "old", "mid"))
+        assert y["h1_vorp_hat"] == 5 * 16 * 1.25 and o["h3_vorp_hat"] == 5 * 16 * 0.8 and m["h2_vorp_hat"] == 5 * 16
+        assert abs(y["iv"] - 3 * 80 * 1.25) < 1e-9 and abs(base.filter(pl.col("player_id") == "young")["iv"][0] - 240) < 1e-9
+        tail_only = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25}, age_scale_min_k=3)
+        y3 = tail_only.filter(pl.col("player_id") == "young").row(0, named=True)
+        assert y3["h1_vorp_hat"] == 80 and y3["h2_vorp_hat"] == 80 and y3["h3_vorp_hat"] == 100     # the in-season spans untouched
+
+
 class TestMarketComparison:
     def test_spearman(self):
         assert abs(value.spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-9

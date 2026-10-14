@@ -253,6 +253,34 @@ class TestRescore:
         walked, _ = ex.rescore(frames, cfg, walk_scale=True)
         assert "scale_QB" not in walked.columns or walked["scale_QB"].null_count() == walked.height      # nothing complete: unscaled
 
+    def test_walk_forward_age_scale_is_shrunk_clipped_and_walk_forward(self):
+        """review 2026-10-13 C1, owner 2026-10-14: the age-band level correction, fitted like the positional scale on the
+        cohorts complete by each cohort, on their own top set, shrunk toward 1 by n / (n + 1) and clipped to [0.6, 1.6]."""
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        assert ex.walk_forward_age_scales(frames, 2021, H) == {}                         # nothing complete by 2021
+        ws = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n)                # 2020 is complete by 2022
+        done = frames.filter((pl.col("cohort") == 2020) & pl.col("realized_iv").is_not_null())
+        top = done.sort("war", descending=True).head(cfg.top_n).with_columns(ex.age_band_expr().alias("b"))
+        assert ws and set(ws) <= {"<=24", "25-28", "29+"}
+        for (b,), grp in top.group_by("b"):
+            p_, r_ = float(grp["war"].sum()), float(grp["realized_war"].sum())
+            if p_ > 0:
+                assert ws[b] == pytest.approx(min(1.6, max(0.6, 1.0 + 0.5 * (r_ / p_ - 1.0))))    # one cohort: half-way toward its ratio
+        got = []
+        walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
+        assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert all(c not in walked.columns or walked[c].null_count() == walked.height for c in ("age_scale_<=24", "age_scale_29+"))   # nothing complete: unscaled
+        # a frame with a complete earlier cohort: the scale is applied to the later one's value columns
+        later = pl.concat([frames, frames.filter(pl.col("cohort") == 2021).with_columns(pl.lit(2023).alias("cohort"))], how="diagonal")
+        cfg3 = ex.ExperimentConfig(name="t", groups=cfg.groups, horizons=H, cohorts=[2020, 2021, 2023], params=cfg.params)
+        got = []
+        scaled, _ = ex.rescore(later, cfg3, walk_age_scale=True, collect=got)
+        f23 = got[-1]; base = later.filter(pl.col("cohort") == 2023)
+        sc = ex.walk_forward_age_scales(later, 2023, H, top_n=cfg.top_n)
+        exp = base.with_columns(ex.age_band_expr().alias("b")).with_columns(pl.col("b").replace_strict(sc, default=1.0, return_dtype=pl.Float64).alias("s"))
+        assert f23["war"].to_list() == pytest.approx((exp["war"] * exp["s"]).to_list())
+
     def test_band_sigma_prices_each_players_own_spread(self):
         import pytest
         cfg, H, per_cohort, frames = self._run()

@@ -26,10 +26,10 @@ def test_level_by_band_and_the_comparison_with_the_cohort_as_the_unit():
     b = _frame(1.0, 1.0)                       # a level candidate
     t = ag.age_level({"a": a, "b": b}, top=20)
     ra = t.filter(pl.col("run") == "a").row(0, named=True)
-    assert abs(ra["ratio_<25"] - 1.2) < 1e-9 and abs(ra["ratio_29+"] - 0.9) < 1e-9 and ra["ratio_25-28"] is None and ra["n"] == 20
+    assert abs(ra["ratio_<=24"] - 1.2) < 1e-9 and abs(ra["ratio_29+"] - 0.9) < 1e-9 and ra["ratio_25-28"] is None and ra["n"] == 20
     assert abs(ra["ratio_QB"] - 1.2) < 1e-9 and abs(ra["ratio_RB"] - 0.9) < 1e-9      # QBs are the young ones in this frame
     c = {r["band"]: r for r in ag.compare(t, "b", "a").to_dicts()}
-    assert abs(c["<25"]["a_minus_b"] + 0.2) < 1e-9 and c["<25"]["a_closer_to_1"] == 2 and c["<25"]["cohorts"] == 2
+    assert abs(c["<=24"]["a_minus_b"] + 0.2) < 1e-9 and c["<=24"]["a_closer_to_1"] == 2 and c["<=24"]["cohorts"] == 2
     assert c["29+"]["a_closer_to_1"] == 2 and c["all"]["a_closer_to_1"] == 2
 
 

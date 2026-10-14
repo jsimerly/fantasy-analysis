@@ -137,6 +137,18 @@ class TestInSeasonValue:
         assert out["vorp_ros"] < 0.1 and out["h3_vorp_hat"] < 0.1                     # at the replacement line with no spread: nothing
         assert out["vorp_next"] > 10.0                                                 # the same projection priced with sigma[2]: the upside term
 
+    def test_age_scale_corrects_the_career_tail_only(self):
+        """review 2026-10-13 C1 / owner 2026-10-14: the age-band factor on the career spans (seasons T+2 on), never on the
+        in-season model's rest of season and next season."""
+        snaps = pl.DataFrame({"player_id": ["y", "o"], "position": ["WR", "WR"], "age_at_season": [23.0, 31.0],
+                              "ros_ppg_hat": [15.0, 15.0], "ros_games_hat": [10.0, 10.0], "next_ppg_hat": [15.0, 15.0], "next_games_hat": [16.0, 16.0]})
+        career_pred = pl.DataFrame({"player_id": ["y", "o"], "h3_ppg_hat": [15.0, 15.0], "h3_games_hat": [16.0, 16.0]})
+        out = inseason.inseason_value(snaps, career_pred, {"WR": 10.0}, None, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8})
+        y, o = (out.filter(pl.col("player_id") == p).row(0, named=True) for p in ("y", "o"))
+        assert y["vorp_ros"] == o["vorp_ros"] == 50.0 and y["vorp_next"] == o["vorp_next"] == 80.0      # the in-season spans untouched
+        assert abs(y["h3_vorp_hat"] - 80 * 1.25) < 1e-9 and abs(o["h3_vorp_hat"] - 80 * 0.8) < 1e-9
+        assert abs(y["iv_inseason"] - (50 + 80 + 100)) < 1e-9 and abs(o["iv_inseason"] - (50 + 80 + 64)) < 1e-9
+
 
 class TestNoGameSnapshots:
     """review 2026-10-13 (D4): a player with a career tail and no stat line this season had no row anywhere."""

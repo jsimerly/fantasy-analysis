@@ -119,7 +119,8 @@ def rescore_cli(args) -> None:
     meta = meta[0] if meta else {}
     groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
     H = sorted(int(c[1:-9]) for c in frames.columns if c.startswith("h") and c.endswith("_fpts_hat") and c[1:-9].isdigit())   # the horizons the frames hold
-    suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + ({"band": "_sb", "dist": "_sd", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else "")
+    suffix = (("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + ("_wa" if args.walk_age_scale else "")
+              + ({"band": "_sb", "dist": "_sd", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else ""))
     name = args.as_name or (src_name + (suffix or "_rescored"))
     backend = str(meta.get("backend") or args.backend)
     cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(int(t) for t in frames["cohort"].unique().to_list()),
@@ -130,7 +131,9 @@ def rescore_cli(args) -> None:
     if args.sigma:                                # value and WAR rebuilt: the cohort's replacement levels and the owner's curve, as the run had them
         bc = build_context(H, min(cfg.cohorts), max(cfg.cohorts), cfg.replacement)
         rep_for, curve = bc.rep_for, bc.curve
-    per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src, sigma_mode=args.sigma, rep_for=rep_for, curve=curve)
+    got: list = []
+    per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src, sigma_mode=args.sigma, rep_for=rep_for, curve=curve,
+                                     walk_age_scale=args.walk_age_scale, collect=got)
     summary["regime"] = str(src["regime"][0]) if src is not None and "regime" in src.columns else ""
     summary["backend"] = backend + f" rescored<{args.rescore}>"
     per_cohort = per_cohort.with_columns(pl.lit(summary["regime"]).alias("regime"))
@@ -140,9 +143,14 @@ def rescore_cli(args) -> None:
         print(per_cohort.select([c for c in per_cohort.columns if c in ("cohort", "n_all", "spearman_war_top", "mae_war_top", "share_abs_err") or c.startswith("scale_")]))
     if args.no_log:
         return
-    ledger = ex.append_result(ledger, summary)
     print("per-cohort ->", ex.save_run(per_cohort, summary))
-    ex.save_ledger(ledger)
+    if args.save_cohorts and got:            # the rescored frames: age_gate.py / window_report read them like any run's
+        print("cohort frames ->", ex.save_cohorts(name, got, summary["timestamp"]))
+    if args.no_ledger:
+        print("ledger untouched (--no-ledger)")
+    else:
+        ledger = ex.append_result(ledger, summary)
+        ex.save_ledger(ledger)
     with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
         table = ex.paired(name, args.rescore)
         print(table)
@@ -188,6 +196,9 @@ def main() -> None:
     ap.add_argument("--rescore", metavar="RUN", help="score the saved cohort frames of RUN again (no GPU) under --fixed-scale, --walk-scale or --top-n; name it with --as")
     ap.add_argument("--as", dest="as_name", help="the rescored run name (default: RUN plus a suffix for the change)")
     ap.add_argument("--walk-scale", action="store_true", help="--rescore: walk-forward per-position value scale from the cohorts complete by each cohort")
+    ap.add_argument("--walk-age-scale", action="store_true",
+                    help="--rescore: walk-forward per-age-band value scale (review 2026-10-13 C1: under-25s ~1.3x, 29+ ~0.8x) from the cohorts complete by each cohort")
+    ap.add_argument("--no-ledger", action="store_true", help="--rescore: save the run and its frames but do not touch the ledger (a GPU chain may be appending to it)")
     ap.add_argument("--sigma", choices=["band", "dist", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
     ap.add_argument("--top-n", type=int, default=None, help="the top-N projected players the ordering and error metrics score (default: the config)")
     ap.add_argument("--list-groups", action="store_true")

@@ -1012,7 +1012,7 @@ def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
-    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None,
+    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None, age_scale: dict[str, float] | None = None,
 ) -> pl.DataFrame:
     """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
     from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
@@ -1047,6 +1047,7 @@ def inseason_value(
     elif sigma_mode:
         raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'joint'")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    fac = _value.age_scale_factors(df, age_scale)      # the career spans' age-band level correction (review C1; owner 2026-10-14)
 
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
@@ -1071,8 +1072,8 @@ def inseason_value(
     nxt = excess("next_ppg_hat", 2) * df["next_games_hat"].to_numpy()
     cols = [pl.Series("vorp_ros", ros), pl.Series("vorp_next", nxt)]
     total = ros + _value.discount_weight(2, discount_rate) * nxt
-    for k in horizons:
-        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy()
+    for k in horizons:                                   # the career spans (k >= 3): the age-band factor applies here, not to ROS / next
+        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy() * fac
         cols.append(pl.Series(f"h{k}_vorp_hat", v))
         total = total + _value.discount_weight(k, discount_rate) * v
     cols.append(pl.Series("iv_inseason", total))

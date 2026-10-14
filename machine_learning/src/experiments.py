@@ -421,6 +421,41 @@ def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float =
     return {pos: float(min(hi, max(lo, r_ / p_))) for pos, p_, r_ in g.iter_rows() if p_ and p_ > 0}
 
 
+age_band_expr = value.age_band_expr      # the bands of value.AGE_BANDS (<= 24 / 25-28 / 29+); the window scores' AGE_BANDS below share the cuts
+
+
+def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6) -> dict[str, float]:
+    """The production table: realized / priced WAR by age band on every cohort's own top-``top_n``, clipped, with no
+    shrinkage (production prices seasons after the last test season, so every cohort is a prior)."""
+    done = cohorts.filter(pl.col("realized_iv").is_not_null())
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    return {b: float(min(hi, max(lo, r_ / p_))) for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
+
+
+def age_scale_table(run: str, top_n: int = 150) -> dict[str, float]:
+    """``age_scales_from_frames`` on a run's saved cohort frames (``--save-cohorts``), for the weekly refresh."""
+    return age_scales_from_frames(load_cohorts(run), top_n)
+
+
+def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: int = 150, lo: float = 0.6, hi: float = 1.6,
+                            prior_cohorts: float = 1.0) -> dict[str, float]:
+    """Per-age-band value scale for cohort ``T`` from the cohorts whose outcomes are complete by then: realized WAR over
+    projected WAR by band on each complete cohort's own top-``top_n`` by projected WAR (the players a manager weighs),
+    pooled, shrunk toward 1 by n / (n + ``prior_cohorts``) and clipped to [lo, hi]. The age gradient of the review
+    (2026-10-13, C1: under-25s realize ~1.3x their price, 29+ ~0.8x) corrected walk-forward (owner, 2026-10-14).
+    Empty when no earlier cohort is complete (scale 1)."""
+    done = cohorts.filter((pl.col("cohort") + max(H) <= T) & pl.col("realized_iv").is_not_null())
+    if done.height == 0:
+        return {}
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    w = top["cohort"].n_unique() / (top["cohort"].n_unique() + prior_cohorts)
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    return {b: float(min(hi, max(lo, 1.0 + w * (r_ / p_ - 1.0)))) for b, p_, r_ in g.iter_rows() if p_ and p_ > 0}
+
+
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
 SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain (career.predict's quantile floor)
 
@@ -461,7 +496,8 @@ def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float],
 
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
             src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
-            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None) -> tuple[pl.DataFrame, dict]:
+            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None, walk_age_scale: bool = False,
+            collect: list | None = None) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
     multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
     ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
@@ -493,6 +529,12 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         if scales:
             sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
             f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
+        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n) if walk_age_scale else {}
+        if ascales:                               # the age-band level correction (C1), walk-forward like the positional one
+            sa = age_band_expr().replace_strict({k: float(v) for k, v in ascales.items()}, default=1.0, return_dtype=pl.Float64)
+            f = f.with_columns([(pl.col(c) * sa).alias(c) for c in SCALE_COLS if c in f.columns])
+        if collect is not None:
+            collect.append(f)
         fit = {}
         if src_per_cohort is not None and T in src_per_cohort["cohort"].to_list():
             r0 = src_per_cohort.filter(pl.col("cohort") == T).to_dicts()[0]
@@ -500,6 +542,8 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         row = score_cohort(f, cfg, H, T, fit)
         for pos, v in scales.items():
             row[f"scale_{pos}"] = v
+        for b, v in ascales.items():
+            row[f"age_scale_{b}"] = v
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
     groups = fg.resolve(cfg.groups)
