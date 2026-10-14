@@ -118,3 +118,21 @@ def test_one_random_week_per_player_season_and_the_training_table_targets():
     assert r23["h1_ppg"] == 10.0 and r23["h2_ppg"] == 11.0     # a to-date row's targets are the complete seasons after it
     seasons = table.filter(pl.col("is_snapshot_row").cast(pl.Float64, strict=False).fill_null(0.0) < 0.5)
     assert seasons.height == 4 and seasons.filter(pl.col("season") == 2022)["h1_ppg"].item() == 9.0   # a to-date row is never a target
+
+
+def test_the_merged_tail_keeps_the_base_row_and_takes_this_seasons_projections():
+    """BACKLOG 51, the Tuesday 2026-10-13 refresh failed on this: the merged tail had lost every column but the
+    projections (the preseason view needs position). Base columns stay; h2 on come from this season's row; a player
+    missing from the base keeps his identity from the to-date row."""
+    import polars as pl
+    import unified
+    base = pl.DataFrame({"player_id": ["a", "b"], "position": ["WR", "RB"], "ppg": [15.0, 9.0], "h1_ppg_hat": [14.0, 8.0],
+                         "h2_ppg_hat": [13.0, 7.0], "h2_games_hat": [14.0, 12.0], "h3_ppg_hat": [12.0, 6.0], "h3_games_hat": [13.0, 11.0]})
+    td = pl.DataFrame({"player_id": ["a", "c"], "position": ["WR", "TE"], "player_name": ["A", "C"], "exp_at_season": [3, 2],
+                       "h1_ppg_hat": [16.0, 10.0], "h1_games_hat": [15.0, 12.0], "h2_ppg_hat": [15.5, 9.5], "h2_games_hat": [14.5, 11.5]})
+    out = {r["player_id"]: r for r in unified.merge_todate_tail(base, td, [1, 2, 3]).to_dicts()}
+    assert out["a"]["position"] == "WR" and out["a"]["ppg"] == 15.0 and out["a"]["h1_ppg_hat"] == 14.0      # the base row and its h1 stay
+    assert out["a"]["h2_ppg_hat"] == 16.0 and out["a"]["h3_ppg_hat"] == 15.5 and out["a"]["h3_games_hat"] == 14.5   # h2 on from this season
+    assert out["a"]["tail_origin"] == "this_season"
+    assert out["b"]["h2_ppg_hat"] == 7.0 and out["b"]["tail_origin"] == "last_season"
+    assert out["c"]["position"] == "TE" and out["c"]["h2_ppg_hat"] == 10.0 and out["c"]["h1_ppg_hat"] is None    # no base row: identity from the to-date row

@@ -178,10 +178,10 @@ def career_tail_todate(base: pl.DataFrame, wk: pl.DataFrame, groups, as_of: int,
                              features=features, stacked=stacked, target=target).fit(table, as_of_season=as_of)
     pred = career.apply_cap(survival, unified.with_tier_games(m.predict(now)), H, cap, tier_cols=("ppg", "tier_games"))
     vets = pred.filter(pl.col("exp_at_season").fill_null(0) > 0)
-    td_tail = unified.shift_to_tail(vets, H)
-    keep = base_tail.filter(~pl.col("player_id").is_in(td_tail["player_id"].to_list()))
-    print(f"career tail: {td_tail.height} players from this season's rows, {keep.height} from their last complete season, rookies on the rookie table", flush=True)
-    return pl.concat([td_tail, keep.select([c for c in keep.columns if c == "player_id" or c in td_tail.columns])], how="diagonal_relaxed"), pred
+    merged = unified.merge_todate_tail(base_tail, vets, H)
+    n_td = merged.filter(pl.col("tail_origin") == "this_season").height
+    print(f"career tail: {n_td} players from this season's rows, {merged.height - n_td} from their last complete season, rookies on the rookie table", flush=True)
+    return merged, pred
 
 
 def main() -> None:

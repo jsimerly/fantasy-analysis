@@ -206,3 +206,26 @@ def shift_to_tail(pred: pl.DataFrame, horizons) -> pl.DataFrame:
             if j + 1 in set(horizons) or j + 1 <= max(horizons):
                 ren[c] = f"h{j + 1}_{rest}"
     return pred.select(keep + list(ren)).rename(ren)
+
+
+ID_COLS = ["position", "player_name", "age_at_season", "exp_at_season", "team", "season", "draft_round", "draft_pick", "is_rookie", "is_undrafted"]
+
+
+def merge_todate_tail(base_tail: pl.DataFrame, todate_pred: pl.DataFrame, horizons) -> pl.DataFrame:
+    """The in-season career tail with this season's rows in it (BACKLOG 51): every column of ``base_tail`` (the tail off
+    the last complete season: the row, h1, bands) stays; for the players in ``todate_pred`` the projections from h2 on
+    (``shift_to_tail``) replace the base's; a player with a to-date row but no base row (he missed the whole of last
+    season) takes his identity columns from the to-date row. ``tail_origin``: 'this_season' | 'last_season'."""
+    shifted = shift_to_tail(todate_pred, horizons)
+    hcols = [c for c in shifted.columns if c != "player_id"]
+    ids = [c for c in ID_COLS if c in todate_pred.columns]
+    td = todate_pred.select(["player_id"] + ids).join(shifted, on="player_id", how="inner")
+    base = base_tail.with_columns(pl.col("player_id").cast(pl.Utf8))
+    td = td.with_columns(pl.col("player_id").cast(pl.Utf8))
+    out = base.join(td, on="player_id", how="full", coalesce=True, suffix="_td")
+    # a column on both sides comes back suffixed on the to-date side; one only on the to-date side keeps its name
+    exprs = [pl.coalesce([pl.col(c + "_td"), pl.col(c)]).alias(c) for c in hcols if c in base.columns]
+    exprs += [pl.coalesce([pl.col(c), pl.col(c + "_td")]).alias(c) for c in ids if c in base.columns]
+    out = out.with_columns(exprs).with_columns(
+        pl.when(pl.col("player_id").is_in(td["player_id"].to_list())).then(pl.lit("this_season")).otherwise(pl.lit("last_season")).alias("tail_origin"))
+    return out.drop([c for c in out.columns if c.endswith("_td")])
