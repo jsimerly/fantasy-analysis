@@ -435,7 +435,9 @@ def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 
                .with_columns(age_band_expr().alias("_ab")))
     out = _age_scale_table(top, 1.0, lo, hi, by_position, shrink_n, lo_pos, curve)
     if recent:
-        out.update(age_table_recent(top))
+        out.update(age_table_recent(top))             # the four variance-shrunk steps and their evidence (mean, se per band)
+        if curve:
+            out.update(age_curve_recent(top))         # ... replaced by the smooth variance-shrunk curve where both are asked for
     return out
 
 
@@ -503,6 +505,37 @@ def age_table_recent(top: pl.DataFrame, recency: float = 0.8, tau: float = 0.15,
                 out[f"age:{a}"] = factors[b][0]
     out.update({f"{b}_mean": round(v[1], 3) for b, v in factors.items()})       # the evidence beside the factor, for the metrics
     out.update({f"{b}_se": round(v[2], 3) for b, v in factors.items()})
+    return out
+
+
+def age_curve_recent(top: pl.DataFrame, recency: float = 0.8, tau: float = 0.15, lo: float = 0.4, hi: float = 1.6,
+                     kernel: float = AGE_CURVE_KERNEL) -> dict[str, float]:
+    """The curve with the variance built in (owner, 2026-10-14: "why use banding and not a curve?"): per test season,
+    the level by year of age smoothed with the kernel (neighbouring years pool, so every age carries enough weight);
+    then at each age the recency-weighted mean across seasons and its standard error, and the same shrinkage as
+    ``age_table_recent`` -- 1 + (m - 1) tau^2 / (tau^2 + se^2). No step edges, and the correction at every age is as
+    large as the evidence at that age allows. Keys ``age:NN``."""
+    latest = int(top["cohort"].max())
+    a0, a1 = AGE_CURVE_RANGE
+    per = (top.with_columns(pl.col("age_at_season").floor().clip(a0, a1).cast(pl.Int64).alias("_a"))
+              .group_by("cohort", "_a").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")))
+    seasons = sorted(per["cohort"].unique().to_list())
+    out = {}
+    for a in range(a0, a1 + 1):
+        ratios, wts = [], []
+        for T in seasons:
+            g = per.filter(pl.col("cohort") == T)
+            kw = np.exp(-0.5 * ((g["_a"].to_numpy().astype(float) - a) / kernel) ** 2)
+            pp, rr = float((kw * g["p"].to_numpy()).sum()), float((kw * g["r"].to_numpy()).sum())
+            if pp > 0:
+                ratios.append(rr / pp); wts.append(recency ** (latest - T))
+        if len(ratios) < 2:
+            continue
+        x, wt = np.asarray(ratios), np.asarray(wts)
+        m = float((wt * x).sum() / wt.sum())
+        var = float((wt * (x - m) ** 2).sum() / wt.sum()); n_eff = float(wt.sum() ** 2 / (wt ** 2).sum())
+        se2 = var / max(n_eff, 1.0)
+        out[f"age:{a}"] = float(min(hi, max(lo, 1.0 + (m - 1.0) * tau ** 2 / (tau ** 2 + se2))))
     return out
 
 

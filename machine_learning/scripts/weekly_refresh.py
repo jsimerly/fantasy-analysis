@@ -53,6 +53,7 @@ PRESETS = {
                        # 2026-10-14 afternoon): the 29-31 level drifted to ~1.0 since 2018 (the three-band 0.80 was too harsh for them),
                        # the 32+ to ~0.5 (too mild); under 25 is stable at 1.15-1.26 and keeps the full correction
                        age_scale_recent=True,
+                       age_scale_curve=True,   # ... as a smooth curve over each year of age, the correction at every age as large as its variance allows (no step edges)
                        discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 

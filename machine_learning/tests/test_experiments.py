@@ -313,6 +313,14 @@ class TestRescore:
         # the variance shrinkage keeps part of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
         assert 0.55 < t["age:34"] < 0.95 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
         assert "<=24_mean" in t and "<=24_se" in t and "32+_mean" in t                           # the evidence travels with the table
+        # the same evidence as a smooth curve ("why banding and not a curve?"): no step edges, monotone through the drop
+        c = ex.age_curve_recent(pl.DataFrame(rows).with_columns(ex.age_band_expr().alias("_ab")))
+        assert all(f"age:{a}" in c for a in range(21, 37))
+        assert c["age:22"] > 1.1 and c["age:34"] < c["age:30"] < c["age:24"]
+        steps = [c[f"age:{a}"] for a in range(21, 37)]
+        # no band-sized jump between neighbouring years (the synthetic data has only three ages, so the kernel bridges 1.2 -> 1.0
+        # across the empty years 23-29 in steps of up to ~0.11; on the real frames, every age populated, the largest step is 0.05)
+        assert max(abs(x - y) for x, y in zip(steps, steps[1:])) < 0.15
 
     def test_band_sigma_prices_each_players_own_spread(self):
         import pytest

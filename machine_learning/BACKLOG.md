@@ -2133,4 +2133,10 @@ t = 1.45) stays a tie.
     x1.06 (1.07, 0.04), 29-31 x0.93 (0.90, 0.10), 32+ x0.80 (0.66, 0.12). On the recent seasons it leaves the bands at 1.02 /
     1.02 / 1.08 / 0.74 against the three-band table's 0.95 / 1.05 / 1.26 / 0.75 (in-sample: the mechanics, not a test). It
     reaches the page with the next refresh; the spread by age (the 20-80 band covers 52-59 %, the young miss high, the old
-    low) is the next calibration layer.
+    low) is the next calibration layer. **"Why banding and not a curve?" (owner, 15:40):** because the variance needs
+    enough players per cell per season, and a single year of age has 5-30 per season. The hybrid resolves it
+    (`experiments.age_curve_recent`, `age_scale_recent=True` + `age_scale_curve=True` in the preset): per season the level
+    by year of age smoothed with the kernel (neighbouring years pool), then at each age the recency-weighted mean across
+    seasons and the same variance shrinkage. The curve: 1.17-1.19 at 21-24, 1.14 at 25, 1.06 at 27, 1.01 at 28, 0.96 at
+    29, 0.93 at 30, 0.87 at 32, 0.80 at 35 (the largest step between neighbouring years 0.05, against the bands' 0.25);
+    on the recent seasons it leaves the bands at 1.02 / 0.99 / 1.07 / 0.73, the same as the steps, without the edges.

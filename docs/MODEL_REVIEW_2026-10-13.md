@@ -286,8 +286,12 @@ here: **the level drifts.** Under 25 is stable (1.15-1.26 every season since 201
 about 1.0 since 2018; 32+ was level to 2019 and 0.2-0.5 since. A correction fitted on older seasons over-corrects the
 recent 29-31s, the three-band table on the page included. Adopted in the preset instead: four bands fitted to the recent
 seasons and each shrunk toward 1 by its own season-to-season variance (≤ 24 ×1.18, 25-28 ×1.06, 29-31 ×0.93, 32+ ×0.80;
-`experiments.age_table_recent`), which on the recent seasons leaves the bands at 1.02 / 1.02 / 1.08 / 0.74. It reaches
-the page with the next refresh. QUEUED: the spread by age for the uncertainty band (coverage 52-59 % against 60 %, the
+`experiments.age_table_recent`), which on the recent seasons leaves the bands at 1.02 / 1.02 / 1.08 / 0.74 — and then,
+on the owner's "why banding and not a curve?", the same evidence as a smooth curve (`experiments.age_curve_recent`,
+the preset's `age_scale_curve`): per season the level by year of age kernel-smoothed, then at each age the
+recency-weighted mean across seasons shrunk by its variance; 1.19 at 22, 1.14 at 25, 1.01 at 28, 0.96 at 29, 0.87 at
+32, 0.80 by 35, no step larger than 0.05 between neighbouring years, the recent-season level 1.02 / 0.99 / 1.07 / 0.73.
+It reaches the page with the next refresh. QUEUED: the spread by age for the uncertainty band (coverage 52-59 % against 60 %, the
 young missing high and the old low); the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every age,
 cannot bend from a flat hazard at 27 to a steep one at 34; the quadratic variant per position and tier,
 `tabpfn35_surv_q`, runs in the chain), the rookie tail's ratios clipped at 1.15, and a per-horizon table once the
