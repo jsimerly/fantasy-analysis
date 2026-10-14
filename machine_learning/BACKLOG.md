@@ -2140,3 +2140,8 @@ t = 1.45) stays a tie.
     seasons and the same variance shrinkage. The curve: 1.17-1.19 at 21-24, 1.14 at 25, 1.06 at 27, 1.01 at 28, 0.96 at
     29, 0.93 at 30, 0.87 at 32, 0.80 at 35 (the largest step between neighbouring years 0.05, against the bands' 0.25);
     on the recent seasons it leaves the bands at 1.02 / 0.99 / 1.07 / 0.73, the same as the steps, without the edges.
+    **"Why wait for the GPU?" (owner, 16:00):** no reason -- the correction is arithmetic on the run in the bucket.
+    `scripts/reprice_run.py` re-prices an in-season run with another table (new over old factor on every career span's
+    points above replacement, the values and the market comparison redone, the originals kept beside the run) and
+    `weekly_refresh --skip inseason` rebuilds the WAR, the summaries and the exports from it. Today's run re-priced with
+    the curve at 16:50 (the young down 4-6 %, the 29-31 quarterbacks up 6-11 %, no NaN) and rebuilt; the page follows.

@@ -28,6 +28,11 @@ file is the working guide for this folder; [README.md](README.md) has the longer
   utilization; every unattended GPU run gets a wall-time budget (`timeout -k 60s 6h` in the chain) and the refresh has a
   fallback (`--no-career-todate`). The career model's pooled fit and its per-horizon predictions print their rows and
   seconds, so the tail is no longer one silent call.
+- **A pricing change never waits for the GPU.** The GPU makes the projections (ppg, games, the band); everything after them
+  is CPU arithmetic on the run in the bucket. `scripts/reprice_run.py` re-prices an in-season run with another age-level
+  table (the originals kept beside it), and `weekly_refresh.py --preset production --skip inseason` rebuilds the WAR, the
+  summaries and the exports from it (owner, 2026-10-14: "why do we have to wait until new projections come out of the
+  GPU?"). The same holds for a replacement line, a discount or a sigma mode: re-price, rebuild, publish.
 - **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
   players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
   +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)

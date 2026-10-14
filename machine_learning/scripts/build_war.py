@@ -304,7 +304,8 @@ def main() -> None:
     sigma = sigma_from_career_meta(career_meta)
     age_scale = career_meta.get("age_scale") or None          # the run's age-band level correction (review C1): the same table here
     if age_scale:
-        print("age-band level correction on the career spans: " + ", ".join(f"{b} x{float(v):.2f}" for b, v in sorted(age_scale.items())))
+        print("age level correction on the career spans: " + ", ".join(f"{b} x{float(v):.2f}" for b, v in sorted(age_scale.items())
+                                                                            if not (b.endswith("_mean") or b.endswith("_se"))))
     if args.source == "career":
         proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}", "projections.parquet")
         H = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_ppg_hat"))
