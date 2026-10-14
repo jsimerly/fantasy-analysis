@@ -1012,7 +1012,7 @@ def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
-    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None,
+    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None, age_scale: dict[str, float] | None = None,
 ) -> pl.DataFrame:
     """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
     from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
@@ -1047,6 +1047,7 @@ def inseason_value(
     elif sigma_mode:
         raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'joint'")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    fac = _value.age_scale_factors(df, age_scale)      # the career spans' age-band level correction (review C1; owner 2026-10-14)
 
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
@@ -1066,15 +1067,57 @@ def inseason_value(
         return fb if pre_arr is None else np.where(np.isnan(pre_arr), fb, pre_arr)   # a row priced off its grid keeps that; the rest fall back
 
     ros = excess("ros_ppg_hat", 1) * df["ros_games_hat"].to_numpy()
-    nxt = excess("next_ppg_hat", 1) * df["next_games_hat"].to_numpy()
+    # next season is the second year off a T-1 row: sigma[2], the same spread build_war prices it with (review 2026-10-13, C4:
+    # the iv column had used sigma[1], a 5-10 % narrower upside than the WAR column for the same player)
+    nxt = excess("next_ppg_hat", 2) * df["next_games_hat"].to_numpy()
     cols = [pl.Series("vorp_ros", ros), pl.Series("vorp_next", nxt)]
     total = ros + _value.discount_weight(2, discount_rate) * nxt
-    for k in horizons:
-        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy()
+    for k in horizons:                                   # the career spans (k >= 3): the age-band factor applies here, not to ROS / next
+        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy() * fac
         cols.append(pl.Series(f"h{k}_vorp_hat", v))
         total = total + _value.discount_weight(k, discount_rate) * v
     cols.append(pl.Series("iv_inseason", total))
     return df.with_columns(cols)
+
+
+def no_game_snapshots(snap: pl.DataFrame, tail: pl.DataFrame, season: int, week: int, status: pl.DataFrame | None = None,
+                      games_in_season: int = 17) -> pl.DataFrame:
+    """A zero-game snapshot for every player with a career tail (a projected row for the last complete season) and no
+    stat line this season (review 2026-10-13, D4): 24-40 rostered skill players per league -- Josh Jacobs, Zach
+    Charbonnet, every veteran hurt or unsigned since August -- had no row anywhere, so no projection, no roster slot and
+    nothing the trade finder could price. The rest of this season is the preseason projection (h1) pro-rated to the
+    games left, zero when the status fact has him on reserve now; next season is the preseason h2; the career seasons
+    join from the tail as for everyone. ``snapshot_origin`` tells the rows apart ("played" / "no_game_yet")."""
+    out = snap.with_columns(pl.lit("played").alias("snapshot_origin")) if "snapshot_origin" not in snap.columns else snap
+    need = [c for c in ("h1_ppg_hat", "h1_games_hat", "h2_ppg_hat", "h2_games_hat") if c not in tail.columns]
+    if need or tail.height == 0:
+        return out
+    t = tail.filter(~pl.col("player_id").is_in(snap["player_id"].implode()) & pl.col("h1_ppg_hat").is_not_null())
+    if t.height == 0:
+        return out
+    left = max(games_in_season - week, 0) / games_in_season
+    years = pl.lit(season) - pl.col("season").cast(pl.Int64)
+    ids = [c for c in ("player_name", "position", "team", "draft_round", "draft_pick", "is_undrafted") if c in t.columns]
+    rows = t.select(
+        "player_id", *ids,
+        pl.lit(season, pl.Int64).alias("season"), pl.lit(week, pl.Int64).alias("week"),
+        (pl.col("age_at_season") + years).alias("age_at_season") if "age_at_season" in t.columns else pl.lit(None, pl.Float64).alias("age_at_season"),
+        (pl.col("exp_at_season") + years).alias("exp_at_season") if "exp_at_season" in t.columns else pl.lit(None, pl.Int64).alias("exp_at_season"),
+        pl.lit(False).alias("is_rookie"),
+        pl.lit(0, pl.Int64).alias("td_games"), pl.lit(0.0).alias("td_fpts"), pl.lit(None, pl.Float64).alias("td_ppg"), pl.lit(week, pl.Int64).alias("td_missed"),
+        *[pl.col(c).alias(f"prev_{c}") for c in ("fpts", "ppg", "games") if c in t.columns],
+        pl.col("h1_ppg_hat").alias("ros_ppg_hat"), (pl.col("h1_games_hat").fill_null(0.0) * left).alias("ros_games_hat"),
+        pl.col("h2_ppg_hat").alias("next_ppg_hat"), pl.col("h2_games_hat").fill_null(0.0).alias("next_games_hat"),
+        pl.lit("no_game_yet").alias("snapshot_origin"),
+    )
+    if status is not None and status.height:
+        ij = injury_now_features(status, week).filter(pl.col("season") == season).select("player_id", "ij_on_ir_now")
+        rows = (rows.join(ij, on="player_id", how="left")
+                    .with_columns(pl.when(pl.col("ij_on_ir_now") == 1.0).then(0.0).otherwise(pl.col("ros_games_hat")).alias("ros_games_hat"))
+                    .drop("ij_on_ir_now"))
+    rows = rows.with_columns((pl.col("ros_ppg_hat") * pl.col("ros_games_hat")).alias("ros_fpts_hat"),
+                             (pl.col("next_ppg_hat") * pl.col("next_games_hat")).alias("next_fpts_hat"))
+    return pl.concat([out, rows], how="diagonal_relaxed")
 
 
 # ---------------------------------------------------------------------------- baselines

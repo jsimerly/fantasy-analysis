@@ -94,6 +94,27 @@ class TestWAR:
         out = war.wins_above_replacement(self._df(), rep, c, war.career_components([1]), sigma={1: {"__all__": 3.0}})
         assert out.filter(pl.col("player_id") == "c")["war"][0] > 0.0
 
+    def test_age_scale_applies_to_the_career_spans_only_in_season_and_to_all_for_a_career_run(self):
+        """review 2026-10-13 C1, owner 2026-10-14: the age-band level correction multiplies the points above replacement of
+        the career model's spans (k >= 3 in season: ROS and next season come from the other model), and every span of a
+        preseason career run; the floor / ceiling wins follow."""
+        rep = {"QB": 15.0, "WR": 10.0}; c = lg.WinCurve.normal(113, 42)
+        df = pl.DataFrame({"player_id": ["y", "o"], "player_name": ["Y", "O"], "position": ["WR", "WR"], "age_at_season": [23.0, 30.0],
+                           "ros_ppg_hat": [14.0, 14.0], "ros_games_hat": [10.0, 10.0], "next_ppg_hat": [14.0, 14.0], "next_games_hat": [16.0, 16.0],
+                           "h3_ppg_hat": [14.0, 14.0], "h3_games_hat": [16.0, 16.0], "h3_ppg_q20": [12.0, 12.0], "h3_ppg_q80": [16.0, 16.0]})
+        comps = war.inseason_components([3])
+        base = war.wins_range(war.wins_above_replacement(df, rep, c, comps, discount_rate=0.0), rep, c, comps, discount_rate=0.0)
+        out = war.wins_range(war.wins_above_replacement(df, rep, c, comps, discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8}),
+                             rep, c, comps, discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8})
+        y, y0 = out.filter(pl.col("player_id") == "y").row(0, named=True), base.filter(pl.col("player_id") == "y").row(0, named=True)
+        o, o0 = out.filter(pl.col("player_id") == "o").row(0, named=True), base.filter(pl.col("player_id") == "o").row(0, named=True)
+        assert y["par_1"] == y0["par_1"] and y["par_2"] == y0["par_2"]                      # the in-season spans untouched
+        assert abs(y["par_3"] - y0["par_3"] * 1.25) < 1e-9 and abs(o["par_3"] - o0["par_3"] * 0.8) < 1e-9
+        assert y["war_3"] > y0["war_3"] > o["war_3"] and abs(y["war_hi_3"] - 16 * float(c.delta_win(113, 6 * 1.25))) < 1e-9
+        career = war.wins_above_replacement(df.rename({"ros_ppg_hat": "h1_ppg_hat", "ros_games_hat": "h1_games_hat"}), rep, c, war.career_components([1]),
+                                            age_scale={"<=24": 1.25}, age_scale_min_k=1)
+        assert career.filter(pl.col("player_id") == "y")["par_1"][0] == 4 * 10 * 1.25        # a preseason career run: every span
+
     def test_team_marginal_war_depends_on_the_roster(self):
         c = lg.WinCurve.normal(113, 42); comps = war.career_components([1])
         roster = pl.DataFrame({"player_id": ["q1", "r1", "w1", "t1", "w2"], "player_name": list("ABCDE"), "position": ["QB", "RB", "WR", "TE", "WR"],

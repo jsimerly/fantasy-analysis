@@ -2069,7 +2069,37 @@ t = 1.45) stays a tie.
     from Sleeper's `fantasy_positions` (Hunter and the fullbacks come in), the status grid capped at the latest observed
     week, the pinned scoring lineage, and three quality checks (latest week complete against the schedule, injury-report
     rows per season, no status rows past production) with replay tests -- the facts rebuild on the first daily run
-    after the merge. Tonight after the chain: the exports
+    after the merge. On the model side, on `feat/review-ml-queue` (the running chain imports these modules; it merges
+    when the chain ends): players with a career tail and no game yet this season get a zero-game snapshot carrying the
+    preseason projection (`inseason.no_game_snapshots`: rest of season pro-rated, zero on reserve now, next season h2),
+    rostered players with no projection at all keep a row on their roster with no wins and the KTC value by name
+    (`build_war.placeholder_rows`; smoked on the 2026-10-12 run: 27 / 35 / 41 per league, 24 / 34 / 34 priced), the
+    injury group's coverage floor is per source (reserve lists from 2002, the report from 2009), and the `iv` column
+    prices next season with the second-year spread as the WAR column does; the exports refuse a run built by a
+    non-production model (`runs.check_backend`, `--require-backend`); the page's outcome curves draw against the chosen
+    league's replacement line; every harness verdict reads the level (top-150 bias) and flags an error gain whose level
+    moved further from zero (LEVEL CAUTION) -- making it part of the rule is the owner's call; `scripts/age_gate.py`
+    reads realized / priced by age band and position on the fixed top set of one or two runs (the age gradient of the
+    review's C1, to be read beside every verdict); `build_war --source career` no longer dies in the offseason. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
-    PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
-    pricing waits for an age gate; the 10 % default) are in the document's last section.
+    PAR table. The queue and the owner's calls are in the document's last section. **Decided 2026-10-14 (owner):**
+    `ml-weekly-refresh` PAUSED (00:05 EDT); MFL 2011-2026 re-pulled at AUG15 that night (every partition carries
+    `period`; FFC's past seasons rewritten from their frozen preseason windows; FFC 2026 stays the in-season window but
+    is unused -- the preseason group takes MFL wherever a season has it); the preseason group's re-screen on the clean
+    inputs is queued after the chain; joint pricing stays off until the age-band correction exists; **the level is part
+    of the acceptance rule** (an error gain alone does not adopt when the top-150 level moves further from zero by more
+    than 0.02 wins); the page's default stays at 10 % with the seven-year windows by age as the gate for the seasons the
+    harness never scores; hold-out cohorts explained, not decided; the owner merges PR #37, `feat/review-ml-queue`
+    follows as its own PR. **The age-band level correction, built the same night ("let's get this done tonight"):**
+    `value.age_scale_factors` scales the points above replacement of the career model's spans by age band (≤ 24 / 25-28
+    / 29+); walk-forward in the harness like the positional scale (`--rescore RUN --walk-age-scale`: ordering unchanged
+    0.621 = 0.621, wins error within noise −0.005 t −1.3, bias halved, under-25s 1.285 → 1.178 t −2.3, 29+ 0.80 → 0.87
+    t +2.6; it reaches the cohorts from 2018 only and is shrunk, so ~40 % of the gap in the test); production takes the
+    table fitted on all eight test seasons (≤ 24 ×1.27, 25-28 ×1.03, 29+ ×0.80) on the career spans only, in
+    `inseason_value`, the preseason view and `build_war` from the run's metrics (`--age-scale
+    tabpfn35_set_stacked_blend_w2`, in the production preset). The cause stays open: the survival curve for 29+, the
+    rookie tail's clipped ratios, a per-horizon table once the seven-year windows are in. **The night's plan (owner,
+    00:35):** chain_prod halted after its refresh; the branch merged, smoked, a second production refresh on the merged
+    code, the page republished from it; the experiments restarted under the merged code with a fresh baseline
+    (`chain_night2.sh`: tabpfn35_young_base2, is5, the young variants with the window report by age and the age gate,
+    the seven-year run, the in-season week variants).

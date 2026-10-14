@@ -358,7 +358,7 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 
 PRIMARY = "spearman_war_top"
 RUNS_PREFIX = ("experiments", "runs")
-PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err",
+PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "share_abs_err",
                   "ppg_pinball", "ppg_cover_2080", "ppg_skew", "mae_h1_train", "gap_h1"]
 
 
@@ -421,6 +421,41 @@ def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float =
     return {pos: float(min(hi, max(lo, r_ / p_))) for pos, p_, r_ in g.iter_rows() if p_ and p_ > 0}
 
 
+age_band_expr = value.age_band_expr      # the bands of value.AGE_BANDS (<= 24 / 25-28 / 29+); the window scores' AGE_BANDS below share the cuts
+
+
+def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6) -> dict[str, float]:
+    """The production table: realized / priced WAR by age band on every cohort's own top-``top_n``, clipped, with no
+    shrinkage (production prices seasons after the last test season, so every cohort is a prior)."""
+    done = cohorts.filter(pl.col("realized_iv").is_not_null())
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    return {b: float(min(hi, max(lo, r_ / p_))) for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
+
+
+def age_scale_table(run: str, top_n: int = 150) -> dict[str, float]:
+    """``age_scales_from_frames`` on a run's saved cohort frames (``--save-cohorts``), for the weekly refresh."""
+    return age_scales_from_frames(load_cohorts(run), top_n)
+
+
+def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: int = 150, lo: float = 0.6, hi: float = 1.6,
+                            prior_cohorts: float = 1.0) -> dict[str, float]:
+    """Per-age-band value scale for cohort ``T`` from the cohorts whose outcomes are complete by then: realized WAR over
+    projected WAR by band on each complete cohort's own top-``top_n`` by projected WAR (the players a manager weighs),
+    pooled, shrunk toward 1 by n / (n + ``prior_cohorts``) and clipped to [lo, hi]. The age gradient of the review
+    (2026-10-13, C1: under-25s realize ~1.3x their price, 29+ ~0.8x) corrected walk-forward (owner, 2026-10-14).
+    Empty when no earlier cohort is complete (scale 1)."""
+    done = cohorts.filter((pl.col("cohort") + max(H) <= T) & pl.col("realized_iv").is_not_null())
+    if done.height == 0:
+        return {}
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    w = top["cohort"].n_unique() / (top["cohort"].n_unique() + prior_cohorts)
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    return {b: float(min(hi, max(lo, 1.0 + w * (r_ / p_ - 1.0)))) for b, p_, r_ in g.iter_rows() if p_ and p_ > 0}
+
+
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
 SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain (career.predict's quantile floor)
 
@@ -461,7 +496,8 @@ def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float],
 
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
             src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
-            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None) -> tuple[pl.DataFrame, dict]:
+            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None, walk_age_scale: bool = False,
+            collect: list | None = None) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
     multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
     ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
@@ -493,6 +529,12 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         if scales:
             sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
             f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
+        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n) if walk_age_scale else {}
+        if ascales:                               # the age-band level correction (C1), walk-forward like the positional one
+            sa = age_band_expr().replace_strict({k: float(v) for k, v in ascales.items()}, default=1.0, return_dtype=pl.Float64)
+            f = f.with_columns([(pl.col(c) * sa).alias(c) for c in SCALE_COLS if c in f.columns])
+        if collect is not None:
+            collect.append(f)
         fit = {}
         if src_per_cohort is not None and T in src_per_cohort["cohort"].to_list():
             r0 = src_per_cohort.filter(pl.col("cohort") == T).to_dicts()[0]
@@ -500,6 +542,8 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         row = score_cohort(f, cfg, H, T, fit)
         for pos, v in scales.items():
             row[f"scale_{pos}"] = v
+        for b, v in ascales.items():
+            row[f"age_scale_{b}"] = v
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
     groups = fg.resolve(cfg.groups)
@@ -610,6 +654,7 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS, warn: bo
 
 
 T_GAIN, T_NO_WORSE = 2.4, -1.0
+LEVEL_SLACK = 0.02                        # wins: a candidate whose top-150 bias moves further from zero by more than this, with an error gain, is flagged (B3)
 
 
 def verdict(table: pl.DataFrame) -> str:
@@ -628,9 +673,13 @@ def verdict(table: pl.DataFrame) -> str:
     t_order, t_err = -o["t"], e["t"]
     gain_o, gain_e = t_order >= T_GAIN, t_err >= T_GAIN
     worse_o, worse_e = t_order < T_NO_WORSE, t_err < T_NO_WORSE
-    if (gain_o and not worse_e) or (gain_e and not worse_o):
+    # the level (review 2026-10-13, B3; the owner made it part of the rule 2026-10-14): MAE on a zero-inflated target rewards
+    # shrinkage, so an error gain whose top-150 level moves further from zero does not adopt on its own
+    lv = rows.get("bias_war_top")
+    level_worse = lv is not None and abs(lv["a"]) > abs(lv["b"]) + LEVEL_SLACK
+    if (gain_o and not worse_e) or (gain_e and not worse_o and not level_worse):
         state = "ADOPT"
-    elif (gain_o and worse_e) or (gain_e and worse_o):
+    elif (gain_o and worse_e) or (gain_e and worse_o) or (gain_e and level_worse):
         state = "TRADE-OFF (owner's call)"
     else:
         state = "NO"
@@ -642,6 +691,11 @@ def verdict(table: pl.DataFrame) -> str:
         if "ppg_cover_2080" in rows:
             c = rows["ppg_cover_2080"]
             stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
+    if lv is not None:                        # bias = realized - projected on the top 150: + means the projections run low
+        stats += f" | level (bias, top 150, + = projections low) A {lv['a']:+.3f} vs B {lv['b']:+.3f}"
+        if gain_e and level_worse:
+            stats += (f" -- the error gain comes with the candidate's level moving further from zero (|{lv['a']:.3f}| vs |{lv['b']:.3f}|): "
+                      "an MAE gain by shrinkage is not a better projection; read realized / priced on the fixed set (scripts/age_gate.py)")
     if "gap_h1" in rows:                      # the overfitting read: out-of-sample minus in-sample season-points error next year
         g = rows["gap_h1"]
         stats += f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts (in-sample A {rows['mae_h1_train']['a']:.1f} vs B {rows['mae_h1_train']['b']:.1f})" if "mae_h1_train" in rows else f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts"
@@ -649,8 +703,11 @@ def verdict(table: pl.DataFrame) -> str:
     dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
     if dips:
         why += f"; {dips} worse"
+    if level_worse:
+        why += "; level further from zero"
     return (f"co-primary verdict (A = candidate vs B = baseline): {state} | {stats} | {why}"
-            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}")
+            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}; an error gain alone does not adopt "
+            f"when the top-150 level moves further from zero by more than {LEVEL_SLACK} wins")
 
 
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:

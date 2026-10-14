@@ -49,6 +49,17 @@ class TestInjury:
         out = fg.build_injury(_matrix([{"player_id": "p2", "season": 2023}, {"player_id": "p2", "season": 2005}]), fg.Context(injury=inj)).sort("season")
         assert out["inj_weeks_out"].to_list() == [None, 0]
 
+    def test_reserve_only_seasons_before_the_report_leave_the_report_columns_unknown(self):
+        """review 2026-10-13 (D5): the fact carries reserve-only rows from 2002 and the injury report from 2009; one floor
+        at the fact's first season taught the model that 2002-2008 (24 % of its rows) were never listed and never out."""
+        inj = _injury([{"season": 2005, "on_injury_report": False, "on_injured_reserve": True, "is_out": True, "injury_class": "unknown"},
+                       {"season": 2010, "is_out": True, "injury_class": "soft_tissue"}])
+        out = fg.build_injury(_matrix([{"season": s} for s in (2005, 2006, 2010, 2011)]), fg.Context(injury=inj)).sort("season")
+        assert out["inj_reserve_weeks"].to_list() == [1, 0, 0, 0]              # the reserve lists: covered from 2005
+        assert out["inj_weeks_listed"].to_list() == [None, None, 1, 0]         # the report: unknown before its first season
+        assert out["inj_weeks_out"].to_list() == [None, None, 1, 0]
+        assert out["lag1_inj_weeks_out"].to_list() == [None, None, None, 1]    # the lag: a season after the first report season
+
 
 class TestRole:
     def test_season_shape_of_the_depth_chart_joined_by_position(self):

@@ -197,6 +197,8 @@ def main() -> None:
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="--current: price each career span's upside with the player's own 20/80 band width (items 6 / 36b; needs --range) instead of the position's holdout sigma")
     ap.add_argument("--no-write", action="store_true", help="nothing reaches the ML bucket: neither the backtest summary nor the --current projections and metrics (the smoke)")
     ap.add_argument("--tag", default=None, help="name of the per cohort x week table kept in _cache/inseason_backtests (default: a timestamp)")
+    ap.add_argument("--age-scale", default=None, metavar="RUN",
+                    help="--current: the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (review 2026-10-13 C1; owner 2026-10-14)")
     ap.add_argument("--career-todate", action="store_true",
                     help="--current: the career seasons (T+2 on) projected from this season's to-date rows instead of the last complete season (BACKLOG 51)")
     ap.add_argument("--inseason-groups", default="", help="in-season model groups (inseason.EXTRA_GROUPS): team (the team to date at the snapshot week), contract (the contract in force)")
@@ -301,16 +303,26 @@ def main() -> None:
         m = inseason.InSeasonModels(device=args.device, extra_features=extra_cols, range_quantiles=GRID_Q if args.quantile_grid else None, **is_kw).fit(snaps)
         snap = m.predict(snaps.filter((pl.col("season") == cur) & (pl.col("week") == w_now)))
         snap = career.apply_cap(survival, snap, [1], args.cap, col="next_games_hat", tier_cols=SNAP_TIER_COLS)
+        # players with a career tail and no game yet this season (review 2026-10-13, D4): a zero-game snapshot carrying the
+        # preseason projection -- the rest of this season pro-rated to the games left (zero on reserve now), next season h2
+        snap = inseason.no_game_snapshots(snap, base_tail, cur, w_now, status=gi.get("status"))
+        n_ng = snap.filter(pl.col("snapshot_origin") == "no_game_yet").height
+        print(f"no game yet this season but a career tail: {n_ng} zero-game snapshots (rest of season pro-rated, zero on reserve)", flush=True)
         rookie_tbl = inseason.rookie_tail_table(base, H, through=last_complete)
         if args.sigma == "band" and not args.range:
             raise SystemExit("--sigma band needs --range (the band comes from the TabPFN career tail)")
         if args.sigma == "joint" and not args.quantile_grid:
             raise SystemExit("--sigma joint needs --quantile-grid (the outcome grids it prices)")
-        snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl, sigma_mode=args.sigma)
+        age_scale = None
+        if args.age_scale:                          # the age-band level correction, fitted on every test season of RUN's saved frames
+            import experiments as _ex
+            age_scale = _ex.age_scale_table(args.age_scale)
+            print(f"age-band level correction from {args.age_scale} (career spans): " + ", ".join(f"{b} x{v:.2f}" for b, v in sorted(age_scale.items())), flush=True)
+        snap = inseason.inseason_value(snap, tail, rep, sigma, H, args.discount_rate, rookie_table=rookie_tbl, sigma_mode=args.sigma, age_scale=age_scale)
         print("rookie tails from realized trajectories:", snap.filter(pl.col("tail_source") == "rookie_table").height, "players")
         snap = market.attach_market(snap, datetime.now(timezone.utc).date(), hist, xw)
         # preseason view for the same players: the career model's IV off their 2025 row
-        pre = value.intrinsic_value(base_tail, rep, H, args.discount_rate).select("player_id", pl.col("iv").alias("iv_preseason"))
+        pre = value.intrinsic_value(base_tail, rep, H, args.discount_rate, age_scale=age_scale).select("player_id", pl.col("iv").alias("iv_preseason"))
         snap = snap.join(pre, on="player_id", how="left")
         cmp, summary = value.compare_to_market(snap, iv_col="iv_inseason")
         pre_rank = snap.filter(pl.col("ktc_value").is_not_null()).with_columns(
@@ -340,6 +352,7 @@ def main() -> None:
             "run_date": run, "season": cur, "week": w_now, "as_of_season": last_complete, "career_backend": backend_tag, "cap": args.cap,
             "range_quantiles": [0.2, 0.5, 0.8] if args.range else None, "groups": args.groups, "stacked": args.stacked, "target": args.target, "draft_rows": args.draft_rows, "snapshot_weeks": args.snapshot_weeks, "inseason_groups": args.inseason_groups, "inseason_backend": args.inseason_backend,
             "sigma_mode": args.sigma, "quantile_grid": args.quantile_grid,
+            "age_scale": age_scale, "age_scale_run": args.age_scale,          # build_war prices the career spans with the same table
             "discount_rate": args.discount_rate, "ppg_sigma": sigma, "replacement_ppg": rep,
             "n_projected": snap.height, "n_with_market": summary["n"], "spearman_iv_vs_ktc": summary["spearman"],
         }, "inseason", f"season={cur}", f"week={w_now}", f"run_date={run}", "metrics.json")

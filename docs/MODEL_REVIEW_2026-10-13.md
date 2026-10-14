@@ -25,8 +25,9 @@ that quietly shape what the page shows.
    15:00 UTC, enabled) runs the refresh with its defaults — trees, `base,career` only, 20 % discount — and writes `war/`
    and `pages/` under the day's run date; it ran today at 11:05. Monday's trees smoke wrote `inseason/` under the same
    date because `--no-write` did not cover `--current`. The GPU refresh writes under a later run date, so this only
-   surfaces when the GPU run fails — exactly what happened this morning. FIXED (`--no-write`), TONIGHT (exports refuse a
-   non-production backend), OWNER (pause the scheduler or make the cloud job a dry run).
+   surfaces when the GPU run fails — exactly what happened this morning. FIXED (`--no-write`; the exports refuse a run
+   built by a non-production model unless told otherwise, on `feat/review-ml-queue`), OWNER (pause the scheduler or
+   make the cloud job a dry run).
 2. **Players with no game this season are not on the page at all** — not projected, not on their roster, not priceable
    by the trade finder: 24-40 rostered skill players per league, 86 (league, player) pairs priced ≥ 1,000 KTC, among
    them Josh Jacobs, Zach Charbonnet, Jayden Higgins, Anthony Richardson and every devy quarterback. QUEUED, first.
@@ -206,10 +207,14 @@ t +3.5, ordering tie) has exactly that signature: level target bias on the prior
 +0.05 / +3.8, residual +0.14 / +9.3 — the code's bias is realized − projected, so **the residual target under-projects
 last year's stars by nine points a season and the blend by four; the level target is the unbiased one**, and items 22
 and 44 narrate the sign the other way. Every later value-side fix (band, dist, joint) is partly undoing model-side
-shrinkage; the production tail runs ~10 % low on the top 150 before pricing (1.10; RB / WR ~1.20). The "fixed set"
+shrinkage; the production tail runs ~10 % low on the top 150 before pricing (1.10; RB / WR ~1.20), and `age_gate.py`
+shows it is further from level than the trees it replaced on the same features (1.11 vs 1.05, t +4.1 over 8 cohorts;
+under-25s 1.30 vs 1.21) — the error gain and the level loss are two faces of one change. The "fixed set"
 reading (item 45) was proposed after band sigma failed the standard reading and then used to pass dist sigma too.
-QUEUED: a level metric (realized / priced on the fixed set, or bias with MAE's weight) in the acceptance rule for
-model-side changes; re-judge level vs blend under it; the cheap candidate is level + joint pricing.
+FIXED on `feat/review-ml-queue`: every verdict now reads the level (the top-150 bias, A vs B) beside the co-primaries
+and appends LEVEL CAUTION when an error gain comes with the candidate's level moving further from zero (test). OWNER:
+making the level a hard part of the rule; re-judging level vs blend under it (the cheap candidate is level + joint
+pricing).
 
 ### B4. Multiplicity and the winner's curse — PLAUSIBLE
 114 horizon-3 runs on cohorts 2015-2022 (59 since 2026-10-07), 31 "ADOPT" mentions; a simulated per-candidate false
@@ -250,9 +255,27 @@ Item 47's coupling closes the position gap and opens the age one (29+ 20 % over-
 gradient at T+2/T+3 on the production path (last-season origin ≤24 2.0 vs 29+ 1.25; rookies 2.3-3.5 on both the table
 and the to-date model). Causes are on the projection side: the survival tier held constant over the horizon, a linear
 logit on every age 22-40 that cannot bend from a flat hazard at 27 to a steep one at 34 (the "33+ too flat" the author
-measured), the rookie tail's ratios clipped at 1.15. QUEUED: realized / priced by age band × window as a gate beside the
-co-primaries (`window_report --by-age` exists); a walk-forward age-band × horizon level correction through the
-`calibrate` hook, or fix survival (fit from 27 with a bend, decay the tier) — before any switch to joint pricing (OWNER).
+measured), the rookie tail's ratios clipped at 1.15. FIXED on `feat/review-ml-queue`: `scripts/age_gate.py` — realized /
+priced by age band and position on the union top-150 set of one or two runs, with the cohort as the unit (test); the
+gate to read beside every verdict and the thing a pricing change must not worsen on either end. On the production run's
+saved frames (as-run pricing, 8 cohorts): all 1.10 — under-25s **1.28**, 25-28 1.03, 29+ **0.80**; QB 0.97, RB 1.21,
+WR 1.18, TE 1.09. Against the trees on the same features (`xgb_set_c1`) the production 3.5 blend run is *further* from
+level everywhere that matters: all 1.11 vs 1.05 (t +4.1 over cohorts), under-25s 1.30 vs 1.21 (t +4.1), RB 1.23 vs 1.14
+(t +4.8), WR 1.19 vs 1.08 — the shrinkage of B3 made visible. **The correction, built 2026-10-14 on the owner's
+"let's get this done tonight" (on `feat/review-ml-queue`, in the production preset):** `value.age_scale_factors`
+multiplies the points above replacement of the career model's spans by the player's age band (≤ 24 / 25-28 / 29+). In
+the harness it is fitted walk-forward exactly like the positional scale — realized / priced by band on the cohorts
+complete by each test season, on their own top-150, shrunk n / (n + 1), clipped 0.6-1.6 (`--rescore RUN
+--walk-age-scale`): ordering unchanged (0.621 = 0.621), wins error within noise (0.507 vs 0.502, t −1.3), bias halved
+(0.042 vs 0.059), under-25s 1.285 → 1.178 (t −2.3), 29+ 0.80 → 0.87 (t +2.6), RB 1.21 → 1.15; it only reaches the
+cohorts from 2018 (nothing is complete before) and is shrunk, so it closes about 40 % of the gap in the test. Production
+takes the table fitted on all eight test seasons with no shrinkage (`experiments.age_scale_table`: ≤ 24 ×1.27, 25-28
+×1.03, 29+ ×0.80; by horizon the young side grows, 1.23 / 1.26 / 1.38 for h1 / h2 / h3, the old side 0.80 / 0.76 /
+0.85) on the career spans only — the in-season model's own level is not measured, so rest of season and next season
+are untouched — in `inseason_value`, the preseason view and `build_war` from the run's `metrics.json`. Not fixed by it:
+the cause. QUEUED: the survival curve for the 29-plus side (a logit linear in age applied from 30, fitted on every
+age, cannot bend from a flat hazard at 27 to a steep one at 34), the rookie tail's ratios clipped at 1.15, and a
+per-horizon table once the seven-year windows are in; joint pricing stays off until then (OWNER).
 
 ### C2. The band is too narrow to price upside with — CONFIRMED
 20-80 coverage 0.55-0.56 at one year (QB 0.52 at three), band sigma 17-22 % below the holdout residual sigma, 9 % of
@@ -268,7 +291,8 @@ not in the preset; it stays out. Recorded in item 53.
 `inseason_value` prices rest-of-season and next season with the career h1 holdout sigma; `build_war` prices next season
 with sigma[2] — a 5-10 % upside difference between the `iv` column and the WAR column for the same player. Both are
 season-end residual spreads applied to mid-season projections that are ~60 % of value; the in-season model's own
-quantiles exist behind `--quantile-grid`. QUEUED: one convention (sigma[2] for next season, then the model's own band).
+quantiles exist behind `--quantile-grid`. FIXED on `feat/review-ml-queue`: the `iv` column prices next season with sigma[2]
+as the WAR column does (test); the model's own band for the in-season spans stays QUEUED.
 
 ### C5. `estimate_sigma` with pooled horizons sees the holdout players' other-horizon outcomes — PLAUSIBLE
 The temporary model fitted as of T−3 trains on every (row, k) with season + k ≤ cut, and a 2019 row trained with k = 3
@@ -283,15 +307,15 @@ with the per-player band, so the dict matters for the in-season spans and the fa
 | --- | --- | --- | --- |
 | D1 | `--no-write` did not cover `--current`: the trees smoke wrote `inseason/…/run_date=2026-10-13` | `backtest_inseason.py` | FIXED |
 | D2 | `ml-weekly-refresh` (Cloud Run, Tuesdays 15:00 UTC) writes a trees `base,career` payload at the latest run date | `.github/workflows/deploy-machine-learning.yaml`, the scheduler | OWNER: pause, or run it `--dry-run` |
-| D3 | `build_war` / `export_projections` take the latest run whatever its backend | both scripts | TONIGHT: refuse a non-production backend unless `--allow-backend` |
-| D4 | Players with no game this season have no row (`to_date_features` emits only players with a stat line): no projection, no roster slot, unpriceable | `inseason.py`, `build_war.py` | QUEUED first: a zero-game snapshot per rostered / tailed player carrying the preseason career h1/h2 (pro-rated, zero on IR), `tail_origin="preseason"`; a check that every rostered skill player is in `teams.parquet` |
-| D5 | The injury group fills "never on the report" for 2002-2008 (the fact has reserve-only rows from 2002, the report from 2009): 3,646 of 15,267 training rows | `feature_groups.py` `_coverage_fill` | QUEUED: a floor per source with a replay test (a feature change: after the running chain). FIXED: the quality check `fact.player_injury_week.report_rows_per_season` |
+| D3 | `build_war` / `export_projections` read a run by its run date whatever its backend | both scripts | FIXED on `feat/review-ml-queue`: `runs.check_backend` — both refuse a run whose stamped models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its own backends are not production, so the trees, a smoke or the cloud job say so explicitly); tests |
+| D4 | Players with no game this season have no row (`to_date_features` emits only players with a stat line): no projection, no roster slot, unpriceable | `inseason.py`, `build_war.py` | FIXED on `feat/review-ml-queue` (merges when the running chain ends): `inseason.no_game_snapshots` gives every player with a career tail and no stat line a zero-game snapshot carrying the preseason projection (rest of season pro-rated to the games left, zero on reserve now; next season h2; `snapshot_origin="no_game_yet"`); `build_war.placeholder_rows` keeps rostered players with no projection at all (devy picks, rookies without an NFL row) on their roster with no wins and the KTC value by name — smoked on the 2026-10-12 run: 27 / 35 / 41 placeholders per league, 24 / 34 / 34 priced |
+| D5 | The injury group fills "never on the report" for 2002-2008 (the fact has reserve-only rows from 2002, the report from 2009): 3,646 of 15,267 training rows | `feature_groups.py` `_coverage_fill` | FIXED on `feat/review-ml-queue` (a feature change: merges when the running chain ends; the tail cache re-keys itself): the reserve lists floor at the fact's first season, the report-derived columns and their lags at the first season with a report row, with a replay test. FIXED: the quality check `fact.player_injury_week.report_rows_per_season` |
 | D6 | The position filter drops offensive production by players nflverse lists at CB / FB: Travis Hunter has no rows at all, Juszczyk's receiving is gone | `fact_player_week.py` | FIXED (code, tests): the fantasy position is Sleeper's — the primary position, else the first skill position among the positions he may fill (`dim_players_master.fantasy_positions`, "DB/WR" for Hunter) — and only then nflverse's with FB → RB; the facts rebuild on the first daily run after the merge |
 | D7 | `fact_player_week_status` stamps weeks 6-18 of 2026 `not_rostered` (11,414 rows); the career `weekly` group would read every 2026 player as cut for 13 weeks | `fact_player_week_status.py` | FIXED (code, tests): the grid ends at the latest week any roster row or stat line carries; the quality check `fact.player_week_status.no_rows_past_production` |
-| D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | QUEUED: export only the per-league lines |
+| D8 | Two replacement lines: `backtest_inseason` prices `iv` with the share line (QB 15.4), `build_war` with the league's weekly line (QB 13.5); a QB at 14.5 ppg shows zero PAR and positive WAR in one row; the outcome curves draw against the global line | `export_projections.py`, the page | FIXED on `feat/review-ml-queue`: the outcome curves draw against the chosen league's line (the WAR columns' line); the payload labels the internal share line (`replacement_note`). The `iv` / `v` columns still price on the internal line (QUEUED: price them per league too) |
 | D9 | The export and the page key players by name (34 same-name pairs in the fact; none among today's 496, so latent) | `export_projections.py`, the page | QUEUED: key by `player_id` |
 | D10 | The scoring league is "the lineage with the most settings rows"; a fourth league would silently re-score the fact | `fact_player_week.py` | FIXED (code, test): the pinned lineage `PRIMARY_LINEAGE_ID`, the same pin as the model's replacement line; the most-rows rule only as a loud fallback |
-| D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | QUEUED |
+| D11 | `build_war --source career` indexes `[0]` on in-season leagues: IndexError in the offseason | `build_war.py` | FIXED on `feat/review-ml-queue`: `pick_leagues` takes the in-season leagues, else each lineage's newest season, and stops with a message when the primary lineage is absent (test) |
 | D12 | A partially loaded latest week reads as missed games (freshness is checked, completeness is not) | `data_quality/suite.py` | FIXED (check, replay test): `fact.player_week.latest_week_complete` — teams with a stat line in the latest week against 2 × the games played by today in the season's schedule partition |
 | D13 | Base features left-censored at 1999 (`career_seasons = 1, exp = 10`); `lag1_*` null for both "sat out" and "before 1999" | `career.py` | QUEUED (minor): a `career_censored` flag |
 
@@ -332,20 +356,38 @@ GPU refresh never loads it): the fantasy position from Sleeper's `fantasy_positi
 fullbacks come in), the status grid capped at the latest observed week (D7), the pinned scoring lineage (D10), and
 three quality checks — the latest week's completeness against the schedule (D12), injury-report rows per season (D5's
 guard), no status rows past production (D7's guard) — each with a replay test; the facts rebuild on the first daily
-run after the merge.
+run after the merge. On the model side, on the branch `feat/review-ml-queue` because the running GPU chain imports
+these modules (it merges into the PR branch when the chain ends): D4 (zero-game snapshots for players with a career
+tail and no game yet; roster placeholders with the KTC value by name for players with no NFL row), D5's feature floor
+per source, C4 (one spread for next season), each with tests, the roster side smoked on the 2026-10-12 run.
 
-**Tonight, after the GPU refresh and its chain finish (TONIGHT).** `build_war` / `export_projections` refuse a
-non-production backend; the scorecard's head rows; the 2026-10-12 market summary re-scored from its saved frames with
-the new fields; the in-season card rebuilt from the production model's PAR table; the page republished from tonight's
-payload after its `metrics.json` shows the TabPFN backends.
+**Also done on 2026-10-13, after the first commit.** The scorecard's head rows (with tests); the 2026-10-12 market
+summary re-scored in place from its saved frames with the net-of-regression fields (317 prior values identical); the
+in-season card's summary rebuilt from the production model's PAR table (`backtests/inseason/run_date=2026-10-13`), so
+tonight's export carries both; the exports' backend guard (D3) on `feat/review-ml-queue`. **The night of 2026-10-14
+(owner, 00:35: "when I come back in the morning we've addressed some of the larger gaps ... young talent and old
+talent"):** the experiment chain is halted the moment the first refresh exits; `feat/review-ml-queue` merges into the
+PR branch, the ML guide's smoke runs on the trees, and a second production refresh runs on the merged code (the age-band
+correction, the zero-game players, the injury floor, one spread, the backend guard) — the page is republished from
+it; the halted experiments restart afterwards under the merged code with a fresh baseline (`tabpfn35_young_base2`) so
+every pairing is like for like, with the window report by age and the age gate on each (`chain_night2.sh`).
 
-**Queued code changes, no decision needed (QUEUED), in priority order.** D4 (the missing players) → D5 (the injury
-group's floor per source) → D8 (one replacement line) → B3 (a level metric in the acceptance rule) → C1's age-band gate
-→ C4 (one spread) → D9, D11, D13 → C2 (band widening) → C5 → A6 (re-run the career eval on the production model) → A4
-(the in-season model through the market test) → B6's consensus snapshot.
+**Queued code changes, no decision needed (QUEUED), in priority order.** D9 (player_id keys) → C1's level correction
+(an age-band × horizon calibration or the survival form) → C2 (band widening, and the in-season model's own band for
+its spans) → D8's second half (the `iv` / `v` columns per league) → D13 → C5 → A6 (re-run the career eval on the
+production model) → A4 (the in-season model through the market test) → B6's consensus snapshot. Done on
+`feat/review-ml-queue`, merging when the chain ends: D3, D4, D5, D11, C4, D8 (the curves), B3 (the level read in every
+verdict), C1's gate (`scripts/age_gate.py`).
 
-**The owner's calls (OWNER).** (1) Pause `ml-weekly-refresh` or make it a dry run — today it writes a weaker model into
-the production store every Tuesday. (2) Re-pull MFL 2011-2026 at AUG15 (a lake write), then re-screen the preseason
-group. (3) Two hold-out cohorts never used for tuning (a rule change; it costs two of eight test seasons). (4) Joint
-pricing stays off until the age gate exists. (5) Whether the page's default stays at 10 % while the harness scores
-three years at 20 %. (6) PR #37.
+**The owner's calls, decided 2026-10-14.** (1) `ml-weekly-refresh` is PAUSED (00:05 EDT) until a better arrangement is
+chosen; it no longer writes trees payloads into the production store. (2) MFL 2011-2026 re-pulled at AUG15 the same
+night (the lake write; FFC's past seasons rewritten from their frozen preseason windows, FFC 2026 skipped as an
+in-season window); re-screening the preseason group on the clean inputs is queued after the running chain. (3) Two
+hold-out cohorts: explained, not yet decided — today every decision is tested on the same eight seasons 2015-2022 and
+~110 variants have been tried against them; holding two of them back from every tuning decision and reporting them
+only when something ships is the clean check that the adopted changes were not luck, at the cost of deciding on six
+seasons instead of eight. (4) Agreed: joint pricing stays off until the age-band correction exists, and **the level is
+part of the acceptance rule** — an error gain alone does not adopt when the top-150 level moves further from zero by
+more than 0.02 wins (`experiments.verdict`, on `feat/review-ml-queue`). (5) The page's default stays at 10 %; the
+seven-year windows by age (the h7 run in tonight's chain) become the gate for the seasons the three-year harness never
+scores. (6) The owner merges PR #37; `feat/review-ml-queue` follows as its own PR when the chain ends.

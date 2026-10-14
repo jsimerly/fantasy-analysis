@@ -18,11 +18,17 @@ file is the working guide for this folder; [README.md](README.md) has the longer
   `weekly_refresh.py` itself on the trees against the ML bucket:** its `build_war` / `export` steps write `war/` and
   `pages/` at today's run date, and a trees payload at the latest run date is what the exports pick up when the GPU run
   fails (the Cloud Run job `ml-weekly-refresh` does exactly this every Tuesday 15:00 UTC until it is paused — review
-  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`).
+  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`). `build_war` and `export_projections` refuse a run whose stamped
+  models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its
+  own backends are not production, so a trees refresh must say so).
 - **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
   players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
   +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)
-  beside the ordering and the error: MAE on a zero-inflated target rewards shrinkage (review 2026-10-13, B3).
+  beside the ordering and the error: MAE on a zero-inflated target rewards shrinkage (review 2026-10-13, B3). **The
+  level is part of the acceptance rule (owner, 2026-10-14):** every verdict prints the top-150 bias, and an error gain
+  alone does not adopt when the candidate's level moves further from zero by more than 0.02 wins (it is a TRADE-OFF
+  for the owner). Read the level by age band too (`scripts/age_gate.py`):
+  under-25s realize ~1.2x their price and 29+ ~0.9x (C1), and a pricing change must not widen either end.
 
 ## What is where
 | Path | What |
