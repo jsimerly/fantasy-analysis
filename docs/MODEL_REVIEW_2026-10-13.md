@@ -363,8 +363,15 @@ production model) → A4 (the in-season model through the market test) → B6's 
 `feat/review-ml-queue`, merging when the chain ends: D3, D4, D5, D11, C4, D8 (the curves), B3 (the level read in every
 verdict), C1's gate (`scripts/age_gate.py`).
 
-**The owner's calls (OWNER).** (1) Pause `ml-weekly-refresh` or make it a dry run — today it writes a weaker model into
-the production store every Tuesday. (2) Re-pull MFL 2011-2026 at AUG15 (a lake write), then re-screen the preseason
-group. (3) Two hold-out cohorts never used for tuning (a rule change; it costs two of eight test seasons). (4) Joint
-pricing stays off until the age gate exists. (5) Whether the page's default stays at 10 % while the harness scores
-three years at 20 %. (6) PR #37.
+**The owner's calls, decided 2026-10-14.** (1) `ml-weekly-refresh` is PAUSED (00:05 EDT) until a better arrangement is
+chosen; it no longer writes trees payloads into the production store. (2) MFL 2011-2026 re-pulled at AUG15 the same
+night (the lake write; FFC's past seasons rewritten from their frozen preseason windows, FFC 2026 skipped as an
+in-season window); re-screening the preseason group on the clean inputs is queued after the running chain. (3) Two
+hold-out cohorts: explained, not yet decided — today every decision is tested on the same eight seasons 2015-2022 and
+~110 variants have been tried against them; holding two of them back from every tuning decision and reporting them
+only when something ships is the clean check that the adopted changes were not luck, at the cost of deciding on six
+seasons instead of eight. (4) Agreed: joint pricing stays off until the age-band correction exists, and **the level is
+part of the acceptance rule** — an error gain alone does not adopt when the top-150 level moves further from zero by
+more than 0.02 wins (`experiments.verdict`, on `feat/review-ml-queue`). (5) The page's default stays at 10 %; the
+seven-year windows by age (the h7 run in tonight's chain) become the gate for the seasons the three-year harness never
+scores. (6) The owner merges PR #37; `feat/review-ml-queue` follows as its own PR when the chain ends.

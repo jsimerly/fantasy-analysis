@@ -629,9 +629,13 @@ def verdict(table: pl.DataFrame) -> str:
     t_order, t_err = -o["t"], e["t"]
     gain_o, gain_e = t_order >= T_GAIN, t_err >= T_GAIN
     worse_o, worse_e = t_order < T_NO_WORSE, t_err < T_NO_WORSE
-    if (gain_o and not worse_e) or (gain_e and not worse_o):
+    # the level (review 2026-10-13, B3; the owner made it part of the rule 2026-10-14): MAE on a zero-inflated target rewards
+    # shrinkage, so an error gain whose top-150 level moves further from zero does not adopt on its own
+    lv = rows.get("bias_war_top")
+    level_worse = lv is not None and abs(lv["a"]) > abs(lv["b"]) + LEVEL_SLACK
+    if (gain_o and not worse_e) or (gain_e and not worse_o and not level_worse):
         state = "ADOPT"
-    elif (gain_o and worse_e) or (gain_e and worse_o):
+    elif (gain_o and worse_e) or (gain_e and worse_o) or (gain_e and level_worse):
         state = "TRADE-OFF (owner's call)"
     else:
         state = "NO"
@@ -643,13 +647,11 @@ def verdict(table: pl.DataFrame) -> str:
         if "ppg_cover_2080" in rows:
             c = rows["ppg_cover_2080"]
             stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
-    if "bias_war_top" in rows:                # the level read (review 2026-10-13, B3): MAE on a zero-inflated target rewards shrinkage
-        lv = rows["bias_war_top"]             # bias = realized - projected on the top 150: + means the projections run low
+    if lv is not None:                        # bias = realized - projected on the top 150: + means the projections run low
         stats += f" | level (bias, top 150, + = projections low) A {lv['a']:+.3f} vs B {lv['b']:+.3f}"
-        if gain_e and abs(lv["a"]) > abs(lv["b"]) + LEVEL_SLACK:
-            state += " + LEVEL CAUTION"
+        if gain_e and level_worse:
             stats += (f" -- the error gain comes with the candidate's level moving further from zero (|{lv['a']:.3f}| vs |{lv['b']:.3f}|): "
-                      "an MAE gain by shrinkage is not a better projection; check realized / priced on the fixed set (window_report --by-age)")
+                      "an MAE gain by shrinkage is not a better projection; read realized / priced on the fixed set (scripts/age_gate.py)")
     if "gap_h1" in rows:                      # the overfitting read: out-of-sample minus in-sample season-points error next year
         g = rows["gap_h1"]
         stats += f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts (in-sample A {rows['mae_h1_train']['a']:.1f} vs B {rows['mae_h1_train']['b']:.1f})" if "mae_h1_train" in rows else f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts"
@@ -657,8 +659,11 @@ def verdict(table: pl.DataFrame) -> str:
     dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
     if dips:
         why += f"; {dips} worse"
+    if level_worse:
+        why += "; level further from zero"
     return (f"co-primary verdict (A = candidate vs B = baseline): {state} | {stats} | {why}"
-            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}")
+            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}; an error gain alone does not adopt "
+            f"when the top-150 level moves further from zero by more than {LEVEL_SLACK} wins")
 
 
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:

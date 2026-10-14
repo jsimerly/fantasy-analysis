@@ -2082,5 +2082,12 @@ t = 1.45) stays a tie.
     reads realized / priced by age band and position on the fixed top set of one or two runs (the age gradient of the
     review's C1, to be read beside every verdict); `build_war --source career` no longer dies in the offseason. Tonight after the chain: the exports
     refuse a non-production backend, the scorecard, the re-scored market summary, the in-season card from the production
-    PAR table. The queue and the owner's calls (pause the cloud job; the AUG15 re-pull; two hold-out cohorts; joint
-    pricing waits for an age gate; the 10 % default) are in the document's last section.
+    PAR table. The queue and the owner's calls are in the document's last section. **Decided 2026-10-14 (owner):**
+    `ml-weekly-refresh` PAUSED (00:05 EDT); MFL 2011-2026 re-pulled at AUG15 that night (every partition carries
+    `period`; FFC's past seasons rewritten from their frozen preseason windows; FFC 2026 stays the in-season window but
+    is unused -- the preseason group takes MFL wherever a season has it); the preseason group's re-screen on the clean
+    inputs is queued after the chain; joint pricing stays off until the age-band correction exists; **the level is part
+    of the acceptance rule** (an error gain alone does not adopt when the top-150 level moves further from zero by more
+    than 0.02 wins); the page's default stays at 10 % with the seven-year windows by age as the gate for the seasons the
+    harness never scores; hold-out cohorts explained, not decided; the owner merges PR #37, `feat/review-ml-queue`
+    follows as its own PR.

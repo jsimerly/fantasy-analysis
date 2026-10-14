@@ -128,12 +128,14 @@ def test_the_verdict_reads_the_level_and_flags_an_error_gain_by_shrinkage():
     import experiments as ex
     assert "bias_war_top" in ex.PAIRED_METRICS
     level = lambda a, b: pl.DataFrame({"metric": ["bias_war_top"], "a": [a], "b": [b], "diff_b_minus_a": [b - a], "se": [0.01], "t": [0.0], "b_wins": [4], "cohorts": [8]})
+    # the owner made the level part of the rule (2026-10-14): an error gain alone does not adopt when the level moves further from zero
     v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.09, 0.01)]))      # error gain, the candidate runs 0.09 wins low
-    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT + LEVEL CAUTION") and "level (bias, top 150" in v and "shrinkage" in v
-    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.01, 0.05)]))      # error gain with a level closer to zero: no flag
-    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "LEVEL CAUTION" not in v
-    v = ex.verdict(pl.concat([_paired_table(-3.0, 0.5), level(0.09, 0.01)]))     # an ordering gain is not flagged
-    assert "LEVEL CAUTION" not in v and "A +0.090 vs B +0.010" in v
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): TRADE-OFF (owner's call)") and "level (bias, top 150" in v
+    assert "shrinkage" in v and "level further from zero" in v
+    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.01, 0.05)]))      # error gain with a level closer to zero: adopts
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "shrinkage" not in v
+    v = ex.verdict(pl.concat([_paired_table(-3.0, 0.5), level(0.09, 0.01)]))     # an ordering gain is not shrinkage: adopts, the level shown
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "A +0.090 vs B +0.010" in v and "level further from zero" in v
 
 
 def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
