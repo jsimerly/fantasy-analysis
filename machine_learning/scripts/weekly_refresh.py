@@ -103,11 +103,16 @@ def main() -> None:
     ap.add_argument("--quantile-grid", action="store_true", help="the 20-point outcome grids in the run (backtest_inseason --quantile-grid; BACKLOG 47)")
     ap.add_argument("--career-todate", action="store_true",
                     help="the career seasons (T+2 on) projected from this season's to-date rows, not the last complete season (BACKLOG 51)")
+    ap.add_argument("--no-career-todate", action="store_true",
+                    help="override a preset's career_todate: the career seasons from the last complete season's tail (the fallback after a run whose "
+                         "to-date tail did not finish -- 2026-10-13/14 it computed for ten hours, four times its usual, after a GPU memory warning)")
     ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
     ap.add_argument("--age-scale", default=None, metavar="RUN",
                     help="the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (backtest_inseason --age-scale; review C1, owner 2026-10-14)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
+    if args.no_career_todate:
+        args.career_todate = False
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
     season, week = current_season_week()

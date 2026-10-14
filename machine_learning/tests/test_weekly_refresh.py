@@ -63,6 +63,25 @@ def test_a_production_refresh_lets_the_exports_require_the_production_backend(mo
     assert ins[ins.index("--age-scale") + 1] == "some_run"                       # the age-band correction reaches the in-season run
 
 
+def test_no_career_todate_overrides_the_preset(monkeypatch):
+    """2026-10-14: the to-date career tail computed for ten hours; the fallback runs the preset off the last complete season."""
+    import sys
+    m = _mod()
+    seen = []
+    monkeypatch.setattr(m, "run", lambda cmd, dry, cwd=None, best_effort=False: seen.append(cmd) or True)
+    monkeypatch.setattr(m, "current_season_week", lambda: (2026, 6))
+    monkeypatch.setattr(m.power, "keep_awake", lambda *a, **k: True)
+    monkeypatch.setattr(sys, "argv", ["weekly_refresh.py", "--dry-run", "--preset", "production", "--skip", "war", "analysis", "export"])
+    m.main()
+    ins = next(c for c in seen if any("backtest_inseason.py" in str(x) for x in c))
+    assert "--career-todate" in ins and "--age-scale" in ins
+    seen.clear()
+    monkeypatch.setattr(sys, "argv", ["weekly_refresh.py", "--dry-run", "--preset", "production", "--no-career-todate", "--skip", "war", "analysis", "export"])
+    m.main()
+    ins = next(c for c in seen if any("backtest_inseason.py" in str(x) for x in c))
+    assert "--career-todate" not in ins and "--age-scale" in ins                 # everything else of the preset stays
+
+
 def test_the_export_shows_the_pinned_market_run_and_never_market_trends(monkeypatch):
     import importlib.util, sys
     m = _mod()
