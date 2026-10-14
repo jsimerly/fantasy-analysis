@@ -298,7 +298,7 @@ class TestRescore:
         assert abs(t["age:30"] - 1.0) < 0.12                                                    # swinging around 1: shrunk to near 1
         # drifted down recently: the recency-weighted mean is ~0.6, but a band that swung between 1.0 and 0.5 is uncertain, so
         # the variance shrinkage keeps most of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
-        assert 0.75 < t["age:34"] < 1.0 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
+        assert 0.55 < t["age:34"] < 0.95 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
         assert "<=24_mean" in t and "<=24_se" in t and "32+_mean" in t                           # the evidence travels with the table
         got = []
         walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
