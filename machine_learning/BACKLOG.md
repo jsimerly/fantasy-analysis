@@ -2145,3 +2145,19 @@ t = 1.45) stays a tie.
     points above replacement, the values and the market comparison redone, the originals kept beside the run) and
     `weekly_refresh --skip inseason` rebuilds the WAR, the summaries and the exports from it. Today's run re-priced with
     the curve at 16:50 (the young down 4-6 %, the 29-31 quarterbacks up 6-11 %, no NaN) and rebuilt; the page follows.
+    **Where it stopped for the week (2026-10-15, the owner: "stop the runs for now and wait until monday to fix it").**
+    The re-priced rebuild exited 0: the WAR views, pick slots, trades, `projections.json` and the scorecard are the curve's
+    numbers in the bucket. `analysis/title_odds.py` failed on a transient GCS connection reset and was skipped (its retry
+    needs `PYTHONUTF8=1` when its output is redirected), so the bucket's title odds are the previous run's and the page
+    artifact was not republished. The night chain (`chain_night2.sh`) finished the production refresh, the fresh baseline
+    `tabpfn35_young_base2`, the five career candidates (`tabpfn35_is5`, `tabpfn35_young`, `tabpfn35_young_adpnext`,
+    `tabpfn35_young_all`, `tabpfn35_surv_q`) with their paired verdicts, window reports by age and age gates, the h7 run
+    with its reports, and the in-season `weeks_mixed8` -- all exit 0, none read yet. `weeks_mixed_bags3` hung: its first
+    cohort ran ~44 min at normal power, then at the cohort boundary the card fell to ~73 W at 100 % with 15.8 GB of 16 GB
+    used and the log did not move for 91 minutes (no allocator warning this time); it was killed and the chain stopped
+    with it, so `weeks_mixed8_110k`, `weeks_all_210k`, `context_focus` and `context_bags3` did not run. Two lessons:
+    the in-season `bt()` stages had no wall-time budget (only the career `run()` stages did) -- give them one; and the
+    stall rule "under 120 W at full utilization" is right only together with a still log: a power drop at a cohort
+    boundary with the memory at the ceiling is the hang, low power alone is not. Monday: read the verdicts, rerun title
+    odds and republish the page, budget the in-season stages, fix the rule in `run_status.py`, rerun the five in-season
+    variants (bags3 likely needs fewer rows per fit or the memory freed between bags).
