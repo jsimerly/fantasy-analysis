@@ -71,6 +71,9 @@ NGS_RUSH_SRC = {"efficiency": "rush_eff", "rush_yards_over_expected_per_att": "r
 USAGE_COLS = [f"ng_{v}" for v in NGS_REC_SRC.values()] + [f"ng_{v}" for v in NGS_RUSH_SRC.values()] + ["sn_pct_td", "sn_pct_last3", "sn_trend"]
 ROLE_COLS = ["last1_fpts", "last5_ppg", "last3_targets_pg", "last3_touches_pg", "tgt_trend", "touch_trend",
              "games_since_return", "missed_last3", "td_injured_weeks", "td_dnp_weeks"]
+INJURY_CLASSES = ["knee_achilles", "soft_tissue", "concussion", "upper_body", "ankle_foot"]
+INJURY_NOW_COLS = (["ij_on_ir_now", "ij_out_now", "ij_released_now", "ij_practice_squad_now", "ij_injured_run", "ij_weeks_since_played",
+                    "ij_td_knee_achilles_weeks"] + [f"ij_class_{c}" for c in INJURY_CLASSES])
 SCHEDULE_COLS = ["sch_games_left", "sch_opp_pd", "sch_opp_pd_next", "sch_bye_ahead"]
 # team_change - what changed around the player this season (known from week 1): a new starting quarterback on his
 #               team against last season's regular starter, the share of this season's offensive-line starters who
@@ -109,9 +112,25 @@ FFT_PATH = "bronze/fftoday/projections"                   # FFToday 2010-2017 we
 PRESEASON_COLS = ["ps_adp", "ps_adp_pos_rank", "ps_drafted"]
 PRESEASON_FIRST_SEASON = 2009
 ADP_PATH = "bronze/adp"                                   # season partitions per source (ingestion to follow); --adp-dir until then
+# college2 / college_qb / draft_age -- the career model's groups (feature_groups), static per player, joined onto every
+#                                     snapshot: the rookie has no prior NFL season, so college and entry age are his history
+from feature_groups import COLLEGE2_COLS, COLLEGE_QB_COLS, DRAFT_AGE_COLS  # noqa: E402
+PLAYER_GROUPS = ("college2", "college_qb", "draft_age")
 EXTRA_GROUPS = {"team": TEAM_WEEK_COLS, "contract": CONTRACT_SNAP_COLS, "usage": USAGE_COLS, "role": ROLE_COLS, "schedule": SCHEDULE_COLS,
                 "opportunity": OPP_COLS, "consensus": CONSENSUS_COLS, "consensus_line": CONSENSUS_LINE_COLS, "preseason": PRESEASON_COLS,
-                "team_change": TEAM_CHANGE_COLS}
+                "team_change": TEAM_CHANGE_COLS, "injury_now": INJURY_NOW_COLS, "college2": COLLEGE2_COLS, "college_qb": COLLEGE_QB_COLS, "draft_age": DRAFT_AGE_COLS}
+
+
+def player_group_features(snaps: pl.DataFrame, groups: Iterable[str], ctx=None) -> pl.DataFrame:
+    """The career model's per-player groups (college2, college_qb, draft_age) on the snapshots, built the same way."""
+    import feature_groups as fg
+    names = [g for g in groups if g in PLAYER_GROUPS]
+    if not names:
+        return snaps
+    ctx = ctx or fg.Context()
+    for g in names:
+        snaps = fg.GROUPS[g].build(snaps, ctx)
+    return snaps
 FFO_PATH = "bronze/nflverse/ff_opportunity"                  # season partitions (gcs_io.read_lake_prefix)
 NGS_REC_PATH = "bronze/nflverse/nextgen_stats_receiving"      # season partitions (gcs_io.read_lake_prefix)
 NGS_RUSH_PATH = "bronze/nflverse/nextgen_stats_rushing"
@@ -326,6 +345,8 @@ def preseason_features(mfl: pl.DataFrame | None, ffc: pl.DataFrame | None, xwalk
     xw = xwalk.with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id")).filter(pl.col("player_id").is_not_null() & (pl.col("player_id") != ""))
     parts = []
     if mfl is not None and mfl.height:
+        if "ext_id" not in mfl.columns and "mfl_id" in mfl.columns:     # the lake's shape (adp_ingestion writes mfl_id)
+            mfl = mfl.rename({"mfl_id": "ext_id"})
         by_id = xw.select(pl.col("mfl_id").cast(pl.Utf8).alias("ext_id"), "player_id", pl.col("position").cast(pl.Utf8)).drop_nulls("ext_id").unique("ext_id")
         parts.append(mfl.with_columns(pl.col("ext_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64), pl.col("adp").cast(pl.Float64))
                         .join(by_id, on="ext_id", how="inner").select("player_id", "season", "position", "adp"))
@@ -368,6 +389,33 @@ def role_features(wk: pl.DataFrame, status: pl.DataFrame | None, week: int) -> p
         pl.col("_inj").sum().alias("td_injured_weeks"), pl.col("_dnp").sum().alias("td_dnp_weeks"),
     )
     return out.join(st, on=["player_id", "season"], how="full", coalesce=True)
+
+
+def injury_now_features(status: pl.DataFrame | None, week: int) -> pl.DataFrame:
+    """(player_id, season) -> the player's state at ``week`` (BACKLOG 53): his latest non-bye status (injured reserve,
+    out, released, practice squad), the run of injured weeks ending there, weeks since he last played, the class of his
+    latest injury this season (one-hot), and knee-Achilles weeks to date. Whether he missed time is in ``role``; this
+    is why, and whether it is still going on."""
+    if status is None or status.height == 0:
+        return pl.DataFrame(schema={"player_id": pl.Utf8, "season": pl.Int64})
+    s = (status.filter((pl.col("week") <= week) & (pl.col("status") != "bye"))
+               .with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars().alias("player_id"), pl.col("season").cast(pl.Int64),
+                             pl.col("status").is_in(INJURED_STATUSES).alias("_inj"), (pl.col("status") == "played").alias("_pl"))
+               .sort("week"))
+    last = s.group_by("player_id", "season").agg(pl.col("status").last().alias("_st"), pl.col("roster_status").last().alias("_rs"),
+                                                 pl.col("_inj").cast(pl.Int8).reverse().cum_prod().sum().alias("ij_injured_run"),
+                                                 (pl.lit(week) - pl.col("week").filter(pl.col("_pl")).max()).alias("ij_weeks_since_played"),
+                                                 pl.col("injury_class").filter(pl.col("_inj") & pl.col("injury_class").is_not_null()).last().alias("_cls"),
+                                                 (pl.col("_inj") & (pl.col("injury_class") == "knee_achilles")).sum().alias("ij_td_knee_achilles_weeks"))
+    return last.with_columns(
+        (pl.col("_st") == "injured_reserve").cast(pl.Float64).alias("ij_on_ir_now"),
+        (pl.col("_st") == "injured_out").cast(pl.Float64).alias("ij_out_now"),
+        ((pl.col("_st") == "not_rostered") | (pl.col("_rs") == "CUT")).cast(pl.Float64).alias("ij_released_now"),
+        (pl.col("_st") == "practice_squad").cast(pl.Float64).alias("ij_practice_squad_now"),
+        pl.col("ij_injured_run").cast(pl.Float64), pl.col("ij_weeks_since_played").cast(pl.Float64),
+        pl.col("ij_td_knee_achilles_weeks").cast(pl.Float64),
+        *[(pl.col("_cls") == c).fill_null(False).cast(pl.Float64).alias(f"ij_class_{c}") for c in INJURY_CLASSES],
+    ).drop("_st", "_rs", "_cls")
 
 
 def schedule_features(schedules: pl.DataFrame, week: int, last_week: int = 18) -> pl.DataFrame:
@@ -440,13 +488,90 @@ def prior_season_features(season_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def week_group_features(wk: pl.DataFrame, w: int, gi: dict, groups: Iterable[str]) -> pl.DataFrame:
+    """The named in-season groups' columns through week ``w`` for every (player_id, season) -- the same builders
+    ``build_snapshots`` joins, without the snapshot around them (the career model's week-aware groups, BACKLOG 51)."""
+    groups = set(groups)
+    out = wk.filter(pl.col("week") <= w).select("player_id", "season").unique()
+    if "usage" in groups and (gi.get("ngs_receiving") is not None or gi.get("status") is not None):
+        u = usage_features(gi.get("ngs_receiving"), gi.get("ngs_rushing"), gi.get("status"), w)
+        if u.width > 2:
+            out = out.join(u, on=["player_id", "season"], how="left")
+    if "role" in groups:
+        out = out.join(role_features(wk, gi.get("status"), w), on=["player_id", "season"], how="left")
+    if "injury_now" in groups and gi.get("status") is not None:
+        out = out.join(injury_now_features(gi["status"], w), on=["player_id", "season"], how="left")
+    if "opportunity" in groups and gi.get("opportunity") is not None:
+        out = out.join(opportunity_features(gi["opportunity"], w), on=["player_id", "season"], how="left")
+    if "preseason" in groups and gi.get("preseason") is not None:
+        out = out.join(gi["preseason"], on=["player_id", "season"], how="left").with_columns(
+            pl.when(pl.col("season") >= PRESEASON_FIRST_SEASON).then(pl.col("ps_drafted").fill_null(0.0)).otherwise(None).alias("ps_drafted"))
+    if "consensus" in groups and gi.get("consensus") is not None and gi.get("consensus_xwalk") is not None:
+        out = out.join(consensus_features(gi["consensus"], gi["consensus_xwalk"], wk, w), on=["player_id", "season"], how="left").with_columns(
+            pl.when(pl.col("season") >= CONSENSUS_FIRST_SEASON).then(pl.col("cs_has").fill_null(0.0)).otherwise(None).alias("cs_has"))
+    return out
+
+
+def load_group_inputs(is_groups: Iterable[str], base: pl.DataFrame, ngs_dir: str | None = None, ffo_dir: str | None = None,
+                      proj_dir: str | None = None, adp_dir: str | None = None, no_fftoday: bool = False) -> dict:
+    """The lake tables the named in-season groups read, as ``build_snapshots`` keyword arguments (``depth`` aside). Shared by
+    the in-season run and the career model's week-aware groups (BACKLOG 51). ``base``: the played-season frame (FFToday's
+    id bridge)."""
+    import gcs_io
+    is_groups = [g for g in is_groups if g]
+    team_week = gcs_io.read_lake(TEAM_WEEK_PATH) if "team" in is_groups else None
+    contracts = gcs_io.read_lake(CONTRACT_PATH) if "contract" in is_groups else None
+    status = gcs_io.read_lake(STATUS_PATH) if ("usage" in is_groups or "role" in is_groups or "injury_now" in is_groups) else None
+    ngs_rec = ngs_rush = None
+    if "usage" in is_groups:
+        if ngs_dir:                                              # the slices pulled locally (nflreadpy) until the lake has them
+            ngs_rec, ngs_rush = pl.read_parquet(f"{ngs_dir}/receiving.parquet"), pl.read_parquet(f"{ngs_dir}/rushing.parquet")
+        else:
+            ngs_rec, ngs_rush = gcs_io.read_lake_prefix(NGS_REC_PATH), gcs_io.read_lake_prefix(NGS_RUSH_PATH)
+    schedules = gcs_io.read_lake_prefix(SCHEDULES_PATH) if "schedule" in is_groups else None
+    team_change = None
+    if "team_change" in is_groups:
+        team_change = (__import__('feature_groups').Context().depth, gcs_io.read_lake_prefix(SNAP_COUNTS_PATH))
+    ffo = None
+    if "opportunity" in is_groups:
+        ffo = pl.read_parquet(f"{ffo_dir}/weekly.parquet") if ffo_dir else gcs_io.read_lake_prefix(FFO_PATH)
+    proj = xw_ids = ids = preseason = None
+    if "consensus" in is_groups or "consensus_line" in is_groups or "preseason" in is_groups:
+        ids = gcs_io.read_lake_prefix(FF_IDS_PATH, partition="load_date")
+        ids = ids.filter(pl.col("load_date") == ids["load_date"].max())
+    if "consensus" in is_groups or "consensus_line" in is_groups:
+        proj = pl.read_parquet(f"{proj_dir}/weekly.parquet") if proj_dir else gcs_io.read_lake_prefix(PROJ_PATH)
+        xw_ids = ids.select("sleeper_id", "gsis_id")
+        if not no_fftoday:
+            try:
+                fft = fftoday_as_consensus(gcs_io.read_lake_prefix(FFT_PATH), ids, base)
+            except Exception as e:  # noqa: BLE001
+                print("FFToday rows unavailable:", str(e)[:120], flush=True); fft = None
+            if fft is not None and fft.height:
+                have = set(int(x) for x in proj["season"].unique().to_list())
+                fft = fft.filter(~pl.col("season").is_in(sorted(have)))                 # Sleeper wins where both exist
+                print(f"consensus before Sleeper: FFToday {fft['season'].min()}..{fft['season'].max()}, {fft.height:,} player-weeks matched to gsis", flush=True)
+                proj = pl.concat([proj.with_columns(pl.col("player_id").cast(pl.Utf8)), fft.with_columns(pl.col("player_id").cast(pl.Utf8))], how="diagonal")
+                xw_ids = pl.concat([xw_ids.with_columns(pl.col("sleeper_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)), gsis_identity_rows(ids)], how="vertical")
+    if "preseason" in is_groups:
+        if adp_dir:
+            mfl, ffc = pl.read_parquet(f"{adp_dir}/mfl.parquet"), pl.read_parquet(f"{adp_dir}/ffc.parquet")
+        else:
+            mfl, ffc = gcs_io.read_lake_prefix(f"{ADP_PATH}/mfl"), gcs_io.read_lake_prefix(f"{ADP_PATH}/ffc")
+        preseason = preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
+        print(f"preseason consensus: {preseason.height:,} player-seasons {preseason['season'].min()}..{preseason['season'].max()}", flush=True)
+    return dict(team_week=team_week, contracts=contracts, ngs_receiving=ngs_rec, ngs_rushing=ngs_rush, status=status, schedules=schedules,
+                role="role" in is_groups, injury_now="injury_now" in is_groups, opportunity=ffo, consensus=proj, consensus_xwalk=xw_ids, preseason=preseason, team_change=team_change)
+
+
 def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[int] = WEEKS,
                     depth: pl.DataFrame | None = None, team_week: pl.DataFrame | None = None,
                     contracts: pl.DataFrame | None = None, ngs_receiving: pl.DataFrame | None = None,
                     ngs_rushing: pl.DataFrame | None = None, status: pl.DataFrame | None = None,
                     schedules: pl.DataFrame | None = None, role: bool = False, opportunity: pl.DataFrame | None = None,
                     consensus: pl.DataFrame | None = None, consensus_xwalk: pl.DataFrame | None = None,
-                    preseason: pl.DataFrame | None = None, team_change: tuple[pl.DataFrame, pl.DataFrame | None] | None = None) -> pl.DataFrame:
+                    preseason: pl.DataFrame | None = None, team_change: tuple[pl.DataFrame, pl.DataFrame | None] | None = None,
+                    injury_now: bool = False) -> pl.DataFrame:
     """Stack a snapshot for every (player, season, week): to-date features + prior-season
     features (+ depth-chart standing when ``depth`` is given, + the team to date when
     ``team_week`` is given, + the contract in force when ``contracts`` is given) + ROS /
@@ -475,6 +600,8 @@ def build_snapshots(wk: pl.DataFrame, season_df: pl.DataFrame, weeks: Iterable[i
                 snap = snap.join(usage, on=["player_id", "season"], how="left")
         if role:
             snap = snap.join(role_features(wk, status, w), on=["player_id", "season"], how="left")
+        if injury_now and status is not None:
+            snap = snap.join(injury_now_features(status, w), on=["player_id", "season"], how="left")
         if opportunity is not None:
             snap = snap.join(opportunity_features(opportunity, w), on=["player_id", "season"], how="left")
         if preseason is not None:                                   # season-level: the same row for every week's snapshot
@@ -560,6 +687,14 @@ def training_subset(rows: pl.DataFrame, train_weeks: Iterable[int] | None = None
     return pl.concat(kept) if kept else out.head(0)
 
 
+def random_weeks_per_season(rows: pl.DataFrame, k: int, seed: int = 0) -> pl.DataFrame:
+    """At most ``k`` snapshot weeks per player-season, drawn at random (seeded) from the weeks he has (BACKLOG 48): the
+    same number of rows as k fixed checkpoints, but the model sees every point of the season (a week-5 projection
+    no longer interpolates between week-3 and week-6 training rows)."""
+    key = pl.struct("player_id", "season", "week").hash(seed)
+    return (rows.with_columns(key.alias("_rk")).filter(pl.col("_rk").rank("ordinal").over(["player_id", "season"]) <= k).drop("_rk"))
+
+
 def bag_subset(rows: pl.DataFrame, max_rows: int | None, seed: int, keep_recent: int = 2) -> pl.DataFrame:
     """One bag's in-context draw (context bagging, BACKLOG 36): the most recent ``keep_recent``
     seasons whole, the rest of the budget a random sample of the older rows -- a different draw
@@ -587,8 +722,12 @@ class InSeasonModels:
 
     def __init__(self, device: str = "cpu", seed: int = 0, extra_features: Iterable[str] = (), backend: str = "xgb",
                  tabpfn_params: dict | None = None, train_weeks: Iterable[int] | None = None, max_train_rows: int | None = None,
-                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, **params):
+                 next_one_per_season: bool = False, bags: int = 1, focus_week: bool = False, random_weeks: int | None = None,
+                 range_quantiles: Iterable[float] | None = None, **params):
         self.device, self.seed = device, seed
+        # the predictive quantiles of each target (TabPFN only; the same forward pass as the point): ros_ppg_qNN ...
+        self.range_quantiles = tuple(float(q) for q in range_quantiles) if range_quantiles else None
+        self.random_weeks = int(random_weeks) if random_weeks else None
         self.bags, self.focus_week = max(int(bags), 1), bool(focus_week)
         if self.bags > 1 and self.focus_week:
             raise ValueError("bags and focus_week are two different contexts; pick one")
@@ -607,7 +746,7 @@ class InSeasonModels:
 
     def _new(self):
         if self.backend == "tabpfn":
-            return career._TabPFN(self.device, self.seed, self.tabpfn_params)
+            return career._TabPFN(self.device, self.seed, self.tabpfn_params, want_quantiles=self.range_quantiles)
         if self.backend != "xgb":
             raise ValueError(f"unknown in-season backend {self.backend!r} (xgb | tabpfn)")
         return XGBRegressor(tree_method="hist", device=self.device, random_state=self.seed, n_jobs=-1, **self.params)
@@ -626,7 +765,10 @@ class InSeasonModels:
         for name, (rows, target) in specs.items():
             if self.next_one_per_season and name.startswith("next_"):
                 rows = one_week_per_season(rows, self.seed)
-            if self.train_weeks is not None:
+            pool = rows                                   # every snapshot week: a bag with random weeks draws its own from here
+            if self.random_weeks:
+                rows = random_weeks_per_season(rows, self.random_weeks, self.seed)
+            elif self.train_weeks is not None:
                 rows = rows.filter(pl.col("week").is_in(self.train_weeks))
             if rows.height == 0:
                 raise ValueError(f"{name}: no training outcomes (as_of={as_of_season})")
@@ -634,7 +776,9 @@ class InSeasonModels:
                 self._pool[name] = (rows, target)
                 self.train_rows[name] = min(rows.height, self.max_train_rows or rows.height)
                 continue
-            if self.bags > 1:
+            if self.bags > 1 and self.random_weeks:       # mixed weeks x bags: each model its own weeks per player-season (BACKLOG 48)
+                draws = [bag_subset(random_weeks_per_season(pool, self.random_weeks, self.seed + b), self.max_train_rows, self.seed + b) for b in range(self.bags)]
+            elif self.bags > 1:
                 draws = [bag_subset(rows, self.max_train_rows, self.seed + b) for b in range(self.bags)]
             else:
                 draws = [training_subset(rows, None, self.max_train_rows, self.seed)]
@@ -666,10 +810,26 @@ class InSeasonModels:
         ros_p = np.clip(self._predict("ros_ppg", X, snaps), 0, None)
         nx_g = np.clip(self._predict("next_games", X, snaps), 0, MAX_GAMES)
         nx_p = np.clip(self._predict("next_ppg", X, snaps), 0, None)
-        return snaps.with_columns(
+        out = snaps.with_columns(
             pl.Series("ros_games_hat", ros_g), pl.Series("ros_ppg_hat", ros_p), pl.Series("ros_fpts_hat", ros_g * ros_p),
             pl.Series("next_games_hat", nx_g), pl.Series("next_ppg_hat", nx_p), pl.Series("next_fpts_hat", nx_g * nx_p),
         )
+        return out.with_columns(self._quantile_columns(X, snaps))
+
+    def _quantile_columns(self, X: np.ndarray, snaps: pl.DataFrame) -> list[pl.Series]:
+        """``{ros,next}_{ppg,games}_qNN`` from each target's predictive distribution, averaged over its estimators (bags);
+        nothing for a backend without quantiles (the trees)."""
+        if not self.range_quantiles:
+            return []
+        cols = []
+        for name, cap in (("ros_ppg", None), ("ros_games", MAX_GAMES), ("next_ppg", None), ("next_games", MAX_GAMES)):
+            ests = self._estimators(name, snaps)
+            if not all(hasattr(m, "predict_quantiles") for m in ests):
+                return []
+            q = np.mean([np.asarray(m.predict_quantiles(X, self.range_quantiles), dtype=float) for m in ests], axis=0)
+            q = np.clip(np.sort(q, axis=1), 0.0, cap)                  # bag averages keep the order; clip like the points
+            cols += [pl.Series(f"{name}_{career.q_name(qq)}", q[:, j]) for j, qq in enumerate(self.range_quantiles)]
+        return cols
 
 
 # ------------------------------------------------------------------- in-season value
@@ -793,8 +953,35 @@ def fill_missing_tail(df: pl.DataFrame, horizons: list[int], min_group: int = 8,
 Z_20_80 = 0.8416     # a 20-80 band is +- 0.84 standard deviations of a normal spread
 
 
+JOINT_COUPLING = 0.5          # BACKLOG 47: halfway between independent and fully dependent ppg x games (their correlation is +0.48)
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma (experiments.apply_sigma_mode uses the same)
 SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain
+
+
+def joint_excess(df: pl.DataFrame, span: str, rep: dict[str, float], grid: tuple[float, ...] | None = None,
+                 coupling: float = JOINT_COUPLING) -> pl.Series | None:
+    """Per-game excess of a span (``ros``, ``next`` or ``h{k}``) priced jointly with its games: the season's points above
+    replacement E[max(ppg - rep, 0) x games] from the two predictive grids -- ``coupling`` x the quantile-by-quantile
+    pairing (healthy seasons are the big seasons) + (1 - coupling) x the product of the means -- divided by the
+    expected games, so value x games_hat reproduces it. None when the span has no complete grid."""
+    grid = grid or career.QUANTILE_GRID
+    pq = [f"{span}_ppg_{career.q_name(q)}" for q in grid]
+    gq = [f"{span}_games_{career.q_name(q)}" for q in grid]
+    if not all(c in df.columns for c in pq + gq):
+        return None
+    rep_e = pl.col("position").replace_strict(rep, default=0.0, return_dtype=pl.Float64)
+    ex_q = [pl.max_horizontal(pl.col(c).cast(pl.Float64) - rep_e, pl.lit(0.0)) for c in pq]
+    games = pl.col(f"{span}_games_hat").cast(pl.Float64)
+    # the games grid rescaled to the (age-capped) expected games: the cap moves the level, the grid keeps its shape
+    g_raw = [pl.col(c).cast(pl.Float64).clip(lower_bound=0.0) for c in gq]
+    g_mean = pl.sum_horizontal(g_raw) / len(grid)
+    scale = pl.when(g_mean > 0.01).then(games / g_mean).otherwise(0.0)
+    g_q = [g * scale for g in g_raw]
+    dep = pl.sum_horizontal([a * b for a, b in zip(ex_q, g_q)]) / len(grid)
+    ind = (pl.sum_horizontal(ex_q) / len(grid)) * games
+    has_grid = pl.all_horizontal([pl.col(c).is_not_null() for c in pq + gq])
+    e = pl.when(~has_grid).then(None).when(games > 0.01).then((coupling * dep + (1 - coupling) * ind) / games).otherwise(0.0)
+    return df.select(e.alias(f"{span}_ppg_excess")).to_series()            # null where the row has no grid: excess() falls back per row
 
 
 def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int, dict[str, float]] | None) -> pl.DataFrame:
@@ -825,7 +1012,7 @@ def fill_missing_band(df: pl.DataFrame, horizons: Iterable[int], sigma: dict[int
 def inseason_value(
     snaps: pl.DataFrame, career_pred: pl.DataFrame, rep: dict[str, float],
     sigma: dict[int, dict[str, float]] | None, horizons: Iterable[int], discount_rate: float = 0.2,
-    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None,
+    rookie_table: pl.DataFrame | None = None, sigma_mode: str | None = None, age_scale: dict[str, float] | None = None,
 ) -> pl.DataFrame:
     """Intrinsic value updated mid-season: the rest of THIS season (full weight) + next season
     from the in-season model at (1 - rate), then seasons T+2.. from the career model's projection
@@ -852,31 +1039,85 @@ def inseason_value(
     if sigma_mode == "band":
         df = df.with_columns([((pl.col(f"h{k}_ppg_q80") - pl.col(f"h{k}_ppg_q20")) / BAND_TO_SIGMA).clip(lower_bound=SIGMA_FLOOR).alias(f"h{k}_ppg_sigma")
                               for k in horizons if f"h{k}_ppg_q20" in df.columns and f"h{k}_ppg_q80" in df.columns])
+    elif sigma_mode == "joint":                        # BACKLOG 47: every span with a grid priced jointly with its games
+        for span in ["ros", "next"] + [f"h{k}" for k in horizons]:
+            e = joint_excess(df, span, rep)
+            if e is not None:
+                df = df.with_columns(e)
     elif sigma_mode:
-        raise ValueError(f"sigma_mode {sigma_mode!r}: None or 'band'")
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'joint'")
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    fac = _value.age_scale_factors(df, age_scale)      # the career spans' age-band level correction (review C1; owner 2026-10-14)
 
     def excess(mu_col: str, k: int) -> np.ndarray:
         mu = df[mu_col].fill_null(0.0).to_numpy().astype(float)
+        pre = mu_col.replace("_ppg_hat", "_ppg_excess")
+        pre_arr = df[pre].to_numpy().astype(float) if pre in df.columns and df[pre].null_count() < df.height else None
+        if pre_arr is not None and not np.isnan(pre_arr).any():
+            return pre_arr
         own = mu_col.replace("_ppg_hat", "_ppg_sigma")
         if own in df.columns and df[own].null_count() < df.height:
-            return _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
-        if sigma and k in sigma:
+            fb = _value.expected_excess(mu, df[own].fill_null(0.0).to_numpy().astype(float), rep_arr)
+        elif sigma and k in sigma:
             s = df["position"].replace_strict({p: v for p, v in sigma[k].items() if p != "__all__"},
                                               default=sigma[k]["__all__"], return_dtype=pl.Float64).to_numpy()
-            return _value.expected_excess(mu, s, rep_arr)
-        return np.maximum(mu - rep_arr, 0.0)
+            fb = _value.expected_excess(mu, s, rep_arr)
+        else:
+            fb = np.maximum(mu - rep_arr, 0.0)
+        return fb if pre_arr is None else np.where(np.isnan(pre_arr), fb, pre_arr)   # a row priced off its grid keeps that; the rest fall back
 
     ros = excess("ros_ppg_hat", 1) * df["ros_games_hat"].to_numpy()
-    nxt = excess("next_ppg_hat", 1) * df["next_games_hat"].to_numpy()
+    # next season is the second year off a T-1 row: sigma[2], the same spread build_war prices it with (review 2026-10-13, C4:
+    # the iv column had used sigma[1], a 5-10 % narrower upside than the WAR column for the same player)
+    nxt = excess("next_ppg_hat", 2) * df["next_games_hat"].to_numpy()
     cols = [pl.Series("vorp_ros", ros), pl.Series("vorp_next", nxt)]
     total = ros + _value.discount_weight(2, discount_rate) * nxt
-    for k in horizons:
-        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy()
+    for k in horizons:                                   # the career spans (k >= 3): the age-band factor applies here, not to ROS / next
+        v = excess(f"h{k}_ppg_hat", k) * df[f"h{k}_games_hat"].fill_null(0.0).to_numpy() * fac
         cols.append(pl.Series(f"h{k}_vorp_hat", v))
         total = total + _value.discount_weight(k, discount_rate) * v
     cols.append(pl.Series("iv_inseason", total))
     return df.with_columns(cols)
+
+
+def no_game_snapshots(snap: pl.DataFrame, tail: pl.DataFrame, season: int, week: int, status: pl.DataFrame | None = None,
+                      games_in_season: int = 17) -> pl.DataFrame:
+    """A zero-game snapshot for every player with a career tail (a projected row for the last complete season) and no
+    stat line this season (review 2026-10-13, D4): 24-40 rostered skill players per league -- Josh Jacobs, Zach
+    Charbonnet, every veteran hurt or unsigned since August -- had no row anywhere, so no projection, no roster slot and
+    nothing the trade finder could price. The rest of this season is the preseason projection (h1) pro-rated to the
+    games left, zero when the status fact has him on reserve now; next season is the preseason h2; the career seasons
+    join from the tail as for everyone. ``snapshot_origin`` tells the rows apart ("played" / "no_game_yet")."""
+    out = snap.with_columns(pl.lit("played").alias("snapshot_origin")) if "snapshot_origin" not in snap.columns else snap
+    need = [c for c in ("h1_ppg_hat", "h1_games_hat", "h2_ppg_hat", "h2_games_hat") if c not in tail.columns]
+    if need or tail.height == 0:
+        return out
+    t = tail.filter(~pl.col("player_id").is_in(snap["player_id"].implode()) & pl.col("h1_ppg_hat").is_not_null())
+    if t.height == 0:
+        return out
+    left = max(games_in_season - week, 0) / games_in_season
+    years = pl.lit(season) - pl.col("season").cast(pl.Int64)
+    ids = [c for c in ("player_name", "position", "team", "draft_round", "draft_pick", "is_undrafted") if c in t.columns]
+    rows = t.select(
+        "player_id", *ids,
+        pl.lit(season, pl.Int64).alias("season"), pl.lit(week, pl.Int64).alias("week"),
+        (pl.col("age_at_season") + years).alias("age_at_season") if "age_at_season" in t.columns else pl.lit(None, pl.Float64).alias("age_at_season"),
+        (pl.col("exp_at_season") + years).alias("exp_at_season") if "exp_at_season" in t.columns else pl.lit(None, pl.Int64).alias("exp_at_season"),
+        pl.lit(False).alias("is_rookie"),
+        pl.lit(0, pl.Int64).alias("td_games"), pl.lit(0.0).alias("td_fpts"), pl.lit(None, pl.Float64).alias("td_ppg"), pl.lit(week, pl.Int64).alias("td_missed"),
+        *[pl.col(c).alias(f"prev_{c}") for c in ("fpts", "ppg", "games") if c in t.columns],
+        pl.col("h1_ppg_hat").alias("ros_ppg_hat"), (pl.col("h1_games_hat").fill_null(0.0) * left).alias("ros_games_hat"),
+        pl.col("h2_ppg_hat").alias("next_ppg_hat"), pl.col("h2_games_hat").fill_null(0.0).alias("next_games_hat"),
+        pl.lit("no_game_yet").alias("snapshot_origin"),
+    )
+    if status is not None and status.height:
+        ij = injury_now_features(status, week).filter(pl.col("season") == season).select("player_id", "ij_on_ir_now")
+        rows = (rows.join(ij, on="player_id", how="left")
+                    .with_columns(pl.when(pl.col("ij_on_ir_now") == 1.0).then(0.0).otherwise(pl.col("ros_games_hat")).alias("ros_games_hat"))
+                    .drop("ij_on_ir_now"))
+    rows = rows.with_columns((pl.col("ros_ppg_hat") * pl.col("ros_games_hat")).alias("ros_fpts_hat"),
+                             (pl.col("next_ppg_hat") * pl.col("next_games_hat")).alias("next_fpts_hat"))
+    return pl.concat([out, rows], how="diagonal_relaxed")
 
 
 # ---------------------------------------------------------------------------- baselines

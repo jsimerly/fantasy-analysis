@@ -53,12 +53,12 @@ class HarnessContext:
 
 def build_context(H: list[int], first_cohort: int, last_cohort: int | None, replacement_kind: str,
                   realized_replacement: str | None = None, draft_rows: bool = False, snapshot_weeks: list[int] | None = None,
-                  snapshot_from: int = 2010) -> HarnessContext:
+                  snapshot_from: int = 2010, todate_weeks: list[int] | None = None) -> HarnessContext:
     """The harness setup shared by every script that scores projections walk-forward: cohorts
     ``first_cohort``..``last_cohort`` (default: last complete season minus the horizon), replacement
     as of each cohort (``share`` / ``fill`` / ``weekly``) and KTC the following February."""
     import draft_rows as dr
-    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from)
+    matrix = career.build_career_matrix(H, draft_rows=draft_rows, snapshot_weeks=snapshot_weeks, snapshot_from=snapshot_from, todate_weeks=todate_weeks)
     base = dr.drop_draft_rows(matrix)                 # played seasons: replacement levels and the regime stamp
     if snapshot_weeks:
         print(f"snapshot rows: {int(matrix.filter(pl.col('is_snapshot_row'))['player_id'].len())} at weeks {list(snapshot_weeks)} from {snapshot_from}")
@@ -80,7 +80,6 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
 
     spec = pool = None
     if "share" != replacement_kind or (realized_replacement and realized_replacement != "share"):
-        import lineup
         spec = lg.LeagueSpec.from_settings(gcs_io.read_lake(SETTINGS_PATH))
         pool = base.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE"]))
 
@@ -120,7 +119,9 @@ def rescore_cli(args) -> None:
     meta = meta[0] if meta else {}
     groups = (args.groups or meta.get("groups") or ",".join(fg.DEFAULT)).split(",")
     H = sorted(int(c[1:-9]) for c in frames.columns if c.startswith("h") and c.endswith("_fpts_hat") and c[1:-9].isdigit())   # the horizons the frames hold
-    suffix = ("_fs" if fixed else "") + ("_ws" if args.walk_scale else "") + ({"band": "_sb", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else "")
+    suffix = (("_fs" if fixed else "") + ("_ws" if args.walk_scale else "")
+              + (("_wac" if args.age_curve else "_wap" if args.age_by_position else "_wa") if args.walk_age_scale else "")
+              + ({"band": "_sb", "dist": "_sd", "none": "_s0"}.get(args.sigma, "")) + (f"_top{args.top_n}" if args.top_n else ""))
     name = args.as_name or (src_name + (suffix or "_rescored"))
     backend = str(meta.get("backend") or args.backend)
     cfg = ex.ExperimentConfig(name=name, groups=groups, horizons=H, cohorts=sorted(int(t) for t in frames["cohort"].unique().to_list()),
@@ -131,7 +132,9 @@ def rescore_cli(args) -> None:
     if args.sigma:                                # value and WAR rebuilt: the cohort's replacement levels and the owner's curve, as the run had them
         bc = build_context(H, min(cfg.cohorts), max(cfg.cohorts), cfg.replacement)
         rep_for, curve = bc.rep_for, bc.curve
-    per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src, sigma_mode=args.sigma, rep_for=rep_for, curve=curve)
+    got: list = []
+    per_cohort, summary = ex.rescore(frames, cfg, fixed_scale=fixed, walk_scale=args.walk_scale, src_per_cohort=src, sigma_mode=args.sigma, rep_for=rep_for, curve=curve,
+                                     walk_age_scale=args.walk_age_scale, collect=got, age_by_position=args.age_by_position, age_curve=args.age_curve)
     summary["regime"] = str(src["regime"][0]) if src is not None and "regime" in src.columns else ""
     summary["backend"] = backend + f" rescored<{args.rescore}>"
     per_cohort = per_cohort.with_columns(pl.lit(summary["regime"]).alias("regime"))
@@ -141,9 +144,14 @@ def rescore_cli(args) -> None:
         print(per_cohort.select([c for c in per_cohort.columns if c in ("cohort", "n_all", "spearman_war_top", "mae_war_top", "share_abs_err") or c.startswith("scale_")]))
     if args.no_log:
         return
-    ledger = ex.append_result(ledger, summary)
     print("per-cohort ->", ex.save_run(per_cohort, summary))
-    ex.save_ledger(ledger)
+    if args.save_cohorts and got:            # the rescored frames: age_gate.py / window_report read them like any run's
+        print("cohort frames ->", ex.save_cohorts(name, got, summary["timestamp"]))
+    if args.no_ledger:
+        print("ledger untouched (--no-ledger)")
+    else:
+        ledger = ex.append_result(ledger, summary)
+        ex.save_ledger(ledger)
     with pl.Config(tbl_rows=-1, tbl_width_chars=200, float_precision=3):
         table = ex.paired(name, args.rescore)
         print(table)
@@ -176,6 +184,7 @@ def main() -> None:
     ap.add_argument("--draft-rows", action="store_true", help="add a pre-NFL row per drafted skill player (college + draft capital; draft_rows.py) to the matrix")
     ap.add_argument("--snapshot-weeks", default="", help="mid-season snapshot rows in the training table (unified.py), e.g. 9 or 6,13")
     ap.add_argument("--snapshot-from", type=int, default=2010, help="first season of the snapshot rows")
+    ap.add_argument("--quantile-grid", action="store_true", help="keep the 20-point quantile grid of the predictive distribution too (BACKLOG 47: --rescore RUN --sigma dist prices PAR off it)")
     ap.add_argument("--range", action="store_true", help="keep the 20/50/80 quantiles of the predictive distribution (TabPFN) and score the band: coverage, pinball")
     ap.add_argument("--cap", default=career.DEFAULT_CAP, help="age-survival cap on projected games: 30+t (default, as production: tier-aware from 30) | 30+ | 30+t34 | all (the pre-2026-10-05 behaviour) | none")
     ap.add_argument("--params", nargs="*", default=[], help="xgboost overrides for every variant in this run, e.g. max_depth=6 min_child_weight=1")
@@ -188,7 +197,14 @@ def main() -> None:
     ap.add_argument("--rescore", metavar="RUN", help="score the saved cohort frames of RUN again (no GPU) under --fixed-scale, --walk-scale or --top-n; name it with --as")
     ap.add_argument("--as", dest="as_name", help="the rescored run name (default: RUN plus a suffix for the change)")
     ap.add_argument("--walk-scale", action="store_true", help="--rescore: walk-forward per-position value scale from the cohorts complete by each cohort")
-    ap.add_argument("--sigma", choices=["band", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
+    ap.add_argument("--walk-age-scale", action="store_true",
+                    help="--rescore: walk-forward per-age-band value scale (review 2026-10-13 C1: under-25s ~1.3x, 29+ ~0.8x) from the cohorts complete by each cohort")
+    ap.add_argument("--no-ledger", action="store_true", help="--rescore: save the run and its frames but do not touch the ledger (a GPU chain may be appending to it)")
+    ap.add_argument("--age-by-position", action="store_true",
+                    help="with --walk-age-scale: a cell per position and age band, shrunk toward the band (owner 2026-10-14: 29+ running backs realize a third of their price)")
+    ap.add_argument("--age-curve", action="store_true",
+                    help="with --walk-age-scale: the level as a kernel-smoothed curve over each year of age instead of three bands (owner 2026-10-14)")
+    ap.add_argument("--sigma", choices=["band", "dist", "none"], default=None, help="--rescore: price upside with each player's own 20/80 band width (items 6 / 36b) or with no spread; value and WAR rebuilt")
     ap.add_argument("--top-n", type=int, default=None, help="the top-N projected players the ordering and error metrics score (default: the config)")
     ap.add_argument("--list-groups", action="store_true")
     ap.add_argument("--leaderboard", action="store_true")
@@ -257,7 +273,8 @@ def main() -> None:
                                   position_scale=args.position_scale, replacement=args.replacement, realized_replacement=args.realized_replacement,
                                   fixed_scale={k: float(v) for k, v in (kv.split("=") for kv in args.fixed_scale.split(",") if kv)},
                                   target=args.target, weight=args.weight, backend=args.backend, tabpfn_params=tabpfn_params, stacked=args.stacked, cap=args.cap,
-                                  range_quantiles=(0.2, 0.5, 0.8) if args.range else None, draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
+                                  range_quantiles=(tuple(sorted(set(career.QUANTILE_GRID) | {0.2, 0.5, 0.8})) if args.quantile_grid else (0.2, 0.5, 0.8) if args.range else None),
+                                  draft_rows=args.draft_rows, snapshot_weeks=args.snapshot_weeks)
         got: list[pl.DataFrame] = []
         per_cohort, summary = ex.run_experiment(matrix, cfg, ctx, rep_for, market_for, realized_rep_for=realized_rep_for, collect=got if args.save_cohorts else None)
         summary["regime"] = bc.regime

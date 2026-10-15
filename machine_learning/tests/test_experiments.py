@@ -122,6 +122,22 @@ def test_range_scores_record_the_bands_asymmetry_and_the_verdict_prints_the_dist
     assert "distribution" not in ex.verdict(_paired_table(-0.5, 3.0))
 
 
+def test_the_verdict_reads_the_level_and_flags_an_error_gain_by_shrinkage():
+    """review 2026-10-13 (B3): MAE on a zero-inflated target rewards shrinkage (the blend target was adopted on it); the
+    verdict shows the top-150 bias beside the co-primaries and flags an error gain whose level moved further from zero."""
+    import experiments as ex
+    assert "bias_war_top" in ex.PAIRED_METRICS
+    level = lambda a, b: pl.DataFrame({"metric": ["bias_war_top"], "a": [a], "b": [b], "diff_b_minus_a": [b - a], "se": [0.01], "t": [0.0], "b_wins": [4], "cohorts": [8]})
+    # the owner made the level part of the rule (2026-10-14): an error gain alone does not adopt when the level moves further from zero
+    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.09, 0.01)]))      # error gain, the candidate runs 0.09 wins low
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): TRADE-OFF (owner's call)") and "level (bias, top 150" in v
+    assert "shrinkage" in v and "level further from zero" in v
+    v = ex.verdict(pl.concat([_paired_table(0.3, 2.6), level(0.01, 0.05)]))      # error gain with a level closer to zero: adopts
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "shrinkage" not in v
+    v = ex.verdict(pl.concat([_paired_table(-3.0, 0.5), level(0.09, 0.01)]))     # an ordering gain is not shrinkage: adopts, the level shown
+    assert v.startswith("co-primary verdict (A = candidate vs B = baseline): ADOPT |") and "A +0.090 vs B +0.010" in v and "level further from zero" in v
+
+
 def _paired_table(t_order_b_minus_a, t_err_b_minus_a):
     return pl.DataFrame({"metric": ["spearman_war_top", "mae_war_top"], "a": [0.61, 0.50], "b": [0.60, 0.52],
                          "diff_b_minus_a": [-0.01, 0.02], "se": [0.004, 0.008], "t": [t_order_b_minus_a, t_err_b_minus_a], "b_wins": [2, 7], "cohorts": [8, 8]})
@@ -237,6 +253,75 @@ class TestRescore:
         walked, _ = ex.rescore(frames, cfg, walk_scale=True)
         assert "scale_QB" not in walked.columns or walked["scale_QB"].null_count() == walked.height      # nothing complete: unscaled
 
+    def test_walk_forward_age_scale_is_shrunk_clipped_and_walk_forward(self):
+        """review 2026-10-13 C1, owner 2026-10-14: the age-band level correction, fitted like the positional scale on the
+        cohorts complete by each cohort, on their own top set, shrunk toward 1 by n / (n + 1) and clipped to [0.6, 1.6]."""
+        import pytest
+        cfg, H, per_cohort, frames = self._run()
+        assert ex.walk_forward_age_scales(frames, 2021, H) == {}                         # nothing complete by 2021
+        ws = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n)                # 2020 is complete by 2022
+        done = frames.filter((pl.col("cohort") == 2020) & pl.col("realized_iv").is_not_null())
+        top = done.sort("war", descending=True).head(cfg.top_n).with_columns(ex.age_band_expr().alias("b"))
+        assert ws and set(ws) <= {"<=24", "25-28", "29+"}
+        for (b,), grp in top.group_by("b"):
+            p_, r_ = float(grp["war"].sum()), float(grp["realized_war"].sum())
+            if p_ > 0:
+                assert ws[b] == pytest.approx(min(1.6, max(0.6, 1.0 + 0.5 * (r_ / p_ - 1.0))))    # one cohort: half-way toward its ratio
+        # by position (owner 2026-10-14): the band keys unchanged, a "POS|band" cell per position between its raw ratio and the band
+        wp = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n, by_position=True)
+        assert all(k in wp and wp[k] == ws[k] for k in ws) and any("|" in k for k in wp)
+        assert all(0.4 <= v <= 1.6 for k, v in wp.items() if "|" in k)
+        # the curve by year of age (owner 2026-10-14): one key per year of the range, clipped, the bands kept as the fallback
+        wc = ex.walk_forward_age_scales(frames, 2022, H, top_n=cfg.top_n, curve=True)
+        a0, a1 = ex.AGE_CURVE_RANGE
+        assert all(f"age:{a}" in wc for a in range(a0, a1 + 1)) and all(k in wc for k in ws)
+        assert all(0.6 <= wc[f"age:{a}"] <= 1.6 for a in range(a0, a1 + 1))
+        # a steep synthetic shape smooths into a monotone curve: young realize 1.5x, old 0.6x of their price
+        syn = pl.DataFrame({"cohort": [2020] * 400, "player_id": [f"p{i}" for i in range(400)], "age_at_season": [21.0 + (i % 16) for i in range(400)],
+                            "position": ["WR"] * 400, "war": [1.0] * 400, "realized_iv": [1.0] * 400})
+        syn = syn.with_columns(pl.when(pl.col("age_at_season") < 29).then(1.5).otherwise(0.6).alias("realized_war"))
+        c = ex.age_curve(syn.with_columns(ex.age_band_expr().alias("_ab")), w=1.0, lo=0.4, hi=1.8)
+        assert c["age:22"] > 1.35 and c["age:34"] < 0.75 and c["age:28"] > c["age:29"] > c["age:30"]      # smooth through the step
+        got = []
+        walked, _ = ex.rescore(frames, cfg, walk_age_scale=True, collect=got)
+        assert len(got) == 2 and walked["n_all"].to_list() == per_cohort["n_all"].to_list()
+        assert all(c not in walked.columns or walked[c].null_count() == walked.height for c in ("age_scale_<=24", "age_scale_29+"))   # nothing complete: unscaled
+        # a frame with a complete earlier cohort: the scale is applied to the later one's value columns
+        later = pl.concat([frames, frames.filter(pl.col("cohort") == 2021).with_columns(pl.lit(2023).alias("cohort"))], how="diagonal")
+        cfg3 = ex.ExperimentConfig(name="t", groups=cfg.groups, horizons=H, cohorts=[2020, 2021, 2023], params=cfg.params)
+        got = []
+        scaled, _ = ex.rescore(later, cfg3, walk_age_scale=True, collect=got)
+        f23 = got[-1]; base = later.filter(pl.col("cohort") == 2023)
+        sc = ex.walk_forward_age_scales(later, 2023, H, top_n=cfg.top_n)
+        exp = base.with_columns(ex.age_band_expr().alias("b")).with_columns(pl.col("b").replace_strict(sc, default=1.0, return_dtype=pl.Float64).alias("s"))
+        assert f23["war"].to_list() == pytest.approx((exp["war"] * exp["s"]).to_list())
+
+    def test_the_recent_table_corrects_a_stable_band_in_full_and_a_swinging_one_little(self):
+        """owner 2026-10-14: "how far off we are at certain bands and the variance of those bands". Per season the young
+        realize 1.2x every year (stable); the 29-31 swing between 0.5 and 1.5 around 1.0; the 32+ fall from 1.0 to 0.5
+        in the recent seasons (recency-weighted toward 0.5)."""
+        rows = []
+        for i, T in enumerate(range(2015, 2023)):
+            for j in range(60):
+                age = 22.0 if j < 30 else (30.0 if j < 45 else 34.0)
+                real = 1.2 if age < 25 else ((0.5 if i % 2 else 1.5) if age < 32 else (1.0 if T < 2019 else 0.5))
+                rows.append({"cohort": T, "player_id": f"p{j}", "age_at_season": age, "position": "WR", "war": 1.0, "realized_war": real, "realized_iv": 1.0})
+        t = ex.age_table_recent(pl.DataFrame(rows).with_columns(ex.age_band_expr().alias("_ab")))
+        assert abs(t["age:22"] - 1.2) < 0.02 and t["age:24"] == t["age:22"]                     # stable: the full correction, one step per band
+        assert abs(t["age:30"] - 1.0) < 0.12                                                    # swinging around 1: shrunk to near 1
+        # drifted down recently: the recency-weighted mean is ~0.6, but a band that swung between 1.0 and 0.5 is uncertain, so
+        # the variance shrinkage keeps part of the correction back (the real 32+ band: mean 0.66, se 0.12, factor 0.80)
+        assert 0.55 < t["age:34"] < 0.95 and t["age:36"] == t["age:34"] and t["age:34"] < t["age:30"]
+        assert "<=24_mean" in t and "<=24_se" in t and "32+_mean" in t                           # the evidence travels with the table
+        # the same evidence as a smooth curve ("why banding and not a curve?"): no step edges, monotone through the drop
+        c = ex.age_curve_recent(pl.DataFrame(rows).with_columns(ex.age_band_expr().alias("_ab")))
+        assert all(f"age:{a}" in c for a in range(21, 37))
+        assert c["age:22"] > 1.1 and c["age:34"] < c["age:30"] < c["age:24"]
+        steps = [c[f"age:{a}"] for a in range(21, 37)]
+        # no band-sized jump between neighbouring years (the synthetic data has only three ages, so the kernel bridges 1.2 -> 1.0
+        # across the empty years 23-29 in steps of up to ~0.11; on the real frames, every age populated, the largest step is 0.05)
+        assert max(abs(x - y) for x, y in zip(steps, steps[1:])) < 0.15
+
     def test_band_sigma_prices_each_players_own_spread(self):
         import pytest
         cfg, H, per_cohort, frames = self._run()
@@ -255,3 +340,73 @@ class TestRescore:
         assert (band["bias_war_all"] < none["bias_war_all"]).all()      # upside priced: projected WAR higher, realized - projected lower
         with pytest.raises(ValueError):
             ex.rescore(wide, cfg, sigma_mode="band")                     # a rebuild needs the replacement levels
+
+
+class TestDistributionalPAR:
+    """BACKLOG 47: value priced off the player's whole predictive distribution (a quantile grid), skew included."""
+
+    def _grid_frame(self, qs_by_player):
+        import career
+        rows = []
+        for pid, pos, qs in qs_by_player:
+            r = {"player_id": pid, "position": pos}
+            for q, v in zip(career.QUANTILE_GRID, qs):
+                r[f"h1_ppg_{career.q_name(q)}"] = v
+            rows.append(r)
+        return pl.DataFrame(rows)
+
+    def test_the_excess_integrates_the_grid_and_sees_the_right_tail(self):
+        import numpy as np
+        import career
+        rep = {"RB": 9.0}
+        flat = [8.0] * 20                                            # never above the line
+        sym = list(np.linspace(6.0, 10.0, 20))                       # median 8, a little above the line at the top
+        skew = list(np.linspace(6.0, 8.0, 15)) + [10.0, 12.0, 14.0, 17.0, 21.0]   # same median region, a breakout tail
+        d = ex.distributional_excess(self._grid_frame([("a", "RB", flat), ("b", "RB", sym), ("c", "RB", skew)]), [1], rep)
+        e = dict(zip(d["player_id"], d["h1_ppg_excess"]))
+        assert e["a"] == 0.0 and 0.0 < e["b"] < e["c"]
+        assert abs(e["c"] - sum(max(v - 9.0, 0.0) for v in skew) / 20) < 1e-12
+        partial = self._grid_frame([("a", "RB", flat)]).drop(f"h1_ppg_{career.q_name(career.QUANTILE_GRID[0])}")
+        assert "h1_ppg_excess" not in ex.distributional_excess(partial, [1], rep).columns       # an incomplete grid is not priced
+
+    def test_value_and_war_use_a_precomputed_excess(self):
+        import value, war
+        from league import WinCurve
+        df = pl.DataFrame({"player_id": ["a"], "position": ["RB"], "h1_ppg_hat": [8.0], "h1_games_hat": [10.0], "h1_ppg_sigma": [3.0], "h1_ppg_excess": [2.5]})
+        assert value.intrinsic_value(df, {"RB": 9.0}, [1], 0.2)["h1_vorp_hat"][0] == 25.0
+        w = war.wins_above_replacement(df, {"RB": 9.0}, WinCurve.normal(120.0, 25.0), war.career_components([1]), 0.2)
+        assert w["par_1"][0] == 25.0
+
+    def test_rescore_dist_prices_off_the_grid(self):
+        import numpy as np
+        import career
+        cfg, H, per_cohort, frames = TestRescore()._run()
+        rep = {"QB": 12.0, "RB": 9.0, "WR": 8.0, "TE": 7.0}
+        cols = []
+        for k in H:
+            for i, q in enumerate(career.QUANTILE_GRID):
+                cols.append((pl.col(f"h{k}_ppg_hat") + (i - 9.5) * 0.4 + (3.0 if i >= 17 else 0.0)).alias(f"h{k}_ppg_{career.q_name(q)}"))
+        g = frames.with_columns(cols)
+        dist, _ = ex.rescore(g, cfg, sigma_mode="dist", rep_for=lambda T: rep)
+        none, _ = ex.rescore(g, cfg, sigma_mode="none", rep_for=lambda T: rep)
+        assert dist["n_all"].to_list() == none["n_all"].to_list()
+        assert (dist["bias_war_all"] < none["bias_war_all"]).all()   # the tail is priced: projected value up, realized - projected down
+
+
+def test_window_scores_use_each_runs_per_season_wins_and_only_complete_windows():
+    import numpy as np
+    rows = []
+    rng = np.random.default_rng(0)
+    for T in (2015, 2020):
+        for i in range(60):
+            r = {"cohort": T, "player_id": f"p{i}", "position": ["QB", "RB", "WR", "TE"][i % 4], "ktc_value": float(1000 + i * 10) if i % 2 else None}
+            for k in range(1, 8):
+                r[f"war_{k}"] = float(i) / 10
+                r[f"war_real_{k}"] = float(i) / 10 + rng.normal(0, 0.05)
+                r[f"h{k}_observable"] = T + k <= 2025                   # cohort 2020: only 5 seasons complete
+            rows.append(r)
+    per = ex.window_scores(pl.DataFrame(rows), (3, 5, 7), 0.2, top_n=40)
+    got = {(r["cohort"], r["window"]) for r in per.select("cohort", "window").to_dicts()}
+    assert got == {(2015, 3), (2015, 5), (2015, 7), (2020, 3), (2020, 5)}     # 2020's 7-year window is not complete
+    r = per.filter((pl.col("cohort") == 2015) & (pl.col("window") == 5)).row(0, named=True)
+    assert r["spearman_top"] > 0.95 and abs(r["bias_top"]) < 0.05 and r["n"] == 60 and "spearman_ktc_priced" in r and 0.9 < r["ratio_RB"] < 1.1

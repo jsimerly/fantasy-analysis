@@ -1,0 +1,273 @@
+{
+ "as_of": "2026-10-14",
+ "season": 2026,
+ "week": 5,
+ "model": "tabpfn stacked blend [base,career,injury,trend,situation,rookie,college]",
+ "headline": [
+  {
+   "key": "swap_test",
+   "label": "The swap test: same-price trades the model would have made",
+   "value": 53.0,
+   "unit": "more points above replacement per swap over three seasons",
+   "detail": "65 swaps made each February 2021-2023: three seasons later the player bought delivered that much more above a replacement-level player at his position, ahead in 68% of swaps; in wins +0.46 per swap, 71% won (the model had said +0.78); 123 raw points, a number that mixes positions",
+   "secondary": 0.46,
+   "run_date": "2026-10-12"
+  },
+  {
+   "key": "mispricing",
+   "label": "The mispricing column, net of regression to the mean",
+   "value": 11.2,
+   "unit": "ranks better than their market rank predicts",
+   "detail": "players the model called cheap finished that many ranks better than a player at their market rank usually does, the ones it called rich 6.8 worse; on the disagreed players the model's rank sat 1.6 ranks closer to the finish than the market's; the raw gap (+14.4 / -10.8) is inflated by regression to the mean (a model with no skill scores about +10 on it)",
+   "secondary": -6.8,
+   "run_date": "2026-10-12"
+  },
+  {
+   "key": "rest_of_season",
+   "label": "Rest of this season: ordering players by the points above replacement they go on to deliver",
+   "value": 0.637,
+   "unit": "rank agreement",
+   "detail": "vs the provider's own projection 0.614 and the market's 0.615 at week 3; 0.554 vs 0.49 / 0.462 at week 13; cohorts 2021-2024; a dynasty price is not a rest-of-season ranking, so the provider's projection is the yardstick that counts",
+   "secondary": 0.614,
+   "run_date": "2026-10-13"
+  },
+  {
+   "key": "next_season",
+   "label": "Next season, from a mid-season snapshot: ordering by points above replacement",
+   "value": 0.53,
+   "unit": "rank agreement",
+   "detail": "vs the market's 0.558 at week 3; 0.606 vs 0.587 at week 13: behind or level with the market early in the season, ahead from week 9",
+   "secondary": 0.558,
+   "run_date": "2026-10-13"
+  },
+  {
+   "key": "three_years_out",
+   "label": "3 years out: ordering by the wins players then delivered (a statistical tie)",
+   "value": 0.697,
+   "unit": "rank agreement",
+   "detail": "vs the market's 0.675 on 369 priced player-cohorts, priced each February 2021-2023; the difference sits inside its noise (a 95 % interval of about \u22120.02 to +0.06); the market is better on under-25s and rookies, the model on ages 25-32 and running backs",
+   "secondary": 0.675,
+   "run_date": "2026-10-12"
+  },
+  {
+   "key": "career_error",
+   "label": "Career projection, 3 years ahead: error vs an age-decay curve",
+   "value": -8.0,
+   "unit": "% error",
+   "detail": "\u221230% vs repeating last season (a baseline attrition punishes); 7,338 player-seasons since 2010, seasons never played counted as zero; the 2026-10-01 evaluation (the tree walk-forward, not the production model)",
+   "secondary": -30.0,
+   "run_date": "2026-10-01"
+  }
+ ],
+ "swaps": [
+  {
+   "cohort": 2021,
+   "february": 2022,
+   "sold": "Elijah Moore",
+   "sold_pos": "WR",
+   "sold_ktc": 5112,
+   "sold_delivered": 0.0,
+   "bought": "Derrick Henry",
+   "bought_pos": "RB",
+   "bought_ktc": 4974,
+   "bought_delivered": 3.16,
+   "gain": 3.16,
+   "sold_pts": 263.0,
+   "bought_pts": 846.0,
+   "sold_par": 0.0,
+   "bought_par": 390.0,
+   "gain_pts": 583.0,
+   "gain_par": 390.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "sold": "AJ Dillon",
+   "sold_pos": "RB",
+   "sold_ktc": 3634,
+   "sold_delivered": 0.0,
+   "bought": "Derrick Henry",
+   "bought_pos": "RB",
+   "bought_ktc": 3955,
+   "bought_delivered": 2.91,
+   "gain": 2.91,
+   "sold_pts": 114.0,
+   "bought_pts": 832.0,
+   "sold_par": 0.0,
+   "bought_par": 363.0,
+   "gain_pts": 717.0,
+   "gain_par": 363.0
+  },
+  {
+   "cohort": 2020,
+   "february": 2021,
+   "sold": "D'Andre Swift",
+   "sold_pos": "RB",
+   "sold_ktc": 7653,
+   "sold_delivered": 1.13,
+   "bought": "Travis Kelce",
+   "bought_pos": "TE",
+   "bought_ktc": 6924,
+   "bought_delivered": 3.04,
+   "gain": 1.91,
+   "sold_pts": 525.0,
+   "bought_pts": 798.0,
+   "sold_par": 130.0,
+   "bought_par": 362.0,
+   "gain_pts": 274.0,
+   "gain_par": 232.0
+  },
+  {
+   "cohort": 2021,
+   "february": 2022,
+   "sold": "Terry McLaurin",
+   "sold_pos": "WR",
+   "sold_ktc": 5019,
+   "sold_delivered": 0.86,
+   "bought": "Travis Kelce",
+   "bought_pos": "TE",
+   "bought_ktc": 4900,
+   "bought_delivered": 2.69,
+   "gain": 1.83,
+   "sold_pts": 581.0,
+   "bought_pts": 731.0,
+   "sold_par": 111.0,
+   "bought_par": 301.0,
+   "gain_pts": 150.0,
+   "gain_par": 191.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "sold": "Tyquan Thornton",
+   "sold_pos": "WR",
+   "sold_ktc": 2167,
+   "sold_delivered": 0.0,
+   "bought": "Baker Mayfield",
+   "bought_pos": "QB",
+   "bought_ktc": 1940,
+   "bought_delivered": 1.71,
+   "gain": 1.71,
+   "sold_pts": 99.0,
+   "bought_pts": 949.0,
+   "sold_par": 0.0,
+   "bought_par": 209.0,
+   "gain_pts": 850.0,
+   "gain_par": 209.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "sold": "Kyle Pitts",
+   "sold_pos": "TE",
+   "sold_ktc": 5476,
+   "sold_delivered": 0.37,
+   "bought": "Tyreek Hill",
+   "bought_pos": "WR",
+   "bought_ktc": 5393,
+   "bought_delivered": 1.9,
+   "gain": 1.53,
+   "sold_pts": 479.0,
+   "bought_pts": 538.0,
+   "sold_par": 57.0,
+   "bought_par": 194.0,
+   "gain_pts": 58.0,
+   "gain_par": 137.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "sold": "Christian Watson",
+   "sold_pos": "WR",
+   "sold_ktc": 4595,
+   "sold_delivered": 0.18,
+   "bought": "Jared Goff",
+   "bought_pos": "QB",
+   "bought_ktc": 4061,
+   "bought_delivered": 1.66,
+   "gain": 1.48,
+   "sold_pts": 293.0,
+   "bought_pts": 942.0,
+   "sold_par": 26.0,
+   "bought_par": 202.0,
+   "gain_pts": 649.0,
+   "gain_par": 176.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "sold": "Romeo Doubs",
+   "sold_pos": "WR",
+   "sold_ktc": 2813,
+   "sold_delivered": 0.0,
+   "bought": "James Conner",
+   "bought_pos": "RB",
+   "bought_ktc": 2832,
+   "bought_delivered": 1.39,
+   "gain": 1.39,
+   "sold_pts": 392.0,
+   "bought_pts": 448.0,
+   "sold_par": 0.0,
+   "bought_par": 153.0,
+   "gain_pts": 56.0,
+   "gain_par": 153.0
+  }
+ ],
+ "swaps_by_cohort": [
+  {
+   "cohort": 2020,
+   "february": 2021,
+   "pairs": 10,
+   "win_rate": 80.0,
+   "gain_mean": 0.61,
+   "gain_pts_mean": 65.0
+  },
+  {
+   "cohort": 2021,
+   "february": 2022,
+   "pairs": 19,
+   "win_rate": 74.0,
+   "gain_mean": 0.44,
+   "gain_pts_mean": 94.0
+  },
+  {
+   "cohort": 2022,
+   "february": 2023,
+   "pairs": 36,
+   "win_rate": 67.0,
+   "gain_mean": 0.43,
+   "gain_pts_mean": 154.0
+  }
+ ],
+ "swaps_by_position_bought": [
+  {
+   "position": "QB",
+   "pairs": 17,
+   "win_rate": 65.0,
+   "gain_mean": 0.18,
+   "gain_pts_mean": 171.0
+  },
+  {
+   "position": "RB",
+   "pairs": 19,
+   "win_rate": 84.0,
+   "gain_mean": 0.87,
+   "gain_pts_mean": 174.0
+  },
+  {
+   "position": "TE",
+   "pairs": 13,
+   "win_rate": 62.0,
+   "gain_mean": 0.38,
+   "gain_pts_mean": 102.0
+  },
+  {
+   "position": "WR",
+   "pairs": 16,
+   "win_rate": 69.0,
+   "gain_mean": 0.33,
+   "gain_pts_mean": 27.0
+  }
+ ],
+ "method": "walk-forward: the model rebuilt with only what was known at the time, scored on what the players then delivered; KTC is the yardstick, never an input (the in-season model does read the providers' projections and preseason ADP since 2026-10-12; the career model the swap test validates reads neither); the unit of evidence is the test year, and the review of 2026-10-13 (docs/MODEL_REVIEW_2026-10-13.md) re-derived every number here"
+}

@@ -10,6 +10,37 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Reads the lake (`gcs_io.read_lake`) and reads/writes the ML bucket (`gcs_io.read_ml_*` /
   `write_ml_*`). Never writes the lake; never writes local `data/`.
 - Tests: `.venv/Scripts/python.exe -m pytest tests -q` (spec-style, ~5 s, no GCS: fixtures are synthetic).
+- **Before any change that touches the weekly path**, run the in-season stage end to end on the trees (about a minute,
+  reads the lake, writes nothing — `--no-write` covers the `--current` projections since 2026-10-13):
+  `scripts/backtest_inseason.py --current --no-write --device cpu --backend xgb --inseason-backend xgb` plus the
+  production preset's other flags (`weekly_refresh.py --preset production --dry-run` prints them). The 2026-10-13
+  refresh died four hours in on a column the unit tests never exercised; this smoke would have caught it. **Never run
+  `weekly_refresh.py` itself on the trees against the ML bucket:** its `build_war` / `export` steps write `war/` and
+  `pages/` at today's run date, and a trees payload at the latest run date is what the exports pick up when the GPU run
+  fails (the Cloud Run job `ml-weekly-refresh` does exactly this every Tuesday 15:00 UTC until it is paused — review
+  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`). `build_war` and `export_projections` refuse a run whose stamped
+  models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its
+  own backends are not production, so a trees refresh must say so).
+- **Is the run working? `scripts/run_status.py <log>`** (owner, 2026-10-14): the live processes, the log's last line and
+  its age, the stage against its cumulative budget, the GPU's power — and a verdict. The 2026-10-13/14 refresh sat ten
+  hours in the to-date career tail at 100 % utilization and 91 W: utilization says busy, power says the card is waiting
+  on memory. A GPU run is STALLED when its log has not moved for an hour, or the card draws under 120 W at full
+  utilization; every unattended GPU run gets a wall-time budget (`timeout -k 60s 6h` in the chain) and the refresh has a
+  fallback (`--no-career-todate`). The career model's pooled fit and its per-horizon predictions print their rows and
+  seconds, so the tail is no longer one silent call.
+- **A pricing change never waits for the GPU.** The GPU makes the projections (ppg, games, the band); everything after them
+  is CPU arithmetic on the run in the bucket. `scripts/reprice_run.py` re-prices an in-season run with another age-level
+  table (the originals kept beside it), and `weekly_refresh.py --preset production --skip inseason` rebuilds the WAR, the
+  summaries and the exports from it (owner, 2026-10-14: "why do we have to wait until new projections come out of the
+  GPU?"). The same holds for a replacement line, a discount or a sigma mode: re-price, rebuild, publish.
+- **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
+  players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
+  +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)
+  beside the ordering and the error: MAE on a zero-inflated target rewards shrinkage (review 2026-10-13, B3). **The
+  level is part of the acceptance rule (owner, 2026-10-14):** every verdict prints the top-150 bias, and an error gain
+  alone does not adopt when the candidate's level moves further from zero by more than 0.02 wins (it is a TRADE-OFF
+  for the owner). Read the level by age band too (`scripts/age_gate.py`):
+  under-25s realize ~1.2x their price and 29+ ~0.9x (C1), and a pricing change must not widen either end.
 
 ## What is where
 | Path | What |
@@ -27,6 +58,7 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 | `scripts/backtest_inseason.py` | the in-season backtest by checkpoint week; `--current` = the production projection of the season in progress |
 | `scripts/weekly_refresh.py` | the scheduled job: in-season projection → WAR per league → analysis summaries → the page export; `--preset production` |
 | `scripts/build_war.py`, `scripts/export_projections.py` | per-league roster views (teams.parquet + meta) and `projections.json` for the page |
+| `page/intrinsic_value.html`, `page/checks/` | the page itself (one HTML file reading `projections.json`) and its headless jsdom checks; see `page/CLAUDE.md` |
 | `scripts/market_backtest.py`, `scripts/evaluate_*.py`, `scripts/build_*.py` | the model-vs-market backtest; older evaluation and matrix builders |
 
 ## The rules of the harness

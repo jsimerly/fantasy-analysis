@@ -31,6 +31,7 @@ INJURY_PATH = "silver/fantasy/fact_player_injury_week/data.parquet"
 WEEK_PATH = "silver/fantasy/fact_player_week/data.parquet"
 COLLEGE_PATH = "silver/fantasy/fact_college_player_season/data.parquet"
 COLLEGE_XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
+SEASON_FACT_PATH = "silver/fantasy/fact_player_season/data.parquet"         # birth dates (100 %) for college2's ages
 WEEK_STATUS_PATH = "silver/fantasy/fact_player_week_status/data.parquet"
 TEAM_PATH = "silver/fantasy/fact_team_season_strength/data.parquet"
 CONTRACT_PATH = "silver/fantasy/fact_player_contract_season/data.parquet"
@@ -87,6 +88,70 @@ class Context:
         if self._college is None:
             self._load_college()
         return self._college if self._college is not None and self._college.height else None
+
+    _college2: pl.DataFrame | None = None
+    _is_inputs: dict | None = None
+
+    def inseason_inputs(self, group: str) -> dict:
+        """The lake tables an in-season group reads (inseason.load_group_inputs), loaded once per group."""
+        import inseason
+        if self._is_inputs is None:
+            self._is_inputs = {}
+        if group not in self._is_inputs:
+            self._is_inputs[group] = inseason.load_group_inputs([group], self._load(SEASON_FACT_PATH))
+        return self._is_inputs[group]
+    _college_qb: pl.DataFrame | None = None
+    _adp: pl.DataFrame | None = None
+
+    @property
+    def college_qb(self) -> pl.DataFrame | None:
+        """College quarterback passing and rushing per NFL quarterback (BACKLOG 50); None without the lake tables."""
+        if self._college_qb is None:
+            try:
+                fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
+            except Exception:  # noqa: BLE001 - not ingested yet
+                self._college_qb = pl.DataFrame()
+            else:
+                self._college_qb = college_qb_per_player(fact, xw)
+        return self._college_qb if self._college_qb.height else None
+
+    @property
+    def adp(self) -> pl.DataFrame | None:
+        """(player_id, season, ps_adp, ps_adp_pos_rank, ps_drafted): the preseason redraft ADP, from the lake's
+        bronze/adp, else the local pull in FF_ADP_DIR (mfl.parquet / ffc.parquet); None when neither is there."""
+        if self._adp is None:
+            import os
+            import gcs_io
+            import inseason
+            mfl = ffc = None
+            try:
+                mfl, ffc = gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/mfl"), gcs_io.read_lake_prefix(f"{inseason.ADP_PATH}/ffc")
+                if not (mfl.height or ffc.height):
+                    raise FileNotFoundError("bronze/adp is empty")
+            except Exception:  # noqa: BLE001 - the lake backfill is pending the owner's go
+                d = os.environ.get("FF_ADP_DIR")
+                mfl = pl.read_parquet(f"{d}/mfl.parquet") if d else None
+                ffc = pl.read_parquet(f"{d}/ffc.parquet") if d else None
+            if mfl is None and ffc is None:
+                self._adp = pl.DataFrame()
+            else:
+                ids = gcs_io.read_lake_prefix(inseason.FF_IDS_PATH, partition="load_date")
+                ids = ids.filter(pl.col("load_date") == ids["load_date"].max())
+                self._adp = inseason.preseason_features(mfl, ffc, ids.select("mfl_id", "gsis_id", "name", "position"))
+        return self._adp if self._adp.height else None
+
+    @property
+    def college2(self) -> pl.DataFrame | None:
+        """College production read against the position, with real breakout ages (BACKLOG 50); None without the lake tables."""
+        if self._college2 is None:
+            try:
+                fact, xw = self._load(COLLEGE_PATH), self._load(COLLEGE_XWALK_PATH)
+                births = self._load(SEASON_FACT_PATH).select("player_id", "birth_date")
+            except Exception:  # noqa: BLE001 - not ingested yet
+                self._college2 = pl.DataFrame()
+            else:
+                self._college2 = college2_per_player(fact, xw, births)
+        return self._college2 if self._college2.height else None
 
     @property
     def college_cfbd(self) -> pl.DataFrame | None:
@@ -176,10 +241,18 @@ def build_injury(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
                      pl.col("inj_weeks_out").alias("lag1_inj_weeks_out"),
                      pl.col("inj_soft_tissue_weeks").alias("lag1_inj_soft_tissue_weeks"),
                      pl.col("inj_structural_weeks").alias("lag1_inj_structural_weeks"))
-    first = int(agg["season"].min())
+    # two coverages (review 2026-10-13, D5): the reserve lists come from the weekly rosters (2002 on), the injury report
+    # from 2009. One floor at the fact's first season taught the model that 2002-2008 (24 % of its rows) were never
+    # listed and never out; the report-derived columns are unknown before the first season with a report row
+    first_reserve = int(agg["season"].min())
+    reported = inj.filter(pl.col("on_injury_report").fill_null(False))
+    first_report = int(reported["season"].min()) if reported.height else None
+    reserve_cols = ["inj_reserve_weeks"]
+    report_cols = [c for c in INJURY_COLS if not c.startswith("lag1_") and c not in reserve_cols]
     out = matrix.join(agg, on=KEY, how="left").join(lag, on=KEY, how="left")
-    out = _coverage_fill(out, [c for c in INJURY_COLS if not c.startswith("lag1_")], first)
-    return _coverage_fill(out, [c for c in INJURY_COLS if c.startswith("lag1_")], first + 1)
+    out = _coverage_fill(out, reserve_cols, first_reserve)
+    out = _coverage_fill(out, report_cols, first_report)
+    return _coverage_fill(out, [c for c in INJURY_COLS if c.startswith("lag1_")], None if first_report is None else first_report + 1)
 
 
 # -------------------------------------------------------------------------------- role
@@ -300,6 +373,165 @@ def college_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
     per = college_per_cfbd(fact, xw)
     x = xw.filter(pl.col("gsis_id").is_not_null()).select("cfbd_id", "gsis_id").unique("cfbd_id")
     return per.join(x, on="cfbd_id", how="inner").select(["gsis_id"] + COLLEGE_COLS).unique("gsis_id")
+
+
+COLLEGE2_COLS = ["c2_breakout_age", "c2_broke_out", "c2_dom_pct_best", "c2_dom_pct_age20", "c2_ryptpa_best", "c2_ryptpa_pct_best",
+                 "c2_age_final", "c2_seasons", "c2_team_sp_last", "c2_dom_vs_nfl", "c2_ryptpa_vs_nfl"]
+BREAKOUT_PCT = 0.97          # a breakout season: dominator in the top 3 % of the player's position that season (WR ~0.19, TE ~0.12, RB ~0.28)
+
+
+def college2_per_player(fact: pl.DataFrame, xw: pl.DataFrame, births: pl.DataFrame) -> pl.DataFrame:
+    """One row per NFL player (gsis id) with college production read against his position (BACKLOG 50).
+    ``births``: (player_id = gsis id, birth_date) from the NFL season fact (100 % filled; the crosswalk's were empty until
+    the 2026-10-13 rebuild and are still the thinner source).
+    Age in a college season = age on 1 September of that season. Percentiles are within (season, position) over every
+    FBS player at the position with a team passing game (team_pass_att > 0)."""
+    x = xw.filter(pl.col("gsis_id").is_not_null()).select(pl.col("cfbd_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)).unique("cfbd_id")
+    b = births.select(pl.col("player_id").cast(pl.Utf8).alias("gsis_id"), pl.col("birth_date").cast(pl.Date, strict=False)).drop_nulls().unique("gsis_id")
+    f = (fact.filter(pl.col("team_pass_att").fill_null(0) > 0)
+             .with_columns(pl.col("cfbd_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64),
+                           (pl.col("rec_yds").fill_null(0.0) / pl.col("team_pass_att")).alias("_ryptpa"),
+                           pl.col("dominator").fill_null(0.0).alias("_dom"))
+             .with_columns(pl.col("_dom").rank("average").over(["season", "position"]).alias("_r"), pl.len().over(["season", "position"]).alias("_n"),
+                           pl.col("_ryptpa").rank("average").over(["season", "position"]).alias("_rr"))
+             .with_columns((pl.col("_r") / pl.col("_n")).alias("_dom_pct"), (pl.col("_rr") / pl.col("_n")).alias("_ryptpa_pct")))
+    f = f.join(x, on="cfbd_id", how="inner").join(b, on="gsis_id", how="left")
+    sept1 = pl.date(pl.col("season"), 9, 1)
+    age = ((sept1 - pl.col("birth_date")).dt.total_days() / 365.25)
+    f = f.with_columns(age.alias("_age"), (pl.col("_dom_pct") >= BREAKOUT_PCT).alias("_bo"))
+    per = (f.sort(["gsis_id", "season"]).group_by("gsis_id").agg(
+        pl.col("_age").filter(pl.col("_bo")).first().alias("c2_breakout_age"),
+        pl.col("_bo").any().cast(pl.Float64).alias("c2_broke_out"),
+        pl.col("_dom_pct").max().alias("c2_dom_pct_best"),
+        pl.col("_dom_pct").filter(pl.col("_age") <= 20.5).max().alias("c2_dom_pct_age20"),
+        pl.col("_ryptpa").max().alias("c2_ryptpa_best"),
+        pl.col("_ryptpa_pct").max().alias("c2_ryptpa_pct_best"),
+        pl.col("_age").last().alias("c2_age_final"),
+        pl.len().cast(pl.Float64).alias("c2_seasons"),
+        pl.col("team_sp").last().cast(pl.Float64).alias("c2_team_sp_last"),
+        pl.col("_dom").max().alias("_dom_best"), pl.col("position").last().alias("_pos")))
+    # against the other NFL players at the position: almost every draftee is a top-5 % FBS producer, so the FBS percentile
+    # compresses near 1; the rank among the players who reached the NFL spreads them back out
+    per = per.with_columns((pl.col("_dom_best").rank("average").over("_pos") / pl.len().over("_pos")).alias("c2_dom_vs_nfl"),
+                           (pl.col("c2_ryptpa_best").rank("average").over("_pos") / pl.len().over("_pos")).alias("c2_ryptpa_vs_nfl"))
+    return per.select(["gsis_id"] + COLLEGE2_COLS)
+
+
+COLLEGE_QB_COLS = ["cq_rush_ypg_best", "cq_rush_pct_best", "cq_rush_td_best", "cq_ypa_last", "cq_ypa_pct_best", "cq_td_rate_last",
+                   "cq_int_rate_last", "cq_cmp_pct_last", "cq_pass_ypg_pct_best", "cq_starter_seasons"]
+QB_STARTER_ATT = 150         # a college season counts for a quarterback with this many pass attempts
+
+
+def college_qb_per_player(fact: pl.DataFrame, xw: pl.DataFrame) -> pl.DataFrame:
+    """One row per NFL quarterback (gsis id): college passing efficiency and rushing, the percentiles within the season's
+    college quarterbacks with ``QB_STARTER_ATT`` or more attempts (BACKLOG 50: the rushing quarterbacks the model missed)."""
+    x = xw.filter(pl.col("gsis_id").is_not_null()).select(pl.col("cfbd_id").cast(pl.Utf8), pl.col("gsis_id").cast(pl.Utf8)).unique("cfbd_id")
+    games = pl.when(pl.col("team_games").fill_null(0) > 0).then(pl.col("team_games").cast(pl.Float64)).otherwise(12.0)
+    f = (fact.filter((pl.col("position") == "QB") & (pl.col("pass_att").fill_null(0) >= QB_STARTER_ATT))
+             .with_columns(pl.col("cfbd_id").cast(pl.Utf8), pl.col("season").cast(pl.Int64),
+                           (pl.col("rush_yds").fill_null(0.0) / games).alias("_rush_ypg"),
+                           (pl.col("pass_yds").fill_null(0.0) / games).alias("_pass_ypg"),
+                           (pl.col("pass_yds").fill_null(0.0) / pl.col("pass_att")).alias("_ypa"),
+                           (pl.col("pass_td").fill_null(0.0) / pl.col("pass_att")).alias("_td_rate"),
+                           (pl.col("pass_int").fill_null(0.0) / pl.col("pass_att")).alias("_int_rate"),
+                           (pl.col("pass_cmp").fill_null(0.0) / pl.col("pass_att")).alias("_cmp"))
+             .with_columns([(pl.col(c).rank("average").over("season") / pl.len().over("season")).alias(c + "_pct") for c in ("_rush_ypg", "_ypa", "_pass_ypg")]))
+    f = f.join(x, on="cfbd_id", how="inner").sort(["gsis_id", "season"])
+    per = f.group_by("gsis_id").agg(
+        pl.col("_rush_ypg").max().alias("cq_rush_ypg_best"), pl.col("_rush_ypg_pct").max().alias("cq_rush_pct_best"),
+        pl.col("rush_td").cast(pl.Float64).max().alias("cq_rush_td_best"),
+        pl.col("_ypa").last().alias("cq_ypa_last"), pl.col("_ypa_pct").max().alias("cq_ypa_pct_best"),
+        pl.col("_td_rate").last().alias("cq_td_rate_last"), pl.col("_int_rate").last().alias("cq_int_rate_last"),
+        pl.col("_cmp").last().alias("cq_cmp_pct_last"), pl.col("_pass_ypg_pct").max().alias("cq_pass_ypg_pct_best"),
+        pl.len().cast(pl.Float64).alias("cq_starter_seasons"))
+    return per.select(["gsis_id"] + COLLEGE_QB_COLS)
+
+
+def build_college_qb(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    col = ctx.college_qb
+    if col is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in COLLEGE_QB_COLS if c not in matrix.columns])
+    return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
+
+
+DRAFT_AGE_COLS = ["draft_age", "draft_age_x_young"]
+
+
+def build_draft_age(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """The age he entered the league (age - experience): younger draftees develop longer (BACKLOG 50). Explicit, because a
+    difference of two columns is a staircase to the trees; the second column keeps it only for the first three seasons."""
+    da = pl.col("age_at_season").cast(pl.Float64) - pl.col("exp_at_season").cast(pl.Float64).fill_null(0.0)
+    return matrix.with_columns(da.alias("draft_age"),
+                               pl.when(pl.col("exp_at_season").fill_null(0) <= 2).then(da).otherwise(None).alias("draft_age_x_young"))
+
+
+ADP_COLS = ["adp_next", "adp_next_pos_rank", "adp_next_drafted", "adp_this_pos_rank", "adp_this_drafted"]
+
+
+def build_adp(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """The redraft market around the row: next season's preseason average draft position (known before any of the
+    projected seasons is played -- the row is then read as of that August, not February) and this season's (BACKLOG 50).
+    Undrafted players: drafted 0, the ranks past the last drafted player."""
+    if all(c in matrix.columns for c in ADP_COLS):          # adp / adp_this / adp_next share this build
+        return matrix
+    adp = ctx.adp
+    if adp is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in ADP_COLS if c not in matrix.columns])
+    nxt = adp.select("player_id", (pl.col("season") - 1).alias("season"), pl.col("ps_adp").alias("adp_next"),
+                     pl.col("ps_adp_pos_rank").alias("adp_next_pos_rank"), pl.col("ps_drafted").alias("adp_next_drafted"))
+    this = adp.select("player_id", "season", pl.col("ps_adp_pos_rank").alias("adp_this_pos_rank"), pl.col("ps_drafted").alias("adp_this_drafted"))
+    out = (matrix.with_columns(pl.col("season").cast(pl.Int64))
+                 .join(nxt, on=["player_id", "season"], how="left").join(this, on=["player_id", "season"], how="left"))
+    have = sorted(int(s) for s in adp["season"].unique().to_list())
+    nxt_known = (pl.col("season") + 1).is_in(have)
+    this_known = pl.col("season").is_in(have)
+    return out.with_columns(
+        pl.when(nxt_known).then(pl.col("adp_next").fill_null(400.0)).otherwise(None).alias("adp_next"),
+        pl.when(nxt_known).then(pl.col("adp_next_pos_rank").fill_null(150.0)).otherwise(None).alias("adp_next_pos_rank"),
+        pl.when(nxt_known).then(pl.col("adp_next_drafted").fill_null(0.0)).otherwise(None).alias("adp_next_drafted"),
+        pl.when(this_known).then(pl.col("adp_this_pos_rank").fill_null(150.0)).otherwise(None).alias("adp_this_pos_rank"),
+        pl.when(this_known).then(pl.col("adp_this_drafted").fill_null(0.0)).otherwise(None).alias("adp_this_drafted"))
+
+
+WEEK_GROUPS = {"is_usage": "usage", "is_role": "role", "is_opportunity": "opportunity", "is_consensus": "consensus", "is_preseason": "preseason",
+               "is_injury_now": "injury_now"}
+
+
+def week_group_columns(name: str) -> list[str]:
+    import inseason
+    return list(inseason.EXTRA_GROUPS[WEEK_GROUPS[name]])
+
+
+def make_week_group_build(name: str):
+    """A career group from an in-season group (BACKLOG 51, the owner: "and career model as well"): its columns computed
+    through each row's ``row_week`` -- the whole season on a season row (18), the weeks so far on a season-to-date row."""
+    src = WEEK_GROUPS[name]
+
+    def build(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+        import inseason
+        cols = week_group_columns(name)
+        if "row_week" not in matrix.columns:
+            matrix = matrix.with_columns(pl.lit(18, pl.Int64).alias("row_week"))
+        gi, wk = ctx.inseason_inputs(src), ctx.weeks
+        parts = []
+        for w in sorted(int(x) for x in matrix["row_week"].drop_nulls().unique().to_list() if int(x) > 0):
+            f = inseason.week_group_features(wk, w, gi, [src])
+            parts.append(f.select(["player_id", pl.col("season").cast(pl.Int64)] + [c for c in cols if c in f.columns]).with_columns(pl.lit(w, pl.Int64).alias("row_week")))
+        if not parts:
+            return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in cols if c not in matrix.columns])
+        feats = pl.concat(parts, how="diagonal_relaxed")
+        out = matrix.with_columns(pl.col("season").cast(pl.Int64), pl.col("row_week").cast(pl.Int64)).join(
+            feats, on=["player_id", "season", "row_week"], how="left")
+        return out.with_columns([pl.lit(None, pl.Float64).alias(c) for c in cols if c not in out.columns])
+    return build
+
+
+def build_college2(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
+    """Join the per-player college2 row onto every season row (static over a career)."""
+    col = ctx.college2
+    if col is None:
+        return matrix.with_columns([pl.lit(None, pl.Float64).alias(c) for c in COLLEGE2_COLS if c not in matrix.columns])
+    return matrix.join(col.rename({"gsis_id": "player_id"}), on="player_id", how="left")
 
 
 def build_college(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
@@ -468,6 +700,13 @@ GROUPS: dict[str, FeatureGroup] = {
     "situation": FeatureGroup("situation", SITUATION_COLS, build_situation, "team changes (fact_player_season)"),
     "rookie": FeatureGroup("rookie", ROOKIE_COLS, build_rookie, "draft capital x experience (fact_player_season)"),
     "college": FeatureGroup("college", COLLEGE_COLS, build_college, "fact_college_player_season + dim_college_crosswalk (CFBD)"),
+    **{n: FeatureGroup(n, [], make_week_group_build(n), f"the in-season {s} group through each row's week (BACKLOG 51)") for n, s in WEEK_GROUPS.items()},
+    "college_qb": FeatureGroup("college_qb", COLLEGE_QB_COLS, build_college_qb, "CFBD quarterback passing efficiency and rushing, against the season's college QBs (BACKLOG 50)"),
+    "draft_age": FeatureGroup("draft_age", DRAFT_AGE_COLS, build_draft_age, "age entering the league, explicit (BACKLOG 50)"),
+    "adp": FeatureGroup("adp", ADP_COLS, build_adp, "preseason redraft ADP, next season and this (MFL / FFC; BACKLOG 50)"),
+    "adp_this": FeatureGroup("adp_this", ["adp_this_pos_rank", "adp_this_drafted"], build_adp, "this season's preseason ADP only: known at every point of the year (BACKLOG 50)"),
+    "adp_next": FeatureGroup("adp_next", ["adp_next", "adp_next_pos_rank", "adp_next_drafted"], build_adp, "next season's preseason ADP only: known from the summer (BACKLOG 50)"),
+    "college2": FeatureGroup("college2", COLLEGE2_COLS, build_college2, "CFBD read against the position: real breakout age, dominator / RYPTPA percentiles, early production (BACKLOG 50)"),
     "weekly": FeatureGroup("weekly", WEEKLY_COLS, build_weekly, "fact_player_week_status (18 weekly slots: status, injury class, points, opportunities, snap share; miss-reason counts)"),
     "team": FeatureGroup("team", TEAM_COLS, build_team, "fact_team_season_strength (schedules closing lines + team_stats EPA)"),
     "contract": FeatureGroup("contract", CONTRACT_COLS, build_contract, "fact_player_contract_season (Over The Cap via nflverse)"),
@@ -491,7 +730,8 @@ def resolve(names: list[str] | str) -> list[FeatureGroup]:
 def feature_columns(groups: list[FeatureGroup]) -> list[str]:
     cols: list[str] = []
     for g in groups:
-        cols += [c for c in g.columns if c not in cols]
+        own = week_group_columns(g.name) if g.name in WEEK_GROUPS else g.columns     # the in-season groups' columns, resolved late (no import cycle)
+        cols += [c for c in own if c not in cols]
     return cols
 
 
