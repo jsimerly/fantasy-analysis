@@ -2161,3 +2161,23 @@ t = 1.45) stays a tie.
     boundary with the memory at the ceiling is the hang, low power alone is not. Monday: read the verdicts, rerun title
     odds and republish the page, budget the in-season stages, fix the rule in `run_status.py`, rerun the five in-season
     variants (bags3 likely needs fewer rows per fit or the memory freed between bags).
+
+56. **The Tuesday run, local (owner, 2026-10-21: "lets do a projection run using our best model with all of our new data
+    and then lets also schedule a trigger, I think maybe a cron job locally makes more sense right? Since the job runs
+    local?").** No run had happened since the 14th: the cloud job is paused (item 55) and every GPU run was launched by
+    hand from a session. The night chain's five career candidates, read first, all NO on the co-primary rule against the
+    same-day baseline `tabpfn35_young_base2` (ordering 0.626, error 0.493, level +0.046): `tabpfn35_is5` 0.622 / 0.497;
+    `tabpfn35_young` 0.621 / 0.495; `tabpfn35_young_adpnext` 0.640 / 0.484 (t +1.0 / +1.0; distribution t +9.3);
+    `tabpfn35_young_all` 0.647 / 0.480 (t +1.55 / +1.38; distribution t +8.5) with its level at +0.078, further from
+    zero by 0.038 -- the trade-off case; `tabpfn35_surv_q` the baseline to three decimals (the quadratic survival cap
+    changes nothing at horizon 3). By age band (`age_gate.py`): `adpnext` is the one that moves the under-25 level toward 1
+    (1.258 vs 1.309, t -2.2, 6 of 8 cohorts) and the 29+ (0.835 vs 0.793, t +2.9) -- next-season ADP carries the young
+    end's information the model lacks, short of the acceptance rule at three years; `young_all` moves the 29+ (0.847,
+    t +3.4) and the quarterbacks (1.019 vs 0.963, t +5.4) but not the young. The preset stands. The refresh through week 6
+    launched 22:13 as a one-shot task on `scripts/weekly_refresh_task.cmd` (the production preset under a 6 h budget, the
+    `--no-career-todate` fallback under 4 h, one log per run under `_cache/logs/`); the weekly task `ff-weekly-refresh`
+    registered (Tuesdays 20:00 local, wakes the PC, interactive token); the cloud job stays paused; `.gitattributes` pins
+    `.sh` to LF so a checkout under autocrlf cannot break the task. Open: the week is the lake's latest with no
+    completeness check (the Tuesday-15:00-UTC cloud runs had the Monday game, so 20:00 local should); the page republish
+    still needs a session; the in-season variants of item 55 (bags3 and the three after it) still owed a rerun under a
+    budget.

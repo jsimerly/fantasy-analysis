@@ -1,0 +1,3 @@
+# Git Bash runs the .sh files (Task Scheduler launches them through the .cmd wrappers); a CRLF checkout breaks them.
+*.sh  text eol=lf
+*.cmd text eol=crlf

@@ -89,6 +89,15 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Long runs: write a `chain_*.sh`, wrap it in a `.cmd`, launch as a one-shot Task Scheduler task,
   watch its log. Never a background shell child (dies with the session). Time a preset end to end
   before scheduling it.
+- **The Tuesday run is the local Task Scheduler task `ff-weekly-refresh`** (owner, 2026-10-21: "a cron job locally
+  makes more sense right? Since the job runs local?"): Tuesdays 20:00 local, after the daily DAG (10:00 UTC) has the
+  Monday game; it wakes the PC and runs `scripts/weekly_refresh_task.cmd` → `weekly_refresh_task.sh`: the production
+  preset under a 6 h budget, then if that fails the orphans killed and the `--no-career-todate` fallback under 4 h; it
+  refuses to start over another GPU run. Logs under `_cache/logs/` — `weekly_refresh_task.log` (the script's lines, every
+  run appended) and one `production_<stamp>.log` per run, the file `run_status.py` takes. It runs only while the owner is
+  logged on (interactive token: no stored password). The week is the lake's latest (`current_season_week`: the max week
+  in the week table, no completeness check). The cloud job `ml-weekly-refresh` stays paused. A run now = the same
+  `.cmd` as a one-shot task. The page is not in it: republishing `projections.json` with the HTML needs a session.
 
 ## Where the numbers are
 - `BACKLOG.md` items 22 (bake-off), 36 (accuracy programme), 37-39 (in-season funnel), 40 (title
