@@ -528,6 +528,58 @@ def injury_keeps_up(ctx):
     return _keeps_up(ctx, "fact_player_injury_week", 1)
 
 
+@check("fact.player_week.latest_week_complete", "fact_player_week", "error",
+       "a partially loaded latest week (the nflverse job landing before Monday night's stats) reads as games missed: td_missed + 1, "
+       "a short rest of season and a played=False status week for every player in the late game (review 2026-10-13, D12)")
+def fpw_latest_week_complete(ctx):
+    if ctx.nfl_phase() not in ("regular", "playoffs"):
+        return x.ok("offseason: not enforced")
+    season = ctx.nfl_season()
+    fpw = ctx.table("fact_player_week").filter(pl.col("season") == season)
+    if fpw.height == 0:
+        return x.ok("no current-season production yet")
+    wk = int(fpw["week"].max())
+    blob = f"bronze/nflverse/schedules/season={season}/data.parquet"
+    if not ctx.has(blob):
+        return x.ok(f"no schedules partition for {season}: not checked")
+    sched = ctx.blob(blob).filter((pl.col("game_type") == "REG") & (pl.col("week").cast(pl.Int64) == wk))
+    played = sched.filter(pl.col("gameday").cast(pl.Utf8).str.slice(0, 10).str.to_date(strict=False) <= ctx.today)
+    expected, observed = 2 * played.height, int(fpw.filter(pl.col("week") == wk)["team"].n_unique())
+    msg = f"week {wk}: {observed} teams with a stat line, {expected} expected from the {played.height} games played by {ctx.today}"
+    return x.ok(msg, observed) if observed >= expected else x.fail(msg, observed)
+
+
+@check("fact.player_injury_week.report_rows_per_season", "fact_player_injury_week", "warn",
+       "the injury report starts in 2009 while the fact carries reserve-only rows from 2002; the model's injury group once filled "
+       "2002-2008 as 'never listed' from the fact's first season (24 % of its training rows; review 2026-10-13, D5)")
+def injury_report_rows_per_season(ctx):
+    t = ctx.table("fact_player_injury_week")
+    if "on_injury_report" not in t.columns:
+        return x.fail("on_injury_report column missing")
+    per = t.group_by("season").agg(pl.col("on_injury_report").fill_null(False).sum().alias("n_report")).sort("season")
+    rows = [(int(s), int(n)) for s, n in per.select("season", "n_report").iter_rows()]
+    missing = [s for s, n in rows if s >= 2009 and n == 0]
+    early = [s for s, n in rows if s < 2009 and n > 0]
+    with_report = [s for s, n in rows if n > 0]
+    msg = f"seasons {rows[0][0]}-{rows[-1][0]}, report rows from {min(with_report) if with_report else None}"
+    if missing or early:
+        return x.fail(msg + f"; seasons from 2009 without report rows {missing}; report rows before 2009 {early}", len(missing) + len(early))
+    return x.ok(msg, 0)
+
+
+@check("fact.player_week_status.no_rows_past_production", "fact_player_week_status", "warn",
+       "the status grid once ran to the schedule's last week in an in-progress season, stamping every unplayed week not_rostered "
+       "(11,414 rows of 2026 on 2026-10-13; review D7); it must end at production's latest week")
+def status_no_rows_past_production(ctx):
+    wk = _current_week(ctx)
+    if wk is None:
+        return x.ok("no current-season production yet")
+    t = ctx.table("fact_player_week_status").filter(pl.col("season") == ctx.nfl_season())
+    mx = None if t.height == 0 else int(t["week"].max())
+    msg = f"status grid to week {mx}, production at week {wk}"
+    return x.ok(msg, mx or 0) if mx is None or mx <= wk else x.fail(msg, mx)
+
+
 @check("fact.depth_chart_week.keeps_up", "fact_depth_chart_week", "warn", "depth charts feed the situation group")
 def depth_keeps_up(ctx):
     return _keeps_up(ctx, "fact_depth_chart_week", 1)
@@ -595,3 +647,64 @@ def fftoday_history(ctx):
     if short:
         return x.fail(f"{len(short)} of {len(FFTODAY_SEASONS)} seasons short", len(short), "; ".join(short))
     return x.ok(f"{len(FFTODAY_SEASONS)} seasons, 16+ weeks and 2,000+ rows each", 0)
+
+
+ADP_FFC_MIN_DRAFTS, ADP_MFL_MIN_DRAFTS = 300, 100      # a preseason window (FFC 2012, the smallest past year: 303; MFL AUG15: 600+)
+ADP_WINDOW_END = "-09-10"
+
+
+@check("bronze.adp.windows_are_preseason", "bronze/adp", "warn",
+       "FFC serves a rolling in-season window for the current year (2026-10-13: 109 drafts, Sep 18-25) and MFL's ALL period grows all season; a partition written from either is not the preseason consensus the model's preseason group means",
+       known_open="ffc season=2026 was pulled 2026-10-12 from an in-season window (109 drafts); FFC serves the frozen final preseason week only once the year is past, and the model reads MFL for any season that has MFL rows. MFL 2011-2026 were pulled with PERIOD=ALL; the re-pull with AUG15 waits for the owner's go")
+def adp_windows_preseason(ctx):
+    bad = []
+    for source, floor in (("ffc", ADP_FFC_MIN_DRAFTS), ("mfl", ADP_MFL_MIN_DRAFTS)):
+        for season, blob in ctx.partitions(f"bronze/adp/{source}/", key="season"):
+            df = ctx.blob(blob)
+            n = int(df["total_drafts"].drop_nulls().max() or 0) if "total_drafts" in df.columns and df.height else 0
+            end = str(df["end_date"].drop_nulls().max()) if "end_date" in df.columns and df["end_date"].null_count() < df.height else None
+            if n < floor or (end is not None and end > f"{season}{ADP_WINDOW_END}"):
+                bad.append(f"{source} {season}: {n} drafts" + (f", window to {end}" if end else ""))
+    if bad:
+        return x.fail(f"{len(bad)} partition(s) not a preseason view", len(bad), "; ".join(bad))
+    return x.ok("every ADP partition is a preseason window", 0)
+
+
+@check("bronze.adp.coming_season_present", "bronze/adp", "warn",
+       "the in-season preseason group and the career model's adp_next need the season's ADP as soon as the providers publish it (owner, 2026-10-12): adp-daily pulls it every day; this says when June has come and it has not landed")
+def adp_coming_season(ctx):
+    if ctx.today.month < 6:
+        return x.ok("before June: the season's drafts have not started", 0)
+    season = str(ctx.today.year)
+    missing = [s for s in ("ffc", "mfl") if season not in {v for v, _ in ctx.partitions(f"bronze/adp/{s}/", key="season")}]
+    if missing:
+        return x.fail(f"season={season} missing for {', '.join(missing)}", len(missing))
+    return x.ok(f"season={season} present for ffc and mfl", 0)
+
+
+@check("dim.college_crosswalk.birth_dates", "dim_college_crosswalk", "error",
+       "the crosswalk's id table carried no birth date at all (and the crosswalk looked only for nflverse's birthdate): every birth date was empty and the model's college breakout age with it; fixed and rebuilt by hand 2026-10-12 (1,822 of 1,829 matched players dated)")
+def crosswalk_birth_dates(ctx):
+    xw = ctx.table("dim_college_crosswalk")
+    matched = xw.filter(pl.col("gsis_id").is_not_null())
+    if matched.height == 0:
+        return x.fail("no crosswalk rows matched to a gsis id", 0)
+    share = float(matched["birth_date"].is_not_null().mean())
+    if share < 0.9:
+        return x.fail(f"{share:.0%} of the {matched.height:,} matched players have a birth date, need 90%", round(share, 3))
+    return x.ok(f"{share:.0%} of {matched.height:,} matched players have a birth date", round(share, 3))
+
+
+@check("fact.college_player_season.class_year_varies", "fact_college_player_season", "warn",
+       "CFBD's roster year is not a class year: some seasons carry the calendar year, others the player's final class repeated, so early-declare and any per-season class are wrong",
+       known_open="needs a real class source (CFBD's recruiting class or the first college season); the model's college2 group does not use it")
+def college_class_year(ctx):
+    f = ctx.table("fact_college_player_season")
+    multi = f.group_by("cfbd_id").agg(pl.len().alias("n"), pl.col("class_year").n_unique().alias("k"), pl.col("class_year").max().alias("mx")).filter(pl.col("n") >= 2)
+    if multi.height == 0:
+        return x.ok("no multi-season players", 0)
+    frozen = float((multi["k"] == 1).mean())
+    calendar = float((multi["mx"].fill_null(0) > 10).mean())
+    if frozen > 0.5 or calendar > 0.01:
+        return x.fail(f"{frozen:.0%} of multi-season players have one class year for every season; {calendar:.0%} carry a calendar year", round(frozen, 3))
+    return x.ok(f"class year moves with the season for {1 - frozen:.0%} of multi-season players", round(frozen, 3))

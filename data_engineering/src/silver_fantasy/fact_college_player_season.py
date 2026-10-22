@@ -24,7 +24,6 @@ Run: ``PYTHONPATH=src uv run python -m silver_fantasy.fact_college_player_season
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, timezone
 
 import polars as pl
@@ -126,13 +125,36 @@ def build_crosswalk(draft_picks: pl.DataFrame, ids: pl.DataFrame) -> pl.DataFram
     n = (ids.filter(pl.col("gsis_id").is_not_null()).with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars(), pl.col("draft_year").cast(pl.Int64, strict=False),
                                                                   pl.col("draft_pick").cast(pl.Int64, strict=False), _norm("name").alias("_n"))
             .filter(pl.col("gsis_id") != ""))
-    by_pick = d.join(n.select("gsis_id", "draft_year", pl.col("draft_pick").alias("overall"), pl.col("birthdate").alias("birth_date") if "birthdate" in n.columns else pl.lit(None, pl.Utf8).alias("birth_date")).unique(["draft_year", "overall"]),
+    # the birth date: our season fact calls it birth_date, nflverse's player ids birthdate (looking only for the latter left
+    # every crosswalk birth date empty until 2026-10-12, and with them the model's breakout ages)
+    bcol = "birth_date" if "birth_date" in n.columns else "birthdate" if "birthdate" in n.columns else None
+    birth = (pl.col(bcol).cast(pl.Utf8) if bcol else pl.lit(None, pl.Utf8))
+    by_pick = d.join(n.select("gsis_id", "draft_year", pl.col("draft_pick").alias("overall"), birth.alias("birth_date")).unique(["draft_year", "overall"], keep="first", maintain_order=True),
                      on=["draft_year", "overall"], how="left")
-    by_name = n.select("_n", "position", pl.col("gsis_id").alias("_g2"), pl.col("birthdate").alias("_b2") if "birthdate" in n.columns else pl.lit(None, pl.Utf8).alias("_b2")).unique(["_n", "position"])
+    by_name = n.select("_n", "position", pl.col("gsis_id").alias("_g2"), birth.alias("_b2")).unique(["_n", "position"], keep="first", maintain_order=True)
     x = by_pick.join(by_name, on=["_n", "position"], how="left").with_columns(
         pl.coalesce([pl.col("gsis_id"), pl.col("_g2")]).alias("gsis_id"), pl.coalesce([pl.col("birth_date"), pl.col("_b2")]).alias("birth_date"),
         pl.when(pl.col("gsis_id").is_not_null()).then(pl.lit("pick")).when(pl.col("_g2").is_not_null()).then(pl.lit("name")).otherwise(None).alias("match"))
     return x.select("cfbd_id", "gsis_id", "match", "name", "position", "draft_year", "round", "overall", pl.col("collegeTeam").alias("college"), "birth_date").with_columns(pl.lit(datetime.now(timezone.utc)).alias("loaded_at"))
+
+
+def crosswalk_ids(ours: pl.DataFrame, ids: pl.DataFrame) -> pl.DataFrame:
+    """The id table ``build_crosswalk`` matches against: our season fact first (every drafted skill player with his
+    overall pick, rookie season and birth date), then nflverse fantasy_player_ids for players the fact does not carry.
+    Both carry the birth date (2026-10-12: neither did, so every crosswalk birth date was empty)."""
+    ours = (ours.filter(pl.col("player_id").is_not_null()).sort("season")
+                .group_by("player_id").agg(pl.col("rookie_season").first().alias("draft_year"), pl.col("draft_pick").first(),
+                                           pl.col("player_name").last().alias("name"), pl.col("position").last(),
+                                           (pl.col("birth_date").drop_nulls().last() if "birth_date" in ours.columns else pl.lit(None)).cast(pl.Utf8).alias("birth_date"))
+                .rename({"player_id": "gsis_id"}))
+    ids = ids.sort("db_season" if "db_season" in ids.columns else ids.columns[0]).unique("gsis_id", keep="last") if "gsis_id" in ids.columns else ids
+    extra = ids.select("gsis_id", pl.col("draft_year") if "draft_year" in ids.columns else pl.lit(None, pl.Int64).alias("draft_year"),
+                       # nflverse's draft_pick is the pick WITHIN THE ROUND; draft_ovr is the overall pick the CFBD join needs
+                       (pl.col("draft_ovr") if "draft_ovr" in ids.columns else pl.col("draft_pick") if "draft_pick" in ids.columns else pl.lit(None, pl.Int64)).cast(pl.Int64, strict=False).alias("draft_pick"),
+                       "name", "position",
+                       (pl.col("birthdate") if "birthdate" in ids.columns else pl.lit(None)).cast(pl.Utf8).alias("birth_date")).filter(pl.col("gsis_id").is_not_null())
+    ids = pl.concat([ours, extra.with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars()).join(ours.select("gsis_id"), on="gsis_id", how="anti")], how="diagonal_relaxed")
+    return ids
 
 
 def main() -> None:
@@ -147,16 +169,8 @@ def main() -> None:
     print(f"wrote {OUT_FACT}: {fact.shape}")
     # ids: our own season fact first (every drafted skill player with his overall pick and rookie season),
     # then nflverse fantasy_player_ids for names of players the fact does not carry (the pick join wins)
-    ours = pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/fact_player_season/data.parquet")
-    ours = (ours.filter(pl.col("player_id").is_not_null()).sort("season")
-                .group_by("player_id").agg(pl.col("rookie_season").first().alias("draft_year"), pl.col("draft_pick").first(),
-                                           pl.col("player_name").last().alias("name"), pl.col("position").last())
-                .rename({"player_id": "gsis_id"}))
-    ids = read_bronze_prefix(BUCKET, "bronze/nflverse/fantasy_player_ids/")
-    ids = ids.sort("db_season" if "db_season" in ids.columns else ids.columns[0]).unique("gsis_id", keep="last") if "gsis_id" in ids.columns else ids
-    extra = ids.select("gsis_id", pl.col("draft_year") if "draft_year" in ids.columns else pl.lit(None, pl.Int64).alias("draft_year"),
-                       pl.col("draft_pick") if "draft_pick" in ids.columns else pl.lit(None, pl.Int64).alias("draft_pick"), "name", "position").filter(pl.col("gsis_id").is_not_null())
-    ids = pl.concat([ours, extra.with_columns(pl.col("gsis_id").cast(pl.Utf8).str.strip_chars()).join(ours.select("gsis_id"), on="gsis_id", how="anti")], how="diagonal_relaxed")
+    ids = crosswalk_ids(pl.read_parquet(f"gs://{BUCKET}/silver/fantasy/fact_player_season/data.parquet"),
+                        read_bronze_prefix(BUCKET, "bronze/nflverse/fantasy_player_ids/"))
     xw = build_crosswalk(frames["draft_picks"], ids)
     xw.write_parquet(f"gs://{BUCKET}/{OUT_XWALK}")
     print(f"wrote {OUT_XWALK}: {xw.shape}; matched {xw['gsis_id'].is_not_null().sum()} of {xw.height}")

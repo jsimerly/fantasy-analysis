@@ -84,3 +84,15 @@ def test_career_tail_reuses_the_cache_until_a_visible_row_changes(monkeypatch, t
     assert fits == [2025, 2025]                                              # a restated completed season is
     mod.career_tail(df, 2025, {}, "cpu", cache_dir=None)
     assert fits == [2025, 2025, 2025]                                        # no cache dir: always computed
+
+
+def test_key_ignores_ingestion_stamps_but_not_data(tmp_path):
+    from datetime import datetime
+    code = tmp_path / "m.py"; code.write_text("x = 1")
+    a = _frame().with_columns(pl.lit(datetime(2026, 10, 11, 10, 13)).alias("loaded_at"), pl.lit(datetime(2026, 10, 11)).alias("snapshot_at"))
+    b = a.with_columns(pl.lit(datetime(2026, 10, 12, 10, 16)).alias("loaded_at"), pl.lit(datetime(2026, 10, 12)).alias("snapshot_at"))   # the next morning's rebuild
+    cfg = {"backend": "tabpfn"}
+    assert tail_cache.cache_key(a, 2025, cfg, [code]) == tail_cache.cache_key(b, 2025, cfg, [code])
+    c = b.with_columns(pl.when(pl.col("player_id") == "a").then(9.0).otherwise(pl.col("ppg")).alias("ppg"))
+    assert tail_cache.cache_key(a, 2025, cfg, [code]) != tail_cache.cache_key(c, 2025, cfg, [code])
+    assert "loaded_at" not in tail_cache.content_columns(a) and "ppg" in tail_cache.content_columns(a)

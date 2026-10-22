@@ -52,6 +52,9 @@ def career_components(horizons: list[int]) -> list[Component]:
 
 def _excess(df: pl.DataFrame, comp: Component, rep_arr: np.ndarray, sigma: dict | None) -> np.ndarray:
     mu = df[comp.ppg].fill_null(0.0).to_numpy().astype(float)
+    pre = comp.ppg.replace("_ppg_hat", "_ppg_excess")
+    if pre != comp.ppg and pre in df.columns:        # priced off the player's whole predictive distribution (BACKLOG 47)
+        return df[pre].fill_null(0.0).to_numpy().astype(float)
     if comp.sigma and comp.sigma in df.columns:
         return value.expected_excess(mu, df[comp.sigma].fill_null(0.0).to_numpy().astype(float), rep_arr)
     if sigma and comp.k in sigma:
@@ -62,12 +65,18 @@ def _excess(df: pl.DataFrame, comp: Component, rep_arr: np.ndarray, sigma: dict 
 
 
 def wins_above_replacement(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, components: list[Component],
-                           discount_rate: float = value.DEFAULT_DISCOUNT_RATE, sigma: dict | None = None) -> pl.DataFrame:
-    """Adds ``war_k`` (wins) and ``par_k`` (points above replacement) per component, ``war`` and ``par`` totals."""
+                           discount_rate: float = value.DEFAULT_DISCOUNT_RATE, sigma: dict | None = None,
+                           age_scale: dict | None = None, age_scale_min_k: int = 3) -> pl.DataFrame:
+    """Adds ``war_k`` (wins) and ``par_k`` (points above replacement) per component, ``war`` and ``par`` totals.
+    ``age_scale`` (band -> realized / priced, review 2026-10-13 C1) multiplies the points above replacement of the
+    components k >= ``age_scale_min_k`` -- the career model's spans (the in-season model's own level is not measured)."""
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    fac = value.age_scale_factors(df, age_scale)
     cols, war_total, par_total = [], np.zeros(df.height), np.zeros(df.height)
     for comp in components:
         ex = _excess(df, comp, rep_arr, sigma)
+        if age_scale and comp.k >= age_scale_min_k:
+            ex = ex * fac
         games = df[comp.games].fill_null(0.0).to_numpy().astype(float)
         par = ex * games
         war = games * curve.delta_win(curve.mean_points, ex)
@@ -79,12 +88,15 @@ def wins_above_replacement(df: pl.DataFrame, rep: dict[str, float], curve: WinCu
 
 
 def wins_range(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, components: list[Component],
-               discount_rate: float = value.DEFAULT_DISCOUNT_RATE, lo: str = "q20", hi: str = "q80") -> pl.DataFrame:
+               discount_rate: float = value.DEFAULT_DISCOUNT_RATE, lo: str = "q20", hi: str = "q80",
+               age_scale: dict | None = None, age_scale_min_k: int = 3) -> pl.DataFrame:
     """Floor and ceiling wins per span and in total: the same arithmetic as ``wins_above_replacement``
     run on the band's ppg and games (``h{k}_ppg_q20`` / ``_q80``, no upside term) where a span carries
     one; a span without a band (this season, next season, a tree backend) keeps its point wins on
-    both sides. Adds ``war_lo_k`` / ``war_hi_k`` and ``war_lo`` / ``war_hi``."""
+    both sides. Adds ``war_lo_k`` / ``war_hi_k`` and ``war_lo`` / ``war_hi``. ``age_scale`` as in
+    ``wins_above_replacement``."""
     rep_arr = df["position"].replace_strict(rep, default=0.0, return_dtype=pl.Float64).to_numpy()
+    fac = value.age_scale_factors(df, age_scale)
     cols, lo_total, hi_total = [], np.zeros(df.height), np.zeros(df.height)
     for comp in components:
         w = value.discount_weight(comp.k, discount_rate)
@@ -96,6 +108,8 @@ def wins_range(df: pl.DataFrame, rep: dict[str, float], curve: WinCurve, compone
                 ppg = df[pcol].fill_null(0.0).to_numpy().astype(float)
                 games = (df[gcol] if gcol in df.columns else df[comp.games]).fill_null(0.0).to_numpy().astype(float)
                 ex = np.maximum(ppg - rep_arr, 0.0)
+                if age_scale and comp.k >= age_scale_min_k:
+                    ex = ex * fac
                 wins = games * curve.delta_win(curve.mean_points, ex)
             else:
                 wins = df[f"war_{comp.k}"].fill_null(0.0).to_numpy().astype(float) if f"war_{comp.k}" in df.columns else np.zeros(df.height)

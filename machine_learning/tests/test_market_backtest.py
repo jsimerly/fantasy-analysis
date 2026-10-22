@@ -48,6 +48,28 @@ def test_score_reports_edge_when_the_model_is_right():
     assert by_pos.height == 4 and "top_decile_model" not in by_pos.columns or by_pos["top_decile_model"].null_count() == by_pos.height
 
 
+def test_score_net_of_regression_is_zero_for_a_model_with_no_skill():
+    """review 2026-10-13: cheap_gap_real is positive for ANY model that disagrees with the market (regression to the
+    mean on the shared KTC rank); cheap_net and cheap_closer are not."""
+    import numpy as np
+    rng = np.random.default_rng(3)
+    n = 300
+    truth = rng.standard_normal(n)
+    ktc = truth + 0.8 * rng.standard_normal(n)                      # the market: a noisy read of the truth
+    noise = rng.standard_normal(n)                                  # a model with no information at all
+    rows = [{"variant": "null", "horizon": 3, "cohort": 2021, "player_id": f"p{i}", "player_name": f"P{i}", "position": "WR",
+             "age_at_season": 25, "exp_at_season": 3, "draft_pick": None, "is_rookie": False, "games": 15, "ppg": 10.0,
+             "war": float(noise[i]), "iv": float(noise[i]), "ktc_value": float(10000 + 1000 * ktc[i]),
+             "realized_war": float(truth[i]), "realized_iv": float(truth[i])} for i in range(n)]
+    s = mb.score(mb.priced_frame([pl.DataFrame(rows)]), ["variant", "horizon"]).row(0, named=True)
+    assert s["cheap_gap_real"] > 5 and s["rich_gap_real"] < -5                    # the artifact: "cheap finished better"
+    assert abs(s["cheap_net"]) < s["cheap_gap_real"] / 2 and abs(s["rich_net"]) < -s["rich_gap_real"] / 2   # the honest score: nothing
+    assert s["cheap_closer"] < -5                                                  # a noise model sits further from the outcome than KTC
+    # and the fixture's skilled model scores above zero on both
+    r = mb.score(mb.priced_frame([_frame()]), ["variant", "horizon"]).row(0, named=True)
+    assert r["cheap_net"] > 0 > r["rich_net"] and r["cheap_closer"] > 0
+
+
 def test_swap_pairs_match_on_price_and_gain_follows_realized():
     df = mb.priced_frame([_frame()])
     pairs = mb.swap_pairs(df, tol=0.5, min_gap=1)
@@ -62,3 +84,16 @@ def test_swap_pairs_match_on_price_and_gain_follows_realized():
     # a tight tolerance leaves fewer pairs, never more
     assert mb.swap_pairs(df, tol=0.02, min_gap=1).height <= pairs.height
     assert mb.swap_pairs(df, tol=0.5, min_gap=100).height == 0
+
+
+def test_realized_points_and_par_ride_along_for_the_non_modeller():
+    f = _frame().with_columns(pl.lit(100.0).alias("h1_fpts"), pl.lit(90.0).alias("h2_fpts"), pl.lit(None, pl.Float64).alias("h3_fpts"),
+                              pl.lit(20.0).alias("h1_vorp"), pl.lit(10.0).alias("h2_vorp"), pl.lit(0.0).alias("h3_vorp"))
+    df = mb.priced_frame([f])
+    assert df["realized_pts"].unique().to_list() == [190.0] and df["realized_par"].unique().to_list() == [30.0]   # an unplayed season is 0, not unknown
+    pairs = mb.swap_pairs(df, tol=0.5, min_gap=1)
+    assert pairs.height and pairs["gain_pts"].unique().to_list() == [0.0] and pairs["buy_par"].unique().to_list() == [30.0]
+    s = mb.swap_summary(pairs, ["variant", "horizon"]).row(0, named=True)
+    assert s["gain_pts_mean"] == 0.0 and s["gain_par_mean"] == 0.0 and s["win_rate_par"] == 0.0
+    plain = mb.swap_summary(mb.swap_pairs(mb.priced_frame([_frame()]), tol=0.5, min_gap=1), ["variant", "horizon"])
+    assert plain.row(0, named=True)["gain_pts_mean"] is None                           # a frame without the columns: the means are unknown, not zero

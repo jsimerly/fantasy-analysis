@@ -50,25 +50,64 @@ def expected_excess(mu: np.ndarray, sigma: np.ndarray, rep: np.ndarray) -> np.nd
     return (mu - rep) * norm.cdf(z) + sigma * norm.pdf(z)
 
 
+AGE_BANDS = (("<=24", 0.0, 25.0), ("25-28", 25.0, 29.0), ("29+", 29.0, 200.0))     # the cuts: < 25, < 29, else
+
+
+def age_band_expr(col: str = "age_at_season") -> pl.Expr:
+    """The age band of a row: < 25, < 29, else (the lower bounds of ``AGE_BANDS`` are the cuts, so nothing is unbanded);
+    null where the age is."""
+    e = pl.when(pl.col(col).is_null()).then(pl.lit(None, pl.Utf8)).when(pl.col(col) < AGE_BANDS[1][1]).then(pl.lit(AGE_BANDS[0][0]))
+    for i in range(1, len(AGE_BANDS) - 1):
+        e = e.when(pl.col(col) < AGE_BANDS[i + 1][1]).then(pl.lit(AGE_BANDS[i][0]))
+    return e.otherwise(pl.lit(AGE_BANDS[-1][0]))
+
+
+def age_scale_factors(df: pl.DataFrame, age_scale: dict[str, float] | None) -> np.ndarray:
+    """Per-row value factor by age band (review 2026-10-13 C1, owner 2026-10-14): the career model under-prices
+    under-25s by ~27 % and over-prices 29+ by ~20 % on its own test seasons; ``age_scale`` is band -> realized / priced
+    (``experiments.walk_forward_age_scales`` in the harness, ``experiments.age_scale_table`` for production). 1 everywhere
+    without a table, an age column, or an age."""
+    if not age_scale or "age_at_season" not in df.columns:
+        return np.ones(df.height)
+    table = {k: float(v) for k, v in age_scale.items()}
+    band = age_band_expr()
+    fac = band.replace_strict({k: v for k, v in table.items() if "|" not in k and not k.startswith("age:")}, default=1.0, return_dtype=pl.Float64)
+    by_age = {k: v for k, v in table.items() if k.startswith("age:")}   # "age:28": the curve's value at that year of age (owner 2026-10-14:
+    if by_age:                                                          # a curve fitted to how far off we are, not three steps)
+        ages = sorted(int(k[4:]) for k in by_age)
+        key = pl.concat_str([pl.lit("age:"), pl.col("age_at_season").floor().clip(ages[0], ages[-1]).cast(pl.Int64).cast(pl.Utf8)])
+        fac = pl.coalesce([key.replace_strict(by_age, default=None, return_dtype=pl.Float64), fac])
+    by_pos = {k: v for k, v in table.items() if "|" in k}          # "RB|29+": a position's own cell, the band as the fallback
+    if by_pos and "position" in df.columns:
+        key = pl.concat_str([pl.col("position").cast(pl.Utf8), pl.lit("|"), band])
+        fac = pl.coalesce([key.replace_strict(by_pos, default=None, return_dtype=pl.Float64), fac])
+    return df.select(fac).to_series().fill_null(1.0).to_numpy().astype(float)
+
+
 def intrinsic_value(
     df: pl.DataFrame, rep: dict[str, float], horizons: Iterable[int], discount_rate: float = DEFAULT_DISCOUNT_RATE,
+    age_scale: dict[str, float] | None = None, age_scale_min_k: int = 1,
 ) -> pl.DataFrame:
     """Add ``h{k}_vorp_hat`` per horizon plus ``iv`` (discounted) and ``iv_undiscounted``.
 
     When ``h{k}_ppg_sigma`` is present (see ``career.HorizonModels.estimate_sigma``) the
     points above replacement are the expected excess under that spread; otherwise the plain
-    clipped point estimate."""
+    clipped point estimate. ``age_scale`` multiplies the points above replacement of the spans
+    k >= ``age_scale_min_k`` by the player's age-band factor (``age_scale_factors``)."""
     horizons = list(horizons)
     rep_arr = df.select(_rep_expr(rep)).to_series().to_numpy()
+    fac = age_scale_factors(df, age_scale)
     cols = []
     for k in horizons:
-        mu = df[f"h{k}_ppg_hat"].to_numpy().astype(float)
-        games = df[f"h{k}_games_hat"].to_numpy().astype(float)
-        if f"h{k}_ppg_sigma" in df.columns:
-            excess = expected_excess(mu, df[f"h{k}_ppg_sigma"].to_numpy(), rep_arr)
+        mu = df[f"h{k}_ppg_hat"].fill_null(0.0).to_numpy().astype(float)       # no projection = nothing to price, not NaN
+        games = df[f"h{k}_games_hat"].fill_null(0.0).to_numpy().astype(float)
+        if f"h{k}_ppg_excess" in df.columns:          # priced off the player's whole predictive distribution (BACKLOG 47)
+            excess = df[f"h{k}_ppg_excess"].fill_null(0.0).to_numpy().astype(float)
+        elif f"h{k}_ppg_sigma" in df.columns:
+            excess = expected_excess(mu, df[f"h{k}_ppg_sigma"].fill_null(0.0).to_numpy().astype(float), rep_arr)
         else:
             excess = np.maximum(mu - rep_arr, 0.0)
-        cols.append(pl.Series(f"h{k}_vorp_hat", excess * games))
+        cols.append(pl.Series(f"h{k}_vorp_hat", excess * games * (fac if k >= age_scale_min_k else 1.0)))
     out = df.with_columns(cols)
     return out.with_columns(
         pl.sum_horizontal([pl.col(f"h{k}_vorp_hat") * discount_weight(k, discount_rate) for k in horizons]).alias("iv"),
