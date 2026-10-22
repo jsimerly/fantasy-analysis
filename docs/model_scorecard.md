@@ -1,4 +1,4 @@
-# Model scorecard — as of 2026-10-14 (season 2026, week 5)
+# Model scorecard — as of 2026-10-22 (season 2026, week 6)
 
 *walk-forward: the model rebuilt with only what was known at the time, scored on what the players then delivered; KTC is the yardstick, never an input (the in-season model does read the providers' projections and preseason ADP since 2026-10-12; the career model the swap test validates reads neither); the unit of evidence is the test year, and the review of 2026-10-13 (docs/MODEL_REVIEW_2026-10-13.md) re-derived every number here.* Model: tabpfn stacked blend [base,career,injury,trend,situation,rookie,college].
 

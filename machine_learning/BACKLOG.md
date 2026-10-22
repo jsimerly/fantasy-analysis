@@ -2181,3 +2181,9 @@ t = 1.45) stays a tie.
     completeness check (the Tuesday-15:00-UTC cloud runs had the Monday game, so 20:00 local should); the page republish
     still needs a session; the in-season variants of item 55 (bags3 and the three after it) still owed a rerun under a
     budget.
+    **Outcome (2026-10-22):** the one-shot run exited 0 after 4 h 54 m (22:13 -> 03:08), every step published (the title
+    odds included this time); `pages/season=2026/week=6/run_date=2026-10-22/projections.json` 704 players / 393 priced,
+    no NaN; the seven page checks pass; the page published as v59. `page/checks/run_checks.sh` now exits 1 when a block
+    lacks its pass line and defaults to the export's path (a wrong relative path had made node fail on every check and
+    the filtered output showed seven empty blocks with exit 0; `pick_probe` prints "errors 0" without the colon, accepted).
+    The weekly task's first scheduled run: Tuesday 2026-10-27 20:00 local.
