@@ -2187,3 +2187,31 @@ t = 1.45) stays a tie.
     lacks its pass line and defaults to the export's path (a wrong relative path had made node fail on every check and
     the filtered output showed seven empty blocks with exit 0; `pick_probe` prints "errors 0" without the colon, accepted).
     The weekly task's first scheduled run: Tuesday 2026-10-27 20:00 local.
+
+57. **Blends (owner, 2026-10-25: "Lets try the blends and see if they outperform. Again performance of the model is #1").**
+    `scripts/blend_runs.py`: two runs' saved cohort frames combined column by column (the value columns and the
+    per-horizon projections; the band stays run A's), scored by `rescore` as a run of its own and paired with A; the
+    weight either mapped in-sample (`--grid`) or chosen walk-forward (`--walk`: cohort T's weight is the one that did
+    best on the cohorts complete by T, A alone where none is). **TabPFN + the trees: NO.** Partner `xgb_young_base2`
+    (the trees on the baseline's exact flags, 1 minute on the CPU; 0.590 / 0.527) against `tabpfn35_young_base2`
+    (0.626 / 0.493): the map is monotone -- every weight short of pure TabPFN is worse on both ordering and error
+    (0.8: 0.623 / 0.496; 0.5: 0.613 / 0.504) -- so the walk-forward weight stayed at 1 in all eight cohorts and the
+    candidate is the baseline. Their projected WAR correlates 0.97: the trees carry nothing TabPFN lacks. **Model +
+    market: a map only.** Within each priced cohort the rank blend w * rank(iv) + (1 - w) * rank(KTC) orders the
+    three-year realized value at 0.700 (model alone), 0.679 (market alone), 0.7095 at w = 0.6 (plateau 0.708-0.7095 for
+    w 0.5-0.8); 369 player-cohorts in three priced cohorts (2020-22), none with a complete priced predecessor, so there is
+    no walk-forward weight to adopt and a hundredth of Spearman sits inside the noise (the model-vs-market 95 % interval
+    is about -0.02 to +0.06). Not adopted; a same-price swap is unchanged by any weight. **Two harness fixes found on the
+    way.** (a) The two runs disagreed on realized WAR for a quarter of player-cohorts (up to 0.08 wins, the points
+    identical): the owner's league win curve is fitted on every standings snapshot, so eleven days of the season in
+    progress had moved it. The harness now fits the curve through the last complete season
+    (`league.curve_for_lineage(through_load_date)`) and stamps it into the regime; runs before today carry the drifting
+    curve, and `blend_runs` warns when the shared outcomes differ by more than 0.01 wins. (b) Two identical runs paired
+    at t = +-inf (zero spread) and the verdict read TRADE-OFF; `experiments.t_stat` gives 0 for identical runs (NO).
+    Verdict on the owner's question: the model's own ceiling is not in the learner -- ensembling with the trees is a
+    NO, the market adds at most a hundredth; the next gains are the data on the young end (next-season ADP, item 56)
+    and the games model for the old (the survival hazard, still owed).
+    The frozen curve on the lake today: weekly mean 133.1, spread 42.7 on 90 team-weeks through 2025 -- the standings
+    history starts mid-2025, so it is the normal-margin fallback (the logistic fit needs 300 team-weeks) and will stay
+    so until 2026 completes; the stamp now reads `...|curve=133.1/42.7`, and every run from today pairs only with runs
+    on that stamp.

@@ -68,15 +68,18 @@ def build_context(H: list[int], first_cohort: int, last_cohort: int | None, repl
     cohorts = list(range(first_cohort, last_cohort + 1))
     slots, teams = replacement.league_lineup(gcs_io.read_lake(SETTINGS_PATH))
     starters = replacement.starters_per_position(slots, teams)
-    regime = ex.regime_stamp(starters, gcs_io.lake_updated("silver/fantasy/fact_player_season/data.parquet"), base.height)
+    import league as lg
+    # the wins unit: the owner's league curve fitted on the standings through the last complete season only, so a run in
+    # October and a run in November turn the same realized points into the same realized wins (2026-10-25: the season in
+    # progress had moved every realized WAR by up to 0.08 wins between two runs eleven days apart); the curve is in the stamp
+    curve = lg.curve_for_lineage(replacement.PRIMARY_LINEAGE, through_load_date=f"{last + 1}-08-01")
+    regime = ex.regime_stamp(starters, gcs_io.lake_updated("silver/fantasy/fact_player_season/data.parquet"), base.height, curve)
     if draft_rows:
         print(f"draft rows: {matrix.height - base.height} (drafted skill players {int(matrix.filter(pl.col('is_draft_row'))['draft_year'].min())}-{int(matrix.filter(pl.col('is_draft_row'))['draft_year'].max())})")
     print(f"regime: {regime}")
     hist, xw = market.load_ktc_history(), market.load_crosswalk()
     ctx = fg.Context()
-    import league as lg
-    curve = lg.curve_for_lineage(replacement.PRIMARY_LINEAGE)
-    print(f"WAR units: owner's league curve, weekly mean {curve.mean_points:.1f}, spread {curve.sd_points:.1f} ({curve.n} team-weeks)")
+    print(f"WAR units: owner's league curve through {last}, weekly mean {curve.mean_points:.1f}, spread {curve.sd_points:.1f} ({curve.n} team-weeks)")
 
     spec = pool = None
     if "share" != replacement_kind or (realized_replacement and realized_replacement != "share"):

@@ -731,12 +731,16 @@ def age_band_scores(cohorts: pl.DataFrame, window: int = 3, discount_rate: float
     return pl.DataFrame(rows)
 
 
-def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:
+def regime_stamp(starters: dict, season_fact_written: str, rows: int, curve=None) -> str:
     """The measurement regime of a run: the lineup behind the replacement levels (starters per
-    position), when the season fact was written, and the matrix height. Same stamp = comparable
-    wins errors; a different lineup or data write changes the WAR scale of every player."""
+    position), when the season fact was written, the matrix height and, when given, the win curve
+    that turns points into wins (its weekly mean / spread). Same stamp = comparable wins errors; a
+    different lineup, data write or curve changes the WAR scale of every player."""
     st = ",".join(f"{k}={float(v):g}" for k, v in sorted(starters.items()))
-    return f"starters[{st}]|season_fact={season_fact_written or '?'}|rows={rows}"
+    stamp = f"starters[{st}]|season_fact={season_fact_written or '?'}|rows={rows}"
+    if curve is not None:
+        stamp += f"|curve={float(curve.mean_points):.1f}/{float(curve.sd_points):.1f}"
+    return stamp
 
 
 def regime_of(per_cohort: pl.DataFrame) -> str | None:
@@ -771,8 +775,16 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS, warn: bo
             continue
         mean, se = float(d.mean()), float(d.std() / np.sqrt(d.len()))
         rows.append({"metric": m, "a": float(j[m].mean()), "b": float(j[f"{m}_b"].mean()), "diff_b_minus_a": mean, "se": se,
-                     "t": mean / se if se > 0 else float("inf"), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
+                     "t": t_stat(mean, se), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
     return pl.DataFrame(rows)
+
+
+def t_stat(mean: float, se: float) -> float:
+    """mean / se; with no spread over cohorts, 0 when the runs are identical on the metric (not +-inf, which read a
+    tie as a TRADE-OFF: the blend that stayed at the baseline, 2026-10-25) and +-inf when every cohort differs alike."""
+    if se > 0:
+        return mean / se
+    return 0.0 if abs(mean) < 1e-12 else float(np.copysign(np.inf, mean))
 
 
 T_GAIN, T_NO_WORSE = 2.4, -1.0

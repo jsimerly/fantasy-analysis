@@ -76,6 +76,15 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - **Rescoring:** `--save-cohorts` on a run keeps its scored frames; `--rescore RUN --walk-scale |
   --fixed-scale QB=0.82 | --sigma band|none | --top-n` scores them again in minutes and pairs with the
   source. Use it for anything value-side.
+- **Blends** (`scripts/blend_runs.py`, owner 2026-10-25): two runs' saved frames combined column by column and scored
+  as a run (`--grid` the in-sample map, `--walk` the walk-forward weight that is the candidate, paired with run A);
+  `A --market` maps the model + KTC rank blend on the priced cohorts. Verdicts: TabPFN + the trees NO at every weight
+  (pure TabPFN best on both metrics; the walk-forward weight stayed at 1); model + market peaks at 0.6 on the model,
+  0.71 vs 0.70 alone, three priced cohorts, in-sample -- not adopted (BACKLOG 57).
+- **The wins unit is frozen within a year:** the harness fits the owner's league curve on the standings through the last
+  complete season (`curve_for_lineage(..., through_load_date)`), and the curve is in the regime stamp. The season in
+  progress had moved every realized WAR by up to 0.08 wins between runs eleven days apart; runs stamped before
+  2026-10-25 carry the drifting curve. Two identical runs pair at t = 0 (not +-inf) and read NO.
 
 ## Production (what the owner runs)
 - `weekly_refresh.py --preset production --device cuda`: TabPFN 3.5, the owner's feature set

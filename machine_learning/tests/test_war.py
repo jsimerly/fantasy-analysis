@@ -49,6 +49,16 @@ class TestWinCurve:
         tw = lg.team_weeks_from_standings(ts)
         assert tw["week_pts"].to_list() == [130.5, 69.5] and tw["win"].to_list() == [1, 0]   # the no-game snapshot is dropped
 
+    def test_the_curve_can_stop_at_the_last_complete_season(self, monkeypatch):
+        # six snapshots, five game weeks: three loaded before the cutoff, two from the season in progress
+        dates = ["2025-10-01", "2025-10-08", "2025-10-15", "2025-10-22", "2026-09-15", "2026-09-22"]
+        ts = pl.DataFrame({"league_id": ["L"] * 6, "roster_id": [1] * 6, "load_date": dates,
+                           "fpts": [100, 230, 330, 400, 520, 600], "wins": [1, 2, 3, 3, 4, 4], "losses": [0, 0, 0, 1, 1, 2]})
+        monkeypatch.setattr(lg, "load_team_state", lambda: ts)
+        assert lg.curve_for_lineage(None).n == 5                                             # every team-week: the production curve
+        frozen = lg.curve_for_lineage(None, through_load_date="2026-08-01")
+        assert frozen.n == 3 and frozen.mean_points == 100.0                                 # the harness: through the last complete season (130, 100, 70)
+
 
 class TestLineup:
     def test_exact_assignment_uses_flex_and_superflex_optimally(self):

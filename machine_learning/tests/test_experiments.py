@@ -165,6 +165,8 @@ def test_regime_stamp_and_pairing_warning(monkeypatch, capsys):
     import experiments as ex
     s = ex.regime_stamp({"WR": 34.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)
     assert s == "starters[QB=20,WR=34.5]|season_fact=2026-10-07T10:18:04Z|rows=15245"
+    from league import WinCurve
+    assert ex.regime_stamp({"QB": 20.0}, "w", 10, WinCurve.normal(120.25, 25.0)) == "starters[QB=20]|season_fact=w|rows=10|curve=120.2/25.0"
     same = pl.DataFrame({"cohort": [2015, 2016], "spearman_war_top": [0.5, 0.6], "mae_war_top": [1.0, 1.0], "regime": [s, s]})
     other = same.with_columns(pl.lit(ex.regime_stamp({"WR": 24.5, "QB": 20.0}, "2026-10-07T10:18:04Z", 15245)).alias("regime"))
     monkeypatch.setattr(ex, "load_run", lambda ref: {"a": same, "b": same, "c": other, "d": same.drop("regime")}[ref])
