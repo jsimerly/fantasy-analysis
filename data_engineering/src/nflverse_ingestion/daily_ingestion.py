@@ -174,6 +174,20 @@ DATASETS_CONFIG = {
     }
 }
 
+def disable_nflreadpy_cache() -> None:
+    """nflreadpy keeps every frame it downloads in an in-process cache by default (cache_mode ``memory``,
+    24 h), so one run of this job holds every dataset it has loaded at once, not just the one in flight.
+    The daily set fits in 1Gi (~120 MB of frames); on Tuesdays the 1.9M-row rankings history (~510 MB
+    in memory), the players and ids tables and then contracts (~80 MB, nested) came on top, ~720 MB of
+    cached frames plus the download bytes and write buffers, and the job was OOM-killed at 1Gi on
+    2026-10-13, -20 and -27, every time while loading contracts, the last entry of DATASETS_CONFIG, so
+    its snapshot froze at 2026-10-07. Each dataset is read once and written once, so the cache buys
+    nothing here: off, the frame is freed when fetch_and_save_dataset returns and the job's footprint
+    is the largest single dataset."""
+    from nflreadpy.config import update_config   # not exported at the package root; lazy so the test stub of nflreadpy still imports
+    update_config(cache_mode="off")
+
+
 def should_run_dataset(name: str, config: Dict, current_day: str, force_run: bool) -> bool:
     """
     Determines if a dataset should run based on schedule or force flag.
@@ -235,7 +249,9 @@ def main():
         if not bucket_name:
             print("ERROR: GCS_BUCKET_NAME not set")
             sys.exit(2)
-        
+
+        disable_nflreadpy_cache()
+
         # Time context
         now = datetime.now()
         current_season = nfl.get_current_season()

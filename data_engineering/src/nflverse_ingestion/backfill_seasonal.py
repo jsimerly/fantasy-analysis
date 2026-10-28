@@ -39,7 +39,7 @@ from datetime import datetime
 import nflreadpy as nfl
 from dotenv import load_dotenv
 
-from nflverse_ingestion.daily_ingestion import DATASETS_CONFIG
+from nflverse_ingestion.daily_ingestion import DATASETS_CONFIG, disable_nflreadpy_cache
 
 load_dotenv()
 
@@ -181,6 +181,7 @@ def main(argv: list[str] | None = None) -> None:
         print("ERROR: GCS_BUCKET_NAME not set")
         sys.exit(2)
     args = parse_args(argv)
+    disable_nflreadpy_cache()   # a season per loop step; cached, a 27-season backfill would hold them all (the Tuesday OOM of nflverse-daily)
     current_season = nfl.get_current_season()
     mode = f"explicit backfill of {args.dataset}" if args.dataset else "reconcile all seasonal datasets"
     print("=" * 70)

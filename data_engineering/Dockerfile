@@ -13,8 +13,12 @@ RUN uv sync --frozen --no-dev
 # Application code (all packages live under src/).
 COPY src/ ./src/
 
+# PYTHONUNBUFFERED: a job killed by the OOM watchdog (SIGKILL) never flushes Python's block-buffered
+# stdout, so the nflverse-daily kills of 2026-10 left no print lines in Cloud Logging at all and nobody
+# could see which dataset was in flight. Unbuffered, every line lands as it is printed.
 ENV PYTHONPATH=/app/src \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
 
 # Jobs override --command/--args at deploy time; default just prints the version.
 ENTRYPOINT ["python"]
