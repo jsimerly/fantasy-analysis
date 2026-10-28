@@ -2236,3 +2236,13 @@ t = 1.45) stays a tie.
     `ff-refresh-now` at 02:00. Tests: `tests/test_week_ready.py` (complete, unplayed, played but not in silver, the
     partial next week, done, two seasons, the CLI and an unreachable lake); the task script's four paths run with a
     stub in place of the GPU.
+    **2026-10-28, the morning after.** The 02:00 run finished exit 0 in 4 h 43 m (week 7 published 06:42 local; the
+    06:30 weekly trigger stood down on the busy check, as designed; page v60). (b) is fixed and deployed (PR #38, merged
+    on the owner's "merge what you need to"): nflreadpy's in-memory cache kept every frame of the run, ~1.3 GiB by the
+    time `contracts` parsed, so the cache is off in both nflverse jobs, the daily job runs at 2Gi (a forced run peaks
+    at 1355 MiB), the DE image prints unbuffered (a SIGKILL used to lose every line), and the quality check
+    `bronze.nflverse.tuesday_snapshots_fresh` (error, 8 days, all five Tuesday folders) replaces the contracts warn
+    nobody read. A forced execution (`FORCE_RUN=true`; the Tuesday gate reads the container's UTC weekday) landed every
+    snapshot, contracts for the first time since 10-07, and `fact_player_contract_season` was rebuilt; PR #39 takes the
+    check's known-open note off. The week-7 refresh ran on the 10-07 contracts snapshot: whether to re-run it on the
+    fresh one is the owner's call.
