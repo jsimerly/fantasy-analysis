@@ -10,6 +10,7 @@ from data_quality.core import Context, previous_from, run_checks, summarize
 from data_quality.suite import SUITE, suite
 
 TODAY = date(2026, 10, 9)
+TUESDAY_SNAPSHOTS = ("fantasy_rankings", "fantasy_rankings_history", "fantasy_player_ids", "nfl_players", "contracts")   # DATASETS_CONFIG's SCHEDULE_TUESDAY folders
 LEAGUES = [("1342619554194423808", "730630605066371072", 10), ("1314347683258843136", "1131624152349323264", 12)]
 
 
@@ -66,9 +67,11 @@ def healthy() -> tuple[dict, dict]:
     frames["rosters/today"] = pl.DataFrame(snap)
     frames["fact_roster_membership"] = pl.DataFrame(led)
     # bronze feeds
-    for prefix in ("bronze/ktc/dynasty/daily_load/", "bronze/ktc/redraft/daily_load/", "bronze/ktc/devy/daily_load/", "bronze/fantasycalc/values/daily/", "bronze/sleeper/drafts/drafts/", "bronze/nflverse/contracts/"):
+    for prefix in ("bronze/ktc/dynasty/daily_load/", "bronze/ktc/redraft/daily_load/", "bronze/ktc/devy/daily_load/", "bronze/fantasycalc/values/daily/", "bronze/sleeper/drafts/drafts/"):
         parts[prefix] = [(TODAY.isoformat(), prefix + "today")]
-    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity", "fantasy_rankings_history"):   # the model feeds: not landed yet (known open)
+    for ds in TUESDAY_SNAPSHOTS:                                                    # nflverse-daily's Tuesday-only snapshots, this week's in
+        parts[f"bronze/nflverse/{ds}/"] = [(TODAY.isoformat(), f"bronze/nflverse/{ds}/load_date={TODAY.isoformat()}/data.parquet")]
+    for ds in ("nextgen_stats_receiving", "nextgen_stats_rushing", "ff_opportunity"):   # the seasonal model feeds: not landed yet (known open)
         parts[f"bronze/nflverse/{ds}/"] = []
     frames["bronze/ktc/dynasty/daily_load/today"] = pl.DataFrame({"playerName": ["a"] * 500, "playerID": list(range(500)), "sf_value": [1.0] * 500, "oneqb_value": [1.0] * 500})
     frames["bronze/fantasycalc/values/daily/today"] = pl.DataFrame({"n_qb": [2] * 400 + [1] * 400, "n_teams": [12] * 800, "ppr": [1] * 800, "value": [1] * 800, "sleeper_id": ["1"] * 800})
@@ -274,6 +277,32 @@ def test_the_model_feeds_must_have_their_current_season_partition():
     parts["bronze/nflverse/fantasy_rankings_history/"] = [("2026-10-06", "bronze/nflverse/fantasy_rankings_history/load_date=2026-10-06/data.parquet")]
     assert run(frames, parts, only="model_feeds")["passed"].all()
 
+
+
+def test_the_tuesday_snapshots_froze_while_the_job_died_on_contracts():
+    """The lake as it was on 2026-10-27: nflverse-daily OOM-killed at 1Gi on contracts (the last Tuesday-only dataset) three Tuesdays
+    running, the four earlier Tuesday snapshots and every daily dataset landed, so nothing but the job's FAILED state said anything."""
+    from data_quality.suite import TUESDAY_SNAPSHOT_MAX_AGE_DAYS, _tuesday_snapshot_folders
+    assert _tuesday_snapshot_folders() == list(TUESDAY_SNAPSHOTS)                  # the check follows the job's registry
+    frames, parts = healthy()
+    tuesdays = ("2026-10-13", "2026-10-20", "2026-10-27")
+    for ds in TUESDAY_SNAPSHOTS:
+        parts[f"bronze/nflverse/{ds}/"] = [(d, f"bronze/nflverse/{ds}/load_date={d}/data.parquet") for d in tuesdays]
+    parts["bronze/nflverse/contracts/"] = [("2026-10-07", "bronze/nflverse/contracts/load_date=2026-10-07/data.parquet")]
+
+    def on(day):
+        return run_checks(suite("tuesday_snapshots"), Context(bucket="test", today=day, frames=frames, partitions=parts))
+
+    r = failed(on(date(2026, 10, 27)))["bronze.nflverse.tuesday_snapshots_fresh"]
+    assert "1 of 5 Tuesday snapshots stale: contracts: newest partition 2026-10-07 (20 days old)" in r["observed"] and r["value"] == 1
+    assert r["severity"] == "error" and r["effective_severity"] == "warn" and "FORCE_RUN" in r["known_open"]   # known open until the fixed job lands one
+    parts["bronze/nflverse/contracts/"].append(("2026-10-27", "bronze/nflverse/contracts/load_date=2026-10-27/data.parquet"))   # the fixed job ran
+    res = on(date(2026, 10, 27))
+    assert res["passed"].all() and "5 Tuesday snapshots within 8 days" in res["observed"][0]
+    assert TUESDAY_SNAPSHOT_MAX_AGE_DAYS == 8
+    assert on(date(2026, 11, 4))["passed"].all()                                   # a Tuesday run missed once: 8 days old the next Wednesday, still fine
+    r = failed(on(date(2026, 11, 5)))["bronze.nflverse.tuesday_snapshots_fresh"]   # 9 days: every snapshot is flagged, not only contracts
+    assert "5 of 5 Tuesday snapshots stale" in r["observed"] and r["value"] == 5
 
 
 def test_the_fftoday_history_must_hold_every_season_in_full():

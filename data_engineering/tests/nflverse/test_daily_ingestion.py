@@ -1,4 +1,7 @@
 """nflverse_ingestion/daily_ingestion.py: schedule gating + per-dataset save."""
+import sys
+import types
+
 import polars as pl
 import pytest
 
@@ -52,6 +55,21 @@ class TestRegistry:
     def test_contracts_is_a_weekly_snapshot(self):
         cfg = mod.DATASETS_CONFIG["contracts"]
         assert cfg["seasonal"] is False and cfg["schedule"] == mod.SCHEDULE_TUESDAY and cfg["folder"] == "contracts"
+
+    def test_the_tuesday_snapshots_are_the_five_the_quality_check_watches(self):
+        tuesday = [cfg["folder"] for cfg in mod.DATASETS_CONFIG.values() if cfg["schedule"] == mod.SCHEDULE_TUESDAY]
+        assert tuesday == ["fantasy_rankings", "fantasy_rankings_history", "fantasy_player_ids", "nfl_players", "contracts"]
+
+
+class TestNflreadpyCache:
+    def test_the_job_turns_the_in_memory_cache_off_before_loading(self, monkeypatch):
+        # nflreadpy's default cache kept every frame of the run alive: the Tuesday OOM at 1Gi (2026-10-13/20/27, contracts in flight)
+        calls = []
+        fake = types.ModuleType("nflreadpy.config")
+        fake.update_config = lambda **kw: calls.append(kw)
+        monkeypatch.setitem(sys.modules, "nflreadpy.config", fake)
+        mod.disable_nflreadpy_cache()
+        assert calls == [{"cache_mode": "off"}]
 
 
 class TestNextGenSlices:

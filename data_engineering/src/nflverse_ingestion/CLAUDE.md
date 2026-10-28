@@ -34,6 +34,12 @@ rest; it prints a summary and exits non-zero if any failed).
   that FantasyPros projections join onto.
 
 ## Gotchas
+- **nflreadpy caches every downloaded frame in memory by default** (24 h), so a job holds every dataset
+  it has loaded, not just the one in flight. `nflverse-daily` was OOM-killed at 1Gi every Tuesday in
+  2026-10 while loading `contracts` (the last entry) and its snapshot froze at 2026-10-07. The jobs call
+  `disable_nflreadpy_cache()` first; the daily job runs at 2Gi; the quality check
+  `bronze.nflverse.tuesday_snapshots_fresh` wants every Tuesday snapshot within 8 days. Note too that a
+  SIGKILL loses buffered stdout: the image sets `PYTHONUNBUFFERED=1` so a kill still shows the dataset.
 - **Canonical root is `bronze/nflverse/`** — both daily and the backfills write here, and silver reads
   here. (An earlier backfill wrote `bronze/nfl/…`; that's fixed — don't reintroduce the split root.)
 - **`depth_charts` has a `season=None` partition** — the loader didn't carry a season column. Watch for

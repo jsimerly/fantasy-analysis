@@ -185,9 +185,30 @@ def model_feeds(ctx):
     return x.fail(f"missing feeds: {missing}", len(missing)) if missing else x.ok("every model feed has its current-season partition", 0)
 
 
-@check("bronze.nflverse_contracts.snapshot_fresh", "bronze/nflverse/contracts", "warn", "the Over The Cap snapshot refreshes on Tuesdays; a stale one means fact_player_contract_season stops moving")
-def contracts_fresh(ctx):
-    return x.partition_fresh(ctx.partitions("bronze/nflverse/contracts/"), ctx.today, 10, "contracts")
+TUESDAY_SNAPSHOT_MAX_AGE_DAYS = 8     # a Tuesday snapshot is 7 days old when the next one lands; one day of slack for a late DAG
+
+
+def _tuesday_snapshot_folders() -> list[str]:
+    """The nflverse datasets nflverse-daily loads only on Tuesdays (``load_date`` partitions), read from the job's
+    own registry so the check follows the schedule: fantasy_rankings, fantasy_rankings_history, fantasy_player_ids,
+    nfl_players, contracts as of 2026-10."""
+    from nflverse_ingestion.daily_ingestion import DATASETS_CONFIG, SCHEDULE_TUESDAY
+    return [cfg["folder"] for cfg in DATASETS_CONFIG.values() if cfg["schedule"] == SCHEDULE_TUESDAY]
+
+
+@check("bronze.nflverse.tuesday_snapshots_fresh", "bronze/nflverse", "error",
+       "nflverse-daily was OOM-killed at 1Gi every Tuesday from 2026-10-13 while loading contracts, the last Tuesday-only dataset (nflreadpy's "
+       "in-memory cache held every frame of the run); the daily datasets and the earlier Tuesday snapshots had landed, so nothing in the lake "
+       "looked wrong while the contract snapshot (fact_player_contract_season, the model's contract group) froze at 2026-10-07",
+       known_open="contracts has no snapshot since 2026-10-07; clears with the first nflverse-daily run after the cache-off / 2Gi fix deploys "
+                  "(a FORCE_RUN=true execution, or Tuesday 2026-11-03 10:00 UTC), then remove this note")
+def nflverse_tuesday_snapshots(ctx):
+    folders = _tuesday_snapshot_folders()
+    per = [x.partition_fresh(ctx.partitions(f"bronze/nflverse/{f}/"), ctx.today, TUESDAY_SNAPSHOT_MAX_AGE_DAYS, f) for f in folders]
+    stale = [r for r in per if not r.passed]
+    if stale:
+        return x.fail(f"{len(stale)} of {len(folders)} Tuesday snapshots stale: " + "; ".join(r.observed for r in stale), len(stale))
+    return x.ok(f"{len(folders)} Tuesday snapshots within {TUESDAY_SNAPSHOT_MAX_AGE_DAYS} days: " + "; ".join(r.observed for r in per), 0)
 
 
 # ====================================================================== dims
