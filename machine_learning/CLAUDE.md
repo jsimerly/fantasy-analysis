@@ -99,14 +99,25 @@ file is the working guide for this folder; [README.md](README.md) has the longer
   watch its log. Never a background shell child (dies with the session). Time a preset end to end
   before scheduling it.
 - **The Tuesday run is the local Task Scheduler task `ff-weekly-refresh`** (owner, 2026-10-21: "a cron job locally
-  makes more sense right? Since the job runs local?"): Tuesdays 20:00 local, after the daily DAG (10:00 UTC) has the
-  Monday game; it wakes the PC and runs `scripts/weekly_refresh_task.cmd` → `weekly_refresh_task.sh`: the production
-  preset under a 6 h budget, then if that fails the orphans killed and the `--no-career-todate` fallback under 4 h; it
-  refuses to start over another GPU run. Logs under `_cache/logs/` — `weekly_refresh_task.log` (the script's lines, every
-  run appended) and one `production_<stamp>.log` per run, the file `run_status.py` takes. It runs only while the owner is
-  logged on (interactive token: no stored password). The week is the lake's latest (`current_season_week`: the max week
-  in the week table, no completeness check). The cloud job `ml-weekly-refresh` stays paused. A run now = the same
-  `.cmd` as a one-shot task. The page is not in it: republishing `projections.json` with the HTML needs a session.
+  makes more sense right? Since the job runs local?"; 2026-10-27: "lets get it so that we can grab the data as soon as
+  the week is over"): Tuesdays and Wednesdays 06:30 local with `--when-ready`. The week's last game reaches the lake
+  overnight — nflverse rebuilds its stats at 04:30 UTC after every game night and at 09:00 UTC daily, the daily DAG at
+  10:00 UTC carries them, silver has the Monday game by ~06:15 Eastern — and `scripts/week_ready.py` is the gate: the
+  newest week in `fact_player_week` complete in the schedule, every team that played with stats in silver, nothing under
+  `pages/season=S/week=W/` yet (exit 0 ready, 2 wait, 3 done). Not ready = checked every 20 min for up to 4 h, then
+  exit 2 and no run; the Wednesday trigger is the safety net for a late DAG or a postponed Monday game and exits at once
+  when the week is on the page. (The refresh itself has no completeness check: `current_season_week` is the max week in
+  the week table, which on a Friday is the week with Thursday's game alone — the gate is what keeps a partial week out.)
+  The task wakes the PC and runs `scripts/weekly_refresh_task.cmd --when-ready` → `weekly_refresh_task.sh`: the
+  production preset under a 6 h budget, then if that fails the orphans killed and the `--no-career-todate` fallback
+  under 4 h; it refuses to start over another GPU run. Logs under `_cache/logs/` — `weekly_refresh_task.log` (the
+  script's lines, every run appended) and one `production_<stamp>.log` per run, the file `run_status.py` takes. It runs
+  only while the owner is logged on (interactive token: no stored password; a locked screen is fine). Its trigger is a
+  plain local time: a `StartBoundary` written with a UTC offset (what the PowerShell cmdlets produce) is read as
+  "synchronize across time zones" and drifts an hour at the DST change — strip the offset after registering. The cloud
+  job `ml-weekly-refresh` stays paused. A run now = the same `.cmd` with no argument as the one-shot task
+  `ff-refresh-now`: it runs at once, whatever the lake says. The page is not in it: republishing `projections.json`
+  with the HTML needs a session.
 
 ## Where the numbers are
 - `BACKLOG.md` items 22 (bake-off), 36 (accuracy programme), 37-39 (in-season funnel), 40 (title

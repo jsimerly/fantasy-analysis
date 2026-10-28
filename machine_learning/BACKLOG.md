@@ -2215,3 +2215,24 @@ t = 1.45) stays a tie.
     history starts mid-2025, so it is the normal-margin fallback (the logistic fit needs 300 team-weeks) and will stay
     so until 2026 completes; the stamp now reads `...|curve=133.1/42.7`, and every run from today pairs only with runs
     on that stamp.
+
+58. **The refresh as soon as the week is over (owner, 2026-10-27: "lets get it so that we can grab the data as soon as
+    the week is over. Do our sources have this updated Monday night or Tuesday early morn").** Tuesday early morning.
+    nflverse rebuilds its player stats at 04:30 UTC after every game night (00:30 Eastern, the Monday game included)
+    and at 09:00 UTC every day; the daily DAG at 10:00 UTC takes them (2026-10-27: `player_stats` written 10:03,
+    `fact_player_week` 10:10, Dallas and Philadelphia in it), so silver has the week by ~06:15 Eastern. Sleeper's
+    projections are in the lake for all 18 weeks, rebuilt daily; KTC and FantasyCalc are daily at the DAG. The Tuesday
+    task moved from 20:00 to 06:30 and gained a gate, `scripts/week_ready.py` (the newest week complete in the
+    schedule, every team that played with stats in silver, nothing on the page yet: ready / wait / done), polled every
+    20 min for up to 4 h by `weekly_refresh_task.sh --when-ready`, with a Wednesday 06:30 trigger as the safety net
+    that exits at once once the week is published. The refresh had no completeness check at all: on a Friday the newest
+    week in the weekly fact is the one with Thursday's game alone. Found on the way: (a) the trigger the PowerShell
+    cmdlets write carries a UTC offset, which Task Scheduler reads as "synchronize across time zones" -- the 20:00 task
+    would have fired at 19:00 from November 3; both tasks now carry plain local times; (b) `nflverse-daily` is
+    out-of-memory-killed at 1 GiB every Tuesday (2026-10-13, -20, -27, both attempts), on the Tuesday-only datasets after
+    `player_stats`: `contracts`, the last in its list, has no snapshot since 2026-10-07 (the ID bridge and `nfl_players`
+    landed on 10-27) -- a data_engineering fix (memory, or contracts in its own job) with a freshness check in the
+    quality suite. Tonight's week-7 run was stopped 20 minutes in for the owner's GPU and queued as the one-shot
+    `ff-refresh-now` at 02:00. Tests: `tests/test_week_ready.py` (complete, unplayed, played but not in silver, the
+    partial next week, done, two seasons, the CLI and an unreachable lake); the task script's four paths run with a
+    stub in place of the GPU.
