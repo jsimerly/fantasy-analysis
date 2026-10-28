@@ -11,7 +11,7 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
 | --- | --- | --- |
 | `dim_leagues_meta.py` | `silver-dim-league-meta` | league identity + status/leg per season |
 | `dim_league_settings_scd2.py` | `silver-dim-league-settings` | SCD2 league "constitution" (scoring + rosters + settings) |
-| `dim_player_master.py` | `silver-dim-player-master` | player ID bridge + enrichment (Sleeper↔nflverse↔KTC) |
+| `dim_player_master.py` | `silver-dim-player-master` | player ID bridge + enrichment (Sleeper↔nflverse↔KTC); `fantasy_positions` = every position Sleeper lets the player fill, "/"-joined ("DB/WR" for a two-way player), which `fact_player_week` resolves the fantasy position from |
 | `dim_users.py` | `silver-dim-users` | Sleeper users + manual Google-Sheet enrichment |
 | `dim_franchise_meta.py` | `silver-dim-franchise-meta` | the franchise entity (lineage+roster) + owner |
 | `dim_dates.py` | `silver-dim-dates` | global daily spine 1999→2027 (nfl_season, nfl_phase, season/playoff flags) |
@@ -23,8 +23,8 @@ Build order / Cloud Run jobs are in [orchestration/README.md](../../../orchestra
 | `fact_team_season_strength.py` | `silver-fact-team-season-strength` | team x season: market rating (mean closing spread), total line, record, EPA/play, QB situation; current franchise codes. Same job also writes `fact_team_week_strength` (team x season x week, the same quantities to date + this week's line, for the in-season model) |
 | `fact_player_contract_season.py` | `silver-fact-player-contract-season` | player x season: the contract in force (cap share, guarantees, years left, rookie deal, cap number, position rank) from Over The Cap |
 | `fact_player_season.py` | `silver-fact-player-season` | player x season production from nflverse player stats (points on the primary scoring, games, the stat line, age, draft capital); the model's base table (T3) |
-| `fact_player_week.py` | `silver-fact-player-week` | player x week production (the in-season snapshots and the weekly replacement line read it) (T2) |
-| `fact_player_week_status.py` | `silver-fact-player-week-status` | player x week for every rostered skill player: played / inactive / injured, report status, snaps, touches (T3) |
+| `fact_player_week.py` | `silver-fact-player-week` | player x week production (the in-season snapshots and the weekly replacement line read it) (T2). The position is the FANTASY position: Sleeper's from `dim_players_master` (the primary position when it is QB / RB / WR / TE, else the first skill position in `fantasy_positions`, "DB/WR" for Travis Hunter) and only then nflverse's with FB -> RB — nflverse lists a two-way player at his defensive spot, so Hunter had no rows at all until 2026-10-13. The scoring league is the pinned lineage (`PRIMARY_LINEAGE_ID`), not "the lineage with the most settings rows" |
+| `fact_player_week_status.py` | `silver-fact-player-week-status` | player x week for every rostered skill player: played / inactive / injured, report status, snaps, touches (T3). The grid ends at the latest week any roster row or stat line carries, not the schedule's last week: an in-progress season's unplayed weeks were stamped `not_rostered` for everyone until 2026-10-13 (11,414 rows of 2026), which a whole-season reader takes as "cut for 13 weeks"; the quality check `fact.player_week_status.no_rows_past_production` guards it |
 | `fact_depth_chart_week.py` | `silver-fact-depth-chart-week` | team x week x player depth-chart rank for QB / RB / WR / TE / FB, 2001 on (T1) |
 | `fact_player_injury_week.py` | `silver-fact-player-injury-week` | player x week injury report rows, 2009 on (T1) |
 | `fact_college_player_season.py` | `silver-fact-college-player-season` | player x college season from CFBD (box score, usage, team SP+, dominator / breakout flags) + `dim_college_crosswalk` (yearly workflow) |

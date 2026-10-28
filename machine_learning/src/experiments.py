@@ -21,7 +21,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Iterable
 
 import numpy as np
 import re
@@ -358,7 +358,7 @@ def append_result(ledger: pl.DataFrame | None, summary: dict) -> pl.DataFrame:
 
 PRIMARY = "spearman_war_top"
 RUNS_PREFIX = ("experiments", "runs")
-PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top12", "share_abs_err",
+PAIRED_METRICS = ["spearman_war_top", "spearman_war_all", "top_decile_war_all", "mae_war_top", "bias_war_top", "bias_war_top12", "share_abs_err",
                   "ppg_pinball", "ppg_cover_2080", "ppg_skew", "mae_h1_train", "gap_h1"]
 
 
@@ -421,6 +421,163 @@ def walk_forward_scales(cohorts: pl.DataFrame, T: int, H: list[int], lo: float =
     return {pos: float(min(hi, max(lo, r_ / p_))) for pos, p_, r_ in g.iter_rows() if p_ and p_ > 0}
 
 
+age_band_expr = value.age_band_expr      # the bands of value.AGE_BANDS (<= 24 / 25-28 / 29+); the window scores' AGE_BANDS below share the cuts
+
+
+def age_scales_from_frames(cohorts: pl.DataFrame, top_n: int = 150, lo: float = 0.6, hi: float = 1.6, by_position: bool = False,
+                           shrink_n: float = 20.0, lo_pos: float = 0.4, curve: bool = False, recent: bool = False) -> dict[str, float]:
+    """The production table: realized / priced WAR by age band (and position with ``by_position``) on every cohort's own
+    top-``top_n``, clipped, with no shrinkage toward 1 (production prices seasons after the last test season, so every
+    cohort is a prior); a position's cell is still shrunk toward its band by n / (n + ``shrink_n``). ``recent`` adds the
+    four-band, recency-weighted, variance-shrunk steps of ``age_table_recent`` (they take precedence over the bands)."""
+    done = cohorts.filter(pl.col("realized_iv").is_not_null())
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    out = _age_scale_table(top, 1.0, lo, hi, by_position, shrink_n, lo_pos, curve)
+    if recent:
+        out.update(age_table_recent(top))             # the four variance-shrunk steps and their evidence (mean, se per band)
+        if curve:
+            out.update(age_curve_recent(top))         # ... replaced by the smooth variance-shrunk curve where both are asked for
+    return out
+
+
+def age_scale_table(run: str, top_n: int = 150, by_position: bool = False, curve: bool = False, recent: bool = False) -> dict[str, float]:
+    """``age_scales_from_frames`` on a run's saved cohort frames (``--save-cohorts``), for the weekly refresh."""
+    return age_scales_from_frames(load_cohorts(run), top_n, by_position=by_position, curve=curve, recent=recent)
+
+
+AGE_CURVE_RANGE = (21, 36)        # the curve's years of age; outside, the end value
+AGE_CURVE_KERNEL = 1.5            # years: the Gaussian kernel of the smoother
+
+
+def age_curve(top: pl.DataFrame, w: float, lo: float, hi: float, kernel: float = AGE_CURVE_KERNEL) -> dict[str, float]:
+    """The level as a smooth curve over age (owner, 2026-10-14: "a band or curve custom fit to how far we're off"):
+    realized / priced WAR per year of age on the top set, kernel-smoothed over neighbouring years with the priced wins as
+    the weights (no parametric form to get wrong; the raw curve runs ~1.3 at 22 to ~0.75 at 33 and flat after), shrunk
+    toward 1 by ``w`` and clipped. Keys ``"age:NN"``; ``value.age_scale_factors`` resolves a row's floor(age)."""
+    a0, a1 = AGE_CURVE_RANGE
+    g = (top.with_columns(pl.col("age_at_season").floor().clip(a0, a1).cast(pl.Int64).alias("_a"))
+            .group_by("_a").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")))
+    ages = g["_a"].to_numpy().astype(float); p = g["p"].to_numpy().astype(float); r = g["r"].to_numpy().astype(float)
+    out = {}
+    for a in range(a0, a1 + 1):
+        kw = np.exp(-0.5 * ((ages - a) / kernel) ** 2)
+        pp, rr = float((kw * p).sum()), float((kw * r).sum())
+        if pp <= 0:
+            continue
+        out[f"age:{a}"] = float(min(hi, max(lo, 1.0 + w * (rr / pp - 1.0))))
+    return out
+
+
+AGE_BANDS4 = (("<=24", 0.0, 25.0), ("25-28", 25.0, 29.0), ("29-31", 29.0, 32.0), ("32+", 32.0, 200.0))
+
+
+def age_table_recent(top: pl.DataFrame, recency: float = 0.8, tau: float = 0.15, lo: float = 0.4, hi: float = 1.6) -> dict[str, float]:
+    """The level by four age bands, fitted to what the recent test seasons say and shrunk by each band's own
+    season-to-season variance (owner, 2026-10-14: "if we know how far off we are at certain bands and the variance of those
+    bands, we can build that into the model"). Per band: the per-season ratios realized / priced, their recency-weighted
+    mean m (weights ``recency`` ** (latest season - season)) and standard error se; the factor is 1 + (m - 1) x tau^2 /
+    (tau^2 + se^2), a prior of sd ``tau`` on the true offset -- a band whose level swings between seasons (29-31: 0.46 to
+    1.39) is corrected little, a stable one (under 25: 1.15-1.26 every season) in full. Delivered as ``age:NN`` steps so
+    ``value.age_scale_factors`` needs nothing new."""
+    latest = int(top["cohort"].max())
+    band4 = pl.when(pl.col("age_at_season") < 25).then(pl.lit("<=24")).when(pl.col("age_at_season") < 29).then(pl.lit("25-28")) \
+              .when(pl.col("age_at_season") < 32).then(pl.lit("29-31")).otherwise(pl.lit("32+"))
+    per = (top.with_columns(band4.alias("_b4")).group_by("cohort", "_b4")
+              .agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")).filter(pl.col("p") > 0)
+              .with_columns((pl.col("r") / pl.col("p")).alias("ratio"), (recency ** (latest - pl.col("cohort"))).alias("w")))
+    factors = {}
+    for b, lo_a, hi_a in AGE_BANDS4:
+        g = per.filter(pl.col("_b4") == b)
+        if g.height < 2:
+            continue
+        x, wt = g["ratio"].to_numpy().astype(float), g["w"].to_numpy().astype(float)
+        m = float((wt * x).sum() / wt.sum())
+        var = float((wt * (x - m) ** 2).sum() / wt.sum()); n_eff = float(wt.sum() ** 2 / (wt ** 2).sum())
+        se2 = var / max(n_eff, 1.0)
+        factor = 1.0 + (m - 1.0) * tau ** 2 / (tau ** 2 + se2)
+        factors[b] = (float(min(hi, max(lo, factor))), m, float(np.sqrt(se2)))
+    a0, a1 = AGE_CURVE_RANGE
+    out = {}
+    for a in range(a0, a1 + 1):
+        for b, lo_a, hi_a in AGE_BANDS4:
+            if lo_a <= a < hi_a and b in factors:
+                out[f"age:{a}"] = factors[b][0]
+    out.update({f"{b}_mean": round(v[1], 3) for b, v in factors.items()})       # the evidence beside the factor, for the metrics
+    out.update({f"{b}_se": round(v[2], 3) for b, v in factors.items()})
+    return out
+
+
+def age_curve_recent(top: pl.DataFrame, recency: float = 0.8, tau: float = 0.15, lo: float = 0.4, hi: float = 1.6,
+                     kernel: float = AGE_CURVE_KERNEL) -> dict[str, float]:
+    """The curve with the variance built in (owner, 2026-10-14: "why use banding and not a curve?"): per test season,
+    the level by year of age smoothed with the kernel (neighbouring years pool, so every age carries enough weight);
+    then at each age the recency-weighted mean across seasons and its standard error, and the same shrinkage as
+    ``age_table_recent`` -- 1 + (m - 1) tau^2 / (tau^2 + se^2). No step edges, and the correction at every age is as
+    large as the evidence at that age allows. Keys ``age:NN``."""
+    latest = int(top["cohort"].max())
+    a0, a1 = AGE_CURVE_RANGE
+    per = (top.with_columns(pl.col("age_at_season").floor().clip(a0, a1).cast(pl.Int64).alias("_a"))
+              .group_by("cohort", "_a").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r")))
+    seasons = sorted(per["cohort"].unique().to_list())
+    out = {}
+    for a in range(a0, a1 + 1):
+        ratios, wts = [], []
+        for T in seasons:
+            g = per.filter(pl.col("cohort") == T)
+            kw = np.exp(-0.5 * ((g["_a"].to_numpy().astype(float) - a) / kernel) ** 2)
+            pp, rr = float((kw * g["p"].to_numpy()).sum()), float((kw * g["r"].to_numpy()).sum())
+            if pp > 0:
+                ratios.append(rr / pp); wts.append(recency ** (latest - T))
+        if len(ratios) < 2:
+            continue
+        x, wt = np.asarray(ratios), np.asarray(wts)
+        m = float((wt * x).sum() / wt.sum())
+        var = float((wt * (x - m) ** 2).sum() / wt.sum()); n_eff = float(wt.sum() ** 2 / (wt ** 2).sum())
+        se2 = var / max(n_eff, 1.0)
+        out[f"age:{a}"] = float(min(hi, max(lo, 1.0 + (m - 1.0) * tau ** 2 / (tau ** 2 + se2))))
+    return out
+
+
+def _age_scale_table(top: pl.DataFrame, w: float, lo: float, hi: float, by_position: bool, shrink_n: float, lo_pos: float,
+                     curve: bool = False) -> dict[str, float]:
+    """The table from a banded top set: band -> scale, and with ``by_position`` "POS|band" -> scale, each cell shrunk
+    toward its band by n / (n + ``shrink_n``) (the 29+ running backs are 28 player-cohorts over eight seasons), then
+    toward 1 by ``w`` and clipped (the position cells down to ``lo_pos``: 29+ running backs realize a third of their price).
+    With ``curve`` the smooth per-year curve (``age_curve``) is added and takes precedence over the bands."""
+    g = top.group_by("_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"))
+    band = {b: r_ / p_ for b, p_, r_ in g.iter_rows() if b is not None and p_ and p_ > 0}
+    out = {b: float(min(hi, max(lo, 1.0 + w * (ratio - 1.0)))) for b, ratio in band.items()}
+    if curve:
+        out.update(age_curve(top, w, lo, hi))
+    if by_position:
+        gp = top.group_by("position", "_ab").agg(pl.col("war").sum().alias("p"), pl.col("realized_war").sum().alias("r"), pl.len().alias("n"))
+        for pos, b, p_, r_, n_ in gp.iter_rows():
+            if b not in band or not p_ or p_ <= 0:
+                continue
+            cell = (n_ * (r_ / p_) + shrink_n * band[b]) / (n_ + shrink_n)
+            out[f"{pos}|{b}"] = float(min(hi, max(lo_pos, 1.0 + w * (cell - 1.0))))
+    return out
+
+
+def walk_forward_age_scales(cohorts: pl.DataFrame, T: int, H: list[int], top_n: int = 150, lo: float = 0.6, hi: float = 1.6,
+                            prior_cohorts: float = 1.0, by_position: bool = False, shrink_n: float = 20.0, lo_pos: float = 0.4,
+                            curve: bool = False) -> dict[str, float]:
+    """Per-age-band value scale for cohort ``T`` from the cohorts whose outcomes are complete by then: realized WAR over
+    projected WAR by band on each complete cohort's own top-``top_n`` by projected WAR (the players a manager weighs),
+    pooled, shrunk toward 1 by n / (n + ``prior_cohorts``) and clipped to [lo, hi]. The age gradient of the review
+    (2026-10-13, C1: under-25s realize ~1.3x their price, 29+ ~0.8x) corrected walk-forward (owner, 2026-10-14).
+    ``by_position`` adds a cell per position and band (owner, 2026-10-14: "a curve by position"; the 29+ gradient is a
+    running-back story, 0.32, against 0.84 for quarterbacks). Empty when no earlier cohort is complete (scale 1)."""
+    done = cohorts.filter((pl.col("cohort") + max(H) <= T) & pl.col("realized_iv").is_not_null())
+    if done.height == 0:
+        return {}
+    top = (done.filter(pl.col("war").rank(descending=True, method="ordinal").over("cohort") <= top_n)
+               .with_columns(age_band_expr().alias("_ab")))
+    w = top["cohort"].n_unique() / (top["cohort"].n_unique() + prior_cohorts)
+    return _age_scale_table(top, w, lo, hi, by_position, shrink_n, lo_pos, curve)
+
+
 BAND_TO_SIGMA = 1.6832          # q80 - q20 of a normal is 2 x 0.8416 sigma
 SIGMA_FLOOR = 1.0               # ppg: a projection is never treated as certain (career.predict's quantile floor)
 
@@ -434,8 +591,10 @@ def apply_sigma_mode(f: pl.DataFrame, H: list[int], sigma_mode: str | None) -> p
         return f
     if sigma_mode == "none":
         return f.drop([c for c in f.columns if c.endswith("_ppg_sigma")])
+    if sigma_mode == "dist":
+        return f                                   # rescore prices it with distributional_excess (it needs rep)
     if sigma_mode != "band":
-        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band' or 'none'")
+        raise ValueError(f"sigma_mode {sigma_mode!r}: None, 'band', 'dist' or 'none'")
     cols = []
     for k in H:
         lo, hi = f"h{k}_ppg_q20", f"h{k}_ppg_q80"
@@ -444,9 +603,23 @@ def apply_sigma_mode(f: pl.DataFrame, H: list[int], sigma_mode: str | None) -> p
     return f.with_columns(cols)
 
 
+def distributional_excess(df: pl.DataFrame, H: list[int], rep: dict[str, float], grid: tuple[float, ...] = career.QUANTILE_GRID) -> pl.DataFrame:
+    """``h{k}_ppg_excess`` = E[max(X - rep, 0)] per player from his predictive quantiles on ``grid`` (equal-probability
+    midpoints: the mean of the clipped excess over them integrates the distribution, its skew included -- the
+    breakout tail a normal spread under-counts). A horizon whose grid is incomplete is left unpriced (no column)."""
+    rep_e = pl.col("position").replace_strict(rep, default=0.0, return_dtype=pl.Float64)
+    cols = []
+    for k in H:
+        names = [f"h{k}_ppg_{career.q_name(q)}" for q in grid]
+        if all(n in df.columns for n in names):
+            cols.append((pl.sum_horizontal([pl.max_horizontal(pl.col(n).cast(pl.Float64) - rep_e, pl.lit(0.0)) for n in names]) / len(names)).alias(f"h{k}_ppg_excess"))
+    return df.with_columns(cols) if cols else df
+
+
 def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[str, float] | None = None, walk_scale: bool = False,
             src_per_cohort: pl.DataFrame | None = None, sigma_mode: str | None = None,
-            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None) -> tuple[pl.DataFrame, dict]:
+            rep_for: Callable[[int], dict[str, float]] | None = None, curve=None, walk_age_scale: bool = False,
+            collect: list | None = None, age_by_position: bool = False, age_curve: bool = False) -> tuple[pl.DataFrame, dict]:
     """Score saved cohort frames again under a value-side change: ``fixed_scale`` (per-position
     multipliers on iv / war / par), ``walk_scale`` (``walk_forward_scales`` per cohort), a
     ``sigma_mode`` (``apply_sigma_mode``; the value and WAR columns are rebuilt from the projections
@@ -464,7 +637,12 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
             import war as _war
             from league import WinCurve, OWNER_CURVE_FALLBACK
             rep = rep_for(T)
-            f = apply_sigma_mode(f, H, sigma_mode)
+            if sigma_mode == "dist":
+                f = distributional_excess(f.drop([c for c in f.columns if c.endswith("_ppg_excess")]), H, rep)
+                if not any(f"h{k}_ppg_excess" in f.columns for k in H):
+                    raise ValueError("sigma_mode 'dist' needs the quantile grid in the saved frames: run the source with --quantile-grid")
+            else:
+                f = apply_sigma_mode(f, H, sigma_mode)
             f = value.intrinsic_value(f, rep, H, cfg.discount_rate)
             f = _war.wins_above_replacement(f, rep, curve or WinCurve.normal(*OWNER_CURVE_FALLBACK), _war.career_components(H), cfg.discount_rate)
         scales = dict(fixed_scale or {})
@@ -473,6 +651,12 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         if scales:
             sc = pl.col("position").replace_strict({k: float(v) for k, v in scales.items()}, default=1.0, return_dtype=pl.Float64)
             f = f.with_columns([(pl.col(c) * sc).alias(c) for c in SCALE_COLS if c in f.columns])
+        ascales = walk_forward_age_scales(cohorts, T, H, top_n=cfg.top_n, by_position=age_by_position, curve=age_curve) if walk_age_scale else {}
+        if ascales:                               # the age-band level correction (C1), walk-forward like the positional one; the value
+            fac = value.age_scale_factors(f, ascales)   # layer resolves both the band keys and the "POS|band" cells
+            f = f.with_columns([pl.Series(c, f[c].fill_null(0.0).to_numpy().astype(float) * fac) for c in SCALE_COLS if c in f.columns])
+        if collect is not None:
+            collect.append(f)
         fit = {}
         if src_per_cohort is not None and T in src_per_cohort["cohort"].to_list():
             r0 = src_per_cohort.filter(pl.col("cohort") == T).to_dicts()[0]
@@ -480,18 +664,83 @@ def rescore(cohorts: pl.DataFrame, cfg: "ExperimentConfig", fixed_scale: dict[st
         row = score_cohort(f, cfg, H, T, fit)
         for pos, v in scales.items():
             row[f"scale_{pos}"] = v
+        for b, v in ascales.items():
+            row[f"age_scale_{b}"] = v
         rows.append(row)
     per_cohort = pl.DataFrame(rows)
     groups = fg.resolve(cfg.groups)
     return per_cohort, summarize(per_cohort, cfg, groups, fg.feature_columns(groups))
 
 
-def regime_stamp(starters: dict, season_fact_written: str, rows: int) -> str:
+def window_scores(cohorts: pl.DataFrame, windows: Iterable[int] = (3, 5, 7), discount_rate: float = value.DEFAULT_DISCOUNT_RATE,
+                  top_n: int = 150) -> pl.DataFrame:
+    """The career projection scored over several horizons from ONE run's saved cohort frames (BACKLOG 49): for window w,
+    projected WAR = the discounted sum of the run's own per-season ``war_k`` for k <= w, realized = the same sum of
+    ``war_real_k``, on the players whose seasons 1..w are all observable (a window is scored only on the cohorts where
+    it is complete). Per (cohort, window): ordering and wins error among the top ``top_n`` by projected window WAR,
+    bias, the market's ordering on the priced players, and realized / priced by position."""
+    rows = []
+    for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
+        f = cohorts.filter(pl.col("cohort") == T)
+        for w in windows:
+            ks = list(range(1, w + 1))
+            need = [f"war_{k}" for k in ks] + [f"war_real_{k}" for k in ks] + [f"h{k}_observable" for k in ks]
+            if not all(c in f.columns for c in need):
+                continue
+            g = f.filter(pl.all_horizontal([pl.col(f"h{k}_observable") for k in ks]))
+            if g.height < 30:
+                continue
+            g = g.with_columns(pl.sum_horizontal([pl.col(f"war_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_p"),
+                               pl.sum_horizontal([pl.col(f"war_real_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_r"))
+            top = g.sort("_p", descending=True).head(top_n)
+            p_, r_ = top["_p"].to_numpy().astype(float), top["_r"].to_numpy().astype(float)
+            row = {"cohort": T, "window": w, "n": g.height, "spearman_top": value.spearman(p_, r_), "mae_top": float(np.mean(np.abs(r_ - p_))),
+                   "bias_top": float(np.mean(r_ - p_)), "spearman_all": value.spearman(g["_p"].to_numpy().astype(float), g["_r"].to_numpy().astype(float))}
+            if "ktc_value" in g.columns:
+                pr = g.filter(pl.col("ktc_value").is_not_null())
+                if pr.height >= 20:
+                    row["spearman_model_priced"] = value.spearman(pr["_p"].to_numpy().astype(float), pr["_r"].to_numpy().astype(float))
+                    row["spearman_ktc_priced"] = value.spearman(pr["ktc_value"].to_numpy().astype(float), pr["_r"].to_numpy().astype(float))
+            for pos, pp, rr in g.group_by("position").agg(pl.col("_p").sum(), pl.col("_r").sum()).iter_rows():
+                row[f"ratio_{pos}"] = float(rr / pp) if pp else None
+            rows.append(row)
+    return pl.DataFrame(rows)
+
+
+AGE_BANDS = (("<=24", 0.0, 24.99), ("25-28", 25.0, 28.99), ("29+", 29.0, 99.0))
+
+
+def age_band_scores(cohorts: pl.DataFrame, window: int = 3, discount_rate: float = value.DEFAULT_DISCOUNT_RATE,
+                    bands=AGE_BANDS) -> pl.DataFrame:
+    """The career projection by the player's age at the cohort row (BACKLOG 50: are young and old players the weak spot?):
+    per (cohort, band), window-``window`` projected vs realized WAR on the players with every season observable --
+    ordering among those projected above zero, bias, and realized / priced."""
+    rows = []
+    ks = list(range(1, window + 1))
+    for T in sorted(int(t) for t in cohorts["cohort"].unique().to_list()):
+        f = cohorts.filter((pl.col("cohort") == T) & pl.all_horizontal([pl.col(f"h{k}_observable") for k in ks]))
+        f = f.with_columns(pl.sum_horizontal([pl.col(f"war_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_p"),
+                           pl.sum_horizontal([pl.col(f"war_real_{k}").fill_null(0.0) * value.discount_weight(k, discount_rate) for k in ks]).alias("_r"))
+        for name, lo, hi in bands:
+            g = f.filter((pl.col("age_at_season") >= lo) & (pl.col("age_at_season") <= hi) & (pl.col("_p") > 0))
+            if g.height < 20:
+                continue
+            pp, rr = g["_p"].to_numpy().astype(float), g["_r"].to_numpy().astype(float)
+            rows.append({"cohort": T, "band": name, "n": g.height, "spearman": value.spearman(pp, rr), "mae": float(np.mean(np.abs(rr - pp))),
+                         "bias": float(np.mean(rr - pp)), "ratio": float(rr.sum() / pp.sum()) if pp.sum() else None})
+    return pl.DataFrame(rows)
+
+
+def regime_stamp(starters: dict, season_fact_written: str, rows: int, curve=None) -> str:
     """The measurement regime of a run: the lineup behind the replacement levels (starters per
-    position), when the season fact was written, and the matrix height. Same stamp = comparable
-    wins errors; a different lineup or data write changes the WAR scale of every player."""
+    position), when the season fact was written, the matrix height and, when given, the win curve
+    that turns points into wins (its weekly mean / spread). Same stamp = comparable wins errors; a
+    different lineup, data write or curve changes the WAR scale of every player."""
     st = ",".join(f"{k}={float(v):g}" for k, v in sorted(starters.items()))
-    return f"starters[{st}]|season_fact={season_fact_written or '?'}|rows={rows}"
+    stamp = f"starters[{st}]|season_fact={season_fact_written or '?'}|rows={rows}"
+    if curve is not None:
+        stamp += f"|curve={float(curve.mean_points):.1f}/{float(curve.sd_points):.1f}"
+    return stamp
 
 
 def regime_of(per_cohort: pl.DataFrame) -> str | None:
@@ -526,11 +775,20 @@ def paired(ref_a: str, ref_b: str, metrics: list[str] = PAIRED_METRICS, warn: bo
             continue
         mean, se = float(d.mean()), float(d.std() / np.sqrt(d.len()))
         rows.append({"metric": m, "a": float(j[m].mean()), "b": float(j[f"{m}_b"].mean()), "diff_b_minus_a": mean, "se": se,
-                     "t": mean / se if se > 0 else float("inf"), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
+                     "t": t_stat(mean, se), "b_wins": int((d > 0).sum()), "cohorts": int(d.len())})
     return pl.DataFrame(rows)
 
 
+def t_stat(mean: float, se: float) -> float:
+    """mean / se; with no spread over cohorts, 0 when the runs are identical on the metric (not +-inf, which read a
+    tie as a TRADE-OFF: the blend that stayed at the baseline, 2026-10-25) and +-inf when every cohort differs alike."""
+    if se > 0:
+        return mean / se
+    return 0.0 if abs(mean) < 1e-12 else float(np.copysign(np.inf, mean))
+
+
 T_GAIN, T_NO_WORSE = 2.4, -1.0
+LEVEL_SLACK = 0.02                        # wins: a candidate whose top-150 bias moves further from zero by more than this, with an error gain, is flagged (B3)
 
 
 def verdict(table: pl.DataFrame) -> str:
@@ -549,9 +807,13 @@ def verdict(table: pl.DataFrame) -> str:
     t_order, t_err = -o["t"], e["t"]
     gain_o, gain_e = t_order >= T_GAIN, t_err >= T_GAIN
     worse_o, worse_e = t_order < T_NO_WORSE, t_err < T_NO_WORSE
-    if (gain_o and not worse_e) or (gain_e and not worse_o):
+    # the level (review 2026-10-13, B3; the owner made it part of the rule 2026-10-14): MAE on a zero-inflated target rewards
+    # shrinkage, so an error gain whose top-150 level moves further from zero does not adopt on its own
+    lv = rows.get("bias_war_top")
+    level_worse = lv is not None and abs(lv["a"]) > abs(lv["b"]) + LEVEL_SLACK
+    if (gain_o and not worse_e) or (gain_e and not worse_o and not level_worse):
         state = "ADOPT"
-    elif (gain_o and worse_e) or (gain_e and worse_o):
+    elif (gain_o and worse_e) or (gain_e and worse_o) or (gain_e and level_worse):
         state = "TRADE-OFF (owner's call)"
     else:
         state = "NO"
@@ -563,6 +825,11 @@ def verdict(table: pl.DataFrame) -> str:
         if "ppg_cover_2080" in rows:
             c = rows["ppg_cover_2080"]
             stats += f"; 20-80 coverage A {c['a']:.2f} vs B {c['b']:.2f} (0.60 = calibrated)"
+    if lv is not None:                        # bias = realized - projected on the top 150: + means the projections run low
+        stats += f" | level (bias, top 150, + = projections low) A {lv['a']:+.3f} vs B {lv['b']:+.3f}"
+        if gain_e and level_worse:
+            stats += (f" -- the error gain comes with the candidate's level moving further from zero (|{lv['a']:.3f}| vs |{lv['b']:.3f}|): "
+                      "an MAE gain by shrinkage is not a better projection; read realized / priced on the fixed set (scripts/age_gate.py)")
     if "gap_h1" in rows:                      # the overfitting read: out-of-sample minus in-sample season-points error next year
         g = rows["gap_h1"]
         stats += f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts (in-sample A {rows['mae_h1_train']['a']:.1f} vs B {rows['mae_h1_train']['b']:.1f})" if "mae_h1_train" in rows else f" | fit: train-test gap h1 A {g['a']:.1f} vs B {g['b']:.1f} pts"
@@ -570,8 +837,11 @@ def verdict(table: pl.DataFrame) -> str:
     dips = ", ".join(n for n, w in (("ordering", worse_o), ("wins error", worse_e)) if w)
     if dips:
         why += f"; {dips} worse"
+    if level_worse:
+        why += "; level further from zero"
     return (f"co-primary verdict (A = candidate vs B = baseline): {state} | {stats} | {why}"
-            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}")
+            f" | rule: a gain past t = {T_GAIN} on either with the other above t = {T_NO_WORSE}; an error gain alone does not adopt "
+            f"when the top-150 level moves further from zero by more than {LEVEL_SLACK} wins")
 
 
 def leaderboard(ledger: pl.DataFrame, horizon: int | None = None, cohorts: str | None = None) -> pl.DataFrame:

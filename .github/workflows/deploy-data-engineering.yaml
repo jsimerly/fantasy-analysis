@@ -127,6 +127,8 @@ jobs:
             # average draft position by season (FFC 2009+, MFL 2011+): yearly, run by hand after Labor Day
             # (ADP_SEASONS=current) or once with ADP_SEASONS=2009-2026 for the backfill; the model's preseason group
             ["adp-yearly"]="adp_ingestion.backfill:512Mi:1:30m"
+            # the same module daily in the DAG's bronze tier with ADP_SEASONS=live (set below): next season's ADP as soon as it is published
+            ["adp-daily"]="adp_ingestion.backfill:512Mi:1:30m"
             ["silver-fact-college-player-season"]="silver_fantasy.fact_college_player_season:2Gi:1:30m"
             # standalone daily job (not in the DAG): in-season FantasyPros projection capture;
             # self-gates to the NFL season, triggered by its own scheduler (below).
@@ -153,6 +155,8 @@ jobs:
           #   echo -n "<key>" | gcloud secrets create cfbd-api-key --data-file=- --project fantasy-football-473418
           #   gcloud secrets add-iam-policy-binding cfbd-api-key --member=serviceAccount:624985976737-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor --project fantasy-football-473418
           # Until it exists this step only warns, so the rest of the deploy is unaffected.
+          gcloud run jobs update adp-daily --region=us-central1 --update-env-vars=ADP_SEASONS=live --project=fantasy-football-473418
+
           gcloud run jobs update cfbd-backfill             --region=us-central1             --update-env-vars=CFBD_SEASONS=last             --set-secrets=CFBD_API_KEY=cfbd-api-key:latest             --project=fantasy-football-473418             || echo "WARNING: cfbd-backfill not configured (is the Secret Manager secret cfbd-api-key created?)"
 
       # Standalone daily scheduler for the in-season FantasyPros capture (the job self-gates

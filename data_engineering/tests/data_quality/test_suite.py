@@ -79,17 +79,31 @@ def healthy() -> tuple[dict, dict]:
     for lg, _, _ in LEAGUES:
         frames[f"bronze/sleeper/transactions/transactions/daily/league_id={lg}/data.parquet"] = pl.DataFrame({"created": [int(datetime(2026, 10, 5).timestamp() * 1000)]})
     # production facts
-    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5, "season": [2026] * 5, "week": [1, 2, 3, 4, 5], "game_date": [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)]})
+    game_dates = [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)]
+    # two players on the two teams of each week's one scheduled game: the latest week is complete when both teams have a stat line
+    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5 + ["p2"] * 5, "season": [2026] * 10, "week": [1, 2, 3, 4, 5] * 2,
+                                               "team": ["KC"] * 5 + ["BUF"] * 5, "game_date": game_dates * 2})
+    frames["bronze/nflverse/schedules/season=2026/data.parquet"] = pl.DataFrame({"season": [2026] * 5, "game_type": ["REG"] * 5, "week": [1, 2, 3, 4, 5],
+                                                                                 "gameday": [d.isoformat() for d in game_dates], "home_team": ["KC"] * 5, "away_team": ["BUF"] * 5})
     frames["fact_player_season"] = pl.DataFrame({"player_id": ["p1", "p1"], "season": [2025, 2026], "games": [17, 5], "fpts": [170.0, 50.0], "ppg": [10.0, 10.0],
                                                  "scored_under_league_id": ["L", "L"], "season_complete": [True, False]})
     for t in ("fact_player_week_status", "fact_player_injury_week", "fact_depth_chart_week", "fact_team_week_strength"):
-        frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13})
+        frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13,
+                                  "on_injury_report": [True] * 18})
+    # the status grid ends at production's latest week (review 2026-10-13, D7), not the schedule's
+    frames["fact_player_week_status"] = frames["fact_player_week_status"].filter(pl.col("week") <= 5)
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
     frames["fact_player_contract_season"] = pl.DataFrame({"season": [2026] * 1600, "gsis_id": [str(i) for i in range(1600)]})
-    frames["fact_college_player_season"] = pl.DataFrame({"season": [2024, 2025], "cfbd_id": ["a", "b"]})
+    frames["fact_college_player_season"] = pl.DataFrame({"season": [2023, 2024, 2024, 2025], "cfbd_id": ["a", "a", "b", "b"], "class_year": [1, 2, 3, 4]})
+    frames["dim_college_crosswalk"] = pl.DataFrame({"cfbd_id": ["a", "b", "c"], "gsis_id": ["00-1", "00-2", None], "birth_date": ["2002-01-01", "2001-05-05", None]})
     frames["bronze/sleeper/projections/season=2026/data.parquet"] = pl.DataFrame({"week": [6] * 2000, "player_id": [str(i) for i in range(2000)]})   # the coming week's projections are in
     for s in range(2010, 2018):                   # FFToday's weekly projections 2010-2017, the consensus before Sleeper (one-time scrape)
         frames[f"bronze/fftoday/projections/season={s}/data.parquet"] = pl.DataFrame({"week": list(range(1, 18)) * 160, "fft_id": [str(i) for i in range(2720)]})
+    # ADP: a preseason partition per source for last season and this one
+    for src, n in (("ffc", 8470), ("mfl", 605)):
+        parts[f"bronze/adp/{src}/"] = [(str(y), f"bronze/adp/{src}/season={y}/data.parquet") for y in (2025, 2026)]
+        for y in (2025, 2026):
+            frames[f"bronze/adp/{src}/season={y}/data.parquet"] = pl.DataFrame({"season": [y], "adp": [1.0], "total_drafts": [n], "end_date": [f"{y}-09-01"]})
     return frames, parts
 
 
@@ -241,6 +255,23 @@ def test_production_facts_keep_up_and_stay_consistent():
     assert "fact.player_week.current_week_present" in failed(run(frames, parts, only="player_week"))
 
 
+def test_the_review_checks_catch_a_partial_week_a_report_gap_and_a_grid_past_production():
+    """review 2026-10-13 (D5, D7, D12): a latest week missing Monday night's teams, a season from 2009 with no injury-report
+    rows (or report rows before 2009), and a status grid running past production's latest week."""
+    frames, parts = healthy()
+    frames["fact_player_week"] = frames["fact_player_week"].filter(~((pl.col("player_id") == "p2") & (pl.col("week") == 5)))   # BUF's stats not in yet
+    assert "fact.player_week.latest_week_complete" in failed(run(frames, parts, only="latest_week"))
+    frames, parts = healthy()
+    frames["fact_player_injury_week"] = pl.DataFrame({"season": [2005, 2005, 2026, 2026], "week": [1, 2, 1, 2], "on_injury_report": [True, False, False, False]})
+    f = failed(run(frames, parts, only="report_rows"))
+    assert "fact.player_injury_week.report_rows_per_season" in f
+    s = str(f["fact.player_injury_week.report_rows_per_season"])
+    assert "[2026]" in s and "[2005]" in s                  # the season without report rows, and the pre-2009 season with them
+    frames, parts = healthy()
+    frames["fact_player_week_status"] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13})   # the old grid: to the schedule's week 18
+    assert "fact.player_week_status.no_rows_past_production" in failed(run(frames, parts, only="past_production"))
+
+
 def test_a_crashing_check_is_a_failed_row_not_a_crashed_run():
     frames, parts = healthy()
     del frames["fact_team_season_strength"]
@@ -312,3 +343,25 @@ def test_the_fftoday_history_must_hold_every_season_in_full():
     del frames["bronze/fftoday/projections/season=2017/data.parquet"]
     r = failed(run(frames, parts, only="fftoday"))["bronze.fftoday.history_complete"]
     assert "2 of 8 seasons short" in r["observed"] and "2013: 1760 rows, 11 weeks" in r["detail"] and "2017: missing" in r["detail"]
+
+
+def test_the_college_birth_dates_and_class_years_are_checked():
+    frames, parts = healthy()
+    assert run(frames, parts, only="college")["passed"].all()
+    frames["dim_college_crosswalk"] = frames["dim_college_crosswalk"].with_columns(pl.lit(None, pl.Utf8).alias("birth_date"))   # the 2026-10 bug
+    frames["fact_college_player_season"] = frames["fact_college_player_season"].with_columns(pl.lit(3).alias("class_year"))      # frozen class
+    r = failed(run(frames, parts, only="college"))
+    assert "0% of the 2 matched players have a birth date" in r["dim.college_crosswalk.birth_dates"]["observed"]
+    assert "100% of multi-season players have one class year" in r["fact.college_player_season.class_year_varies"]["observed"]
+
+
+def test_the_adp_windows_and_the_coming_season_are_checked():
+    """An ADP partition written from an in-season window (FFC 2026 on 2026-10-12: 109 drafts, Sep 18-25) is flagged, and
+    the season's partition must be there from June."""
+    frames, parts = healthy()
+    assert not failed(run(frames, parts, only="bronze.adp"))
+    frames["bronze/adp/ffc/season=2026/data.parquet"] = pl.DataFrame({"season": [2026], "adp": [1.0], "total_drafts": [109], "end_date": ["2026-09-25"]})
+    f = failed(run(frames, parts, only="bronze.adp"))
+    assert "bronze.adp.windows_are_preseason" in f and "ffc 2026: 109 drafts" in str(f["bronze.adp.windows_are_preseason"])
+    parts["bronze/adp/mfl/"] = [("2025", "bronze/adp/mfl/season=2025/data.parquet")]
+    assert "bronze.adp.coming_season_present" in failed(run(frames, parts, only="bronze.adp"))

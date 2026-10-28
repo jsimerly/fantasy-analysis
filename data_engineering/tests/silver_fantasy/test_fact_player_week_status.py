@@ -59,7 +59,8 @@ def test_suspension_practice_squad_inactive_dnp_and_release():
                       dict(week=2, gsis_id="p2", status="DEV", status_description_abbr="P01", pfr_id=None, full_name="Player Two"),
                       dict(week=3, gsis_id="p2", status="INA", status_description_abbr="A01", pfr_id=None, full_name="Player Two"),
                       dict(week=4, gsis_id="p2", status="ACT", pfr_id=None, full_name="Player Two"),
-                      dict(week=5, gsis_id="p2", status="CUT", status_description_abbr="W03", pfr_id=None, full_name="Player Two")])
+                      dict(week=5, gsis_id="p2", status="CUT", status_description_abbr="W03", pfr_id=None, full_name="Player Two"),
+                      dict(week=6, gsis_id="p9", full_name="Player Nine")])      # someone's week-6 roster row: the grid runs to week 6
     out = m.build_fact_player_week_status(_stats([]), roster, _injury([]), _sched(bye=("SF", 3)), None)
     p2 = out.filter(pl.col("gsis_id") == "p2").sort("week")
     assert p2["status"].to_list() == ["suspended", "practice_squad", "inactive", "dnp", "not_rostered", "not_rostered"]   # week 6: no roster row
@@ -79,8 +80,19 @@ def test_inactive_on_the_report_is_an_injury_and_questionable_who_played_is_play
 def test_universe_and_team_fill_from_the_stat_lines_only():
     # a player with stat lines but no roster rows at all: still on the grid, team from the stat line, misses read not_rostered
     stats = _stats([dict(week=1, player_id="p3", player_name="Three", team="SF"), dict(week=2, player_id="p3", player_name="Three", team="SF")])
-    out = m.build_fact_player_week_status(stats, _roster([]).clear(), _injury([]), _sched(weeks=4, bye=("SF", 3)), None).filter(pl.col("gsis_id") == "p3").sort("week")
+    roster = _roster([dict(week=4, gsis_id="p9", full_name="Player Nine")])       # another player's week-4 roster row: the grid runs to week 4
+    out = m.build_fact_player_week_status(stats, roster, _injury([]), _sched(weeks=4, bye=("SF", 3)), None).filter(pl.col("gsis_id") == "p3").sort("week")
     assert out["team"].to_list() == ["SF"] * 4 and out["status"].to_list() == ["played", "played", "bye", "not_rostered"]
+
+
+def test_the_grid_ends_at_the_latest_week_the_sources_have_seen():
+    """review 2026-10-13 (D7): an in-progress season's schedule runs to week 18 while the rosters and stat lines stop at the
+    current week; the unplayed weeks were stamped not_rostered for everyone (11,414 rows of 2026). The grid ends at the
+    latest week any roster row or stat line carries; a complete season (roster rows every week) is unchanged."""
+    roster = _roster([dict(week=w) for w in (1, 2, 3)])
+    stats = _stats([dict(week=1), dict(week=2)])
+    out = m.build_fact_player_week_status(stats, roster, _injury([]), _sched(weeks=6), None).filter(pl.col("gsis_id") == "p1").sort("week")
+    assert out["week"].to_list() == [1, 2, 3] and out["status"].to_list() == ["played", "played", "bye"]     # no not_rostered tail to week 6
 
 
 def test_non_skill_positions_and_pre_2002_are_left_out():

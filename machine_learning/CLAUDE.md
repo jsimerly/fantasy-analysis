@@ -10,6 +10,37 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Reads the lake (`gcs_io.read_lake`) and reads/writes the ML bucket (`gcs_io.read_ml_*` /
   `write_ml_*`). Never writes the lake; never writes local `data/`.
 - Tests: `.venv/Scripts/python.exe -m pytest tests -q` (spec-style, ~5 s, no GCS: fixtures are synthetic).
+- **Before any change that touches the weekly path**, run the in-season stage end to end on the trees (about a minute,
+  reads the lake, writes nothing — `--no-write` covers the `--current` projections since 2026-10-13):
+  `scripts/backtest_inseason.py --current --no-write --device cpu --backend xgb --inseason-backend xgb` plus the
+  production preset's other flags (`weekly_refresh.py --preset production --dry-run` prints them). The 2026-10-13
+  refresh died four hours in on a column the unit tests never exercised; this smoke would have caught it. **Never run
+  `weekly_refresh.py` itself on the trees against the ML bucket:** its `build_war` / `export` steps write `war/` and
+  `pages/` at today's run date, and a trees payload at the latest run date is what the exports pick up when the GPU run
+  fails (the Cloud Run job `ml-weekly-refresh` does exactly this every Tuesday 15:00 UTC until it is paused — review
+  2026-10-13, `docs/MODEL_REVIEW_2026-10-13.md`). `build_war` and `export_projections` refuse a run whose stamped
+  models are not the production ones (`--require-backend`, default `tabpfn`; `weekly_refresh` passes `any` when its
+  own backends are not production, so a trees refresh must say so).
+- **Is the run working? `scripts/run_status.py <log>`** (owner, 2026-10-14): the live processes, the log's last line and
+  its age, the stage against its cumulative budget, the GPU's power — and a verdict. The 2026-10-13/14 refresh sat ten
+  hours in the to-date career tail at 100 % utilization and 91 W: utilization says busy, power says the card is waiting
+  on memory. A GPU run is STALLED when its log has not moved for an hour, or the card draws under 120 W at full
+  utilization; every unattended GPU run gets a wall-time budget (`timeout -k 60s 6h` in the chain) and the refresh has a
+  fallback (`--no-career-todate`). The career model's pooled fit and its per-horizon predictions print their rows and
+  seconds, so the tail is no longer one silent call.
+- **A pricing change never waits for the GPU.** The GPU makes the projections (ppg, games, the band); everything after them
+  is CPU arithmetic on the run in the bucket. `scripts/reprice_run.py` re-prices an in-season run with another age-level
+  table (the originals kept beside it), and `weekly_refresh.py --preset production --skip inseason` rebuilds the WAR, the
+  summaries and the exports from it (owner, 2026-10-14: "why do we have to wait until new projections come out of the
+  GPU?"). The same holds for a replacement line, a discount or a sigma mode: re-price, rebuild, publish.
+- **The unit of evidence is the cohort (test season), never the cohort-week.** The checkpoint weeks of one season share
+  players and outcomes (intraclass correlation 0.6-0.9), so a t over cohort-weeks is ~1.7x too large (item 51's +6.9 is
+  +4.0). Average within cohort first, then t over cohorts: `scripts/cohort_t.py`. Report the level (realized / priced)
+  beside the ordering and the error: MAE on a zero-inflated target rewards shrinkage (review 2026-10-13, B3). **The
+  level is part of the acceptance rule (owner, 2026-10-14):** every verdict prints the top-150 bias, and an error gain
+  alone does not adopt when the candidate's level moves further from zero by more than 0.02 wins (it is a TRADE-OFF
+  for the owner). Read the level by age band too (`scripts/age_gate.py`):
+  under-25s realize ~1.2x their price and 29+ ~0.9x (C1), and a pricing change must not widen either end.
 
 ## What is where
 | Path | What |
@@ -27,6 +58,7 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 | `scripts/backtest_inseason.py` | the in-season backtest by checkpoint week; `--current` = the production projection of the season in progress |
 | `scripts/weekly_refresh.py` | the scheduled job: in-season projection → WAR per league → analysis summaries → the page export; `--preset production` |
 | `scripts/build_war.py`, `scripts/export_projections.py` | per-league roster views (teams.parquet + meta) and `projections.json` for the page |
+| `page/intrinsic_value.html`, `page/checks/` | the page itself (one HTML file reading `projections.json`) and its headless jsdom checks; see `page/CLAUDE.md` |
 | `scripts/market_backtest.py`, `scripts/evaluate_*.py`, `scripts/build_*.py` | the model-vs-market backtest; older evaluation and matrix builders |
 
 ## The rules of the harness
@@ -44,6 +76,15 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - **Rescoring:** `--save-cohorts` on a run keeps its scored frames; `--rescore RUN --walk-scale |
   --fixed-scale QB=0.82 | --sigma band|none | --top-n` scores them again in minutes and pairs with the
   source. Use it for anything value-side.
+- **Blends** (`scripts/blend_runs.py`, owner 2026-10-25): two runs' saved frames combined column by column and scored
+  as a run (`--grid` the in-sample map, `--walk` the walk-forward weight that is the candidate, paired with run A);
+  `A --market` maps the model + KTC rank blend on the priced cohorts. Verdicts: TabPFN + the trees NO at every weight
+  (pure TabPFN best on both metrics; the walk-forward weight stayed at 1); model + market peaks at 0.6 on the model,
+  0.71 vs 0.70 alone, three priced cohorts, in-sample -- not adopted (BACKLOG 57).
+- **The wins unit is frozen within a year:** the harness fits the owner's league curve on the standings through the last
+  complete season (`curve_for_lineage(..., through_load_date)`), and the curve is in the regime stamp. The season in
+  progress had moved every realized WAR by up to 0.08 wins between runs eleven days apart; runs stamped before
+  2026-10-25 carry the drifting curve. Two identical runs pair at t = 0 (not +-inf) and read NO.
 
 ## Production (what the owner runs)
 - `weekly_refresh.py --preset production --device cuda`: TabPFN 3.5, the owner's feature set
@@ -57,6 +98,26 @@ file is the working guide for this folder; [README.md](README.md) has the longer
 - Long runs: write a `chain_*.sh`, wrap it in a `.cmd`, launch as a one-shot Task Scheduler task,
   watch its log. Never a background shell child (dies with the session). Time a preset end to end
   before scheduling it.
+- **The Tuesday run is the local Task Scheduler task `ff-weekly-refresh`** (owner, 2026-10-21: "a cron job locally
+  makes more sense right? Since the job runs local?"; 2026-10-27: "lets get it so that we can grab the data as soon as
+  the week is over"): Tuesdays and Wednesdays 06:30 local with `--when-ready`. The week's last game reaches the lake
+  overnight — nflverse rebuilds its stats at 04:30 UTC after every game night and at 09:00 UTC daily, the daily DAG at
+  10:00 UTC carries them, silver has the Monday game by ~06:15 Eastern — and `scripts/week_ready.py` is the gate: the
+  newest week in `fact_player_week` complete in the schedule, every team that played with stats in silver, nothing under
+  `pages/season=S/week=W/` yet (exit 0 ready, 2 wait, 3 done). Not ready = checked every 20 min for up to 4 h, then
+  exit 2 and no run; the Wednesday trigger is the safety net for a late DAG or a postponed Monday game and exits at once
+  when the week is on the page. (The refresh itself has no completeness check: `current_season_week` is the max week in
+  the week table, which on a Friday is the week with Thursday's game alone — the gate is what keeps a partial week out.)
+  The task wakes the PC and runs `scripts/weekly_refresh_task.cmd --when-ready` → `weekly_refresh_task.sh`: the
+  production preset under a 6 h budget, then if that fails the orphans killed and the `--no-career-todate` fallback
+  under 4 h; it refuses to start over another GPU run. Logs under `_cache/logs/` — `weekly_refresh_task.log` (the
+  script's lines, every run appended) and one `production_<stamp>.log` per run, the file `run_status.py` takes. It runs
+  only while the owner is logged on (interactive token: no stored password; a locked screen is fine). Its trigger is a
+  plain local time: a `StartBoundary` written with a UTC offset (what the PowerShell cmdlets produce) is read as
+  "synchronize across time zones" and drifts an hour at the DST change — strip the offset after registering. The cloud
+  job `ml-weekly-refresh` stays paused. A run now = the same `.cmd` with no argument as the one-shot task
+  `ff-refresh-now`: it runs at once, whatever the lake says. The page is not in it: republishing `projections.json`
+  with the HTML needs a session.
 
 ## Where the numbers are
 - `BACKLOG.md` items 22 (bake-off), 36 (accuracy programme), 37-39 (in-season funnel), 40 (title

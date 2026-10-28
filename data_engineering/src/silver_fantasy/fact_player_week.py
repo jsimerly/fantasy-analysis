@@ -30,6 +30,14 @@ SCHEDULES_PREFIX = "bronze/nflverse/schedules/"
 NFL_PLAYERS_PREFIX = "bronze/nflverse/nfl_players/"
 SETTINGS_PATH = "silver/fantasy/dim_league_settings/data.parquet"
 POSITIONS = ["QB", "RB", "WR", "TE"]
+# nflverse lists a two-way player at his defensive spot (Travis Hunter: CB, position_group DB) and fullbacks as FB, so a
+# receiver the leagues roster at WR had no rows at all and Juszczyk's receiving was gone (review 2026-10-13, D6). The
+# fantasy position is Sleeper's (dim_players_master: the primary position, else the first skill position among the
+# positions he may fill, "DB/WR" for Hunter) when it is a skill position, else nflverse's with FB folded into RB.
+POSITION_ALIASES = {"FB": "RB"}
+DIM_PLAYER_MASTER_PATH = "silver/fantasy/dim_players_master/data.parquet"
+# the scoring league: Stuck in High School's lineage, the same pin as machine_learning/src/replacement.py PRIMARY_LINEAGE
+PRIMARY_LINEAGE_ID = "730630605066371072"
 
 # nflverse player_stats uses the *current* franchise code for all history (LV/LAC/LA/JAC),
 # while schedules use the *era* code (OAK/SD/STL/JAX). Canonicalize both sides of the
@@ -103,7 +111,10 @@ def score_player_weeks(df: pl.DataFrame, scoring: dict[str, float]) -> pl.DataFr
 def resolve_league_scoring(settings_df: pl.DataFrame, league_id: str | None = None) -> dict:
     """Resolve offense scoring weights from a ``dim_league_settings`` frame.
 
-    ``league_id=None`` picks the primary league = the lineage with the most current rows.
+    ``league_id=None`` picks the primary league: the pinned lineage (``PRIMARY_LINEAGE_ID``, the one the model's
+    replacement line is built on) when it has current rows, else the lineage with the most current rows. The
+    most-rows rule alone would re-score every season under another league's rules the day a fourth league or a
+    settings restatement outnumbered it, and invalidate the model's tail cache with it (review 2026-10-13, D10).
     """
     cur = settings_df.filter(pl.col("is_current"))
     if cur.is_empty():
@@ -113,11 +124,16 @@ def resolve_league_scoring(settings_df: pl.DataFrame, league_id: str | None = No
         if row.is_empty():
             raise ValueError(f"league_id {league_id!r} not found among current settings")
     else:
-        primary = (
-            cur.group_by("league_lineage_id").len().sort("len", descending=True)
-            .get_column("league_lineage_id")[0]
-        )
-        row = cur.filter(pl.col("league_lineage_id") == primary)
+        lineages = cur.with_columns(pl.col("league_lineage_id").cast(pl.Utf8))
+        if (lineages["league_lineage_id"] == PRIMARY_LINEAGE_ID).any():
+            primary = PRIMARY_LINEAGE_ID
+        else:
+            primary = (
+                lineages.group_by("league_lineage_id").len().sort(["len", "league_lineage_id"], descending=[True, False])
+                .get_column("league_lineage_id")[0]
+            )
+            print(f"!! pinned lineage {PRIMARY_LINEAGE_ID} has no current settings rows: scoring under {primary} (the most rows)")
+        row = cur.filter(pl.col("league_lineage_id").cast(pl.Utf8) == primary)
     # the newest LEAGUE first (Sleeper ids grow season over season), then the newest version: a current
     # row keyed by the lineage's root league id carries an older season's rules (the legacy trigger
     # re-stamps it daily) and must not win on valid_from alone (it did on 2026-10-07: a -1 fumble penalty)
@@ -138,13 +154,36 @@ def resolve_league_scoring(settings_df: pl.DataFrame, league_id: str | None = No
 
 
 # ----------------------------------------------------------------------- transforms
-def filter_offense_weeks(weeks: pl.DataFrame) -> pl.DataFrame:
-    """Keep regular-season offense rows (QB/RB/WR/TE), normalize season/week dtypes, and keep
-    ONE row per player-week. Bronze can carry the same week twice (a season folder holding a
-    full-load file and the daily job's file -- the 2025 season was doubled that way, giving
-    players 29 "games"); the reader prefers the newest file, and this is the belt-and-braces."""
+def resolve_fantasy_position(weeks: pl.DataFrame, fantasy_positions: pl.DataFrame | None = None) -> pl.DataFrame:
+    """``position`` becomes the fantasy position: Sleeper's (``fantasy_positions``: gsis_id, position) when it is
+    QB / RB / WR / TE, else nflverse's with FB -> RB. Rows whose resolved position is not a skill position are dropped
+    (a cornerback with a trick-play catch stays out; a cornerback the leagues roster at WR comes in)."""
+    nfl = pl.col("position").cast(pl.Utf8).replace(POSITION_ALIASES)
+    if fantasy_positions is not None and fantasy_positions.height and {"gsis_id", "position"} <= set(fantasy_positions.columns):
+        # Sleeper's primary position when it is a skill position, else the first skill position among every position
+        # Sleeper lets him fill ("DB/WR" for Travis Hunter, whose primary is DB), in QB / RB / WR / TE order
+        multi = (pl.col("fantasy_positions").cast(pl.Utf8).str.split("/") if "fantasy_positions" in fantasy_positions.columns
+                 else pl.lit(None, pl.List(pl.Utf8)))
+        choose = pl.coalesce([pl.when(pl.col("position").cast(pl.Utf8).is_in(POSITIONS)).then(pl.col("position").cast(pl.Utf8)),
+                              *[pl.when(multi.list.contains(p)).then(pl.lit(p)) for p in POSITIONS]])
+        fp = (fantasy_positions.with_columns(choose.alias("_fantasy_pos"))
+                               .select(pl.col("gsis_id").cast(pl.Utf8).alias("player_id"), "_fantasy_pos")
+                               .filter(pl.col("player_id").is_not_null() & pl.col("_fantasy_pos").is_not_null())
+                               .unique(subset=["player_id"], keep="first"))
+        out = (weeks.join(fp, on="player_id", how="left")
+                    .with_columns(pl.coalesce([pl.col("_fantasy_pos"), nfl]).alias("position")).drop("_fantasy_pos"))
+    else:
+        out = weeks.with_columns(nfl.alias("position"))
+    return out.filter(pl.col("position").is_in(POSITIONS))
+
+
+def filter_offense_weeks(weeks: pl.DataFrame, fantasy_positions: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Keep regular-season skill-position rows (the fantasy position: ``resolve_fantasy_position``), normalize
+    season/week dtypes, and keep ONE row per player-week. Bronze can carry the same week twice (a season folder
+    holding a full-load file and the daily job's file -- the 2025 season was doubled that way, giving players 29
+    "games"); the reader prefers the newest file, and this is the belt-and-braces."""
     return (
-        weeks.filter((pl.col("season_type") == "REG") & pl.col("position").is_in(POSITIONS))
+        resolve_fantasy_position(weeks.filter(pl.col("season_type") == "REG"), fantasy_positions)
         .with_columns(pl.col("season").cast(pl.Int64), pl.col("week").cast(pl.Int64))
         .unique(subset=["player_id", "season", "week"], keep="first", maintain_order=True)
     )
@@ -211,10 +250,11 @@ WEEK_STATS = {
 
 def build_fact_player_week(
     weeks: pl.DataFrame, schedules: pl.DataFrame, bio: pl.DataFrame,
-    scoring: dict[str, float], scored_under: str | None = None,
+    scoring: dict[str, float], scored_under: str | None = None, fantasy_positions: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    """Pure build: weekly box scores + schedules + bio + scoring -> player-week fact."""
-    scored = score_player_weeks(filter_offense_weeks(weeks), scoring)
+    """Pure build: weekly box scores + schedules + bio + scoring -> player-week fact. ``fantasy_positions``
+    (gsis_id, position) is the leagues' own position per player (dim_player_master); see resolve_fantasy_position."""
+    scored = score_player_weeks(filter_offense_weeks(weeks, fantasy_positions), scoring)
     wk = scored.select(
         "player_id", "season", "week",
         pl.col("player_display_name").alias("player_name"),
@@ -290,11 +330,18 @@ def main() -> None:
     print(f"Scoring league {cfg['league_id']} (lineage {cfg['league_lineage_id']}): {cfg['scoring']}")
     if cfg["unmodeled_keys"]:
         print("!! unmodeled nonzero scoring keys:", cfg["unmodeled_keys"])
+    try:                                     # the leagues' own position per player (silver-dim-player-master runs first in the DAG)
+        dim = _read_gcs(DIM_PLAYER_MASTER_PATH)
+        fantasy_positions = dim.select([c for c in ("gsis_id", "position", "fantasy_positions") if c in dim.columns])
+        print(f"fantasy positions from dim_player_master: {fantasy_positions.filter(pl.col('gsis_id').is_not_null()).height:,} players with a gsis id")
+    except Exception as e:  # noqa: BLE001
+        print(f"!! dim_player_master unavailable ({str(e)[:80]}): positions from nflverse only (FB -> RB)")
+        fantasy_positions = None
     fact = build_fact_player_week(
         _read_prefix(PLAYER_STATS_PREFIX, dedupe_on=["player_id", "season", "week", "season_type"]),
         _read_prefix(SCHEDULES_PREFIX, dedupe_on=["game_id"]),
         load_bio(),
-        cfg["scoring"], cfg["league_id"],
+        cfg["scoring"], cfg["league_id"], fantasy_positions,
     )
     save_df_to_gcs(fact, bucket)
 

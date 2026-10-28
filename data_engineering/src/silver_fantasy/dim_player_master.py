@@ -121,7 +121,11 @@ def transform_dim_players_master() -> pl.DataFrame:
               .otherwise(None)
         ]).alias('avatar_url'),
         pl.coalesce([pl.col('nfl_draft_year'), pl.col('birth_date').str.slice(0, 4).cast(pl.Int64).add(22)]).alias('draft_year'),
-        
+        # every position Sleeper lets the player fill, "DB/WR" for a two-way player (Travis Hunter: position DB, fantasy
+        # positions DB and WR); fact_player_week resolves the fantasy position from it (review 2026-10-13, D6)
+        (pl.col('fantasy_positions').list.join('/') if 'fantasy_positions' in dim_players.columns and dim_players.schema['fantasy_positions'] == pl.List(pl.Utf8)
+         else pl.col('fantasy_positions').cast(pl.Utf8) if 'fantasy_positions' in dim_players.columns else pl.lit(None, pl.Utf8)).alias('fantasy_positions'),
+
         # Metadata
         pl.lit('sleeper+nflverse').alias('source_system'),
         pl.lit(datetime.now()).alias('loaded_at')
@@ -141,7 +145,8 @@ def transform_dim_players_master() -> pl.DataFrame:
         'first_name',
         'last_name',
         'position',
-        'team',            
+        'fantasy_positions',   # "DB/WR": every position Sleeper lets him fill
+        'team',
         'age',
         'height',
         'weight',
