@@ -199,9 +199,8 @@ def _tuesday_snapshot_folders() -> list[str]:
 @check("bronze.nflverse.tuesday_snapshots_fresh", "bronze/nflverse", "error",
        "nflverse-daily was OOM-killed at 1Gi every Tuesday from 2026-10-13 while loading contracts, the last Tuesday-only dataset (nflreadpy's "
        "in-memory cache held every frame of the run); the daily datasets and the earlier Tuesday snapshots had landed, so nothing in the lake "
-       "looked wrong while the contract snapshot (fact_player_contract_season, the model's contract group) froze at 2026-10-07",
-       known_open="contracts has no snapshot since 2026-10-07; clears with the first nflverse-daily run after the cache-off / 2Gi fix deploys "
-                  "(a FORCE_RUN=true execution, or Tuesday 2026-11-03 10:00 UTC), then remove this note")
+       "looked wrong while the contract snapshot (fact_player_contract_season, the model's contract group) froze at 2026-10-07; enforced "
+       "since the fixed job (cache off, 2Gi) landed the 2026-10-28 snapshot")
 def nflverse_tuesday_snapshots(ctx):
     folders = _tuesday_snapshot_folders()
     per = [x.partition_fresh(ctx.partitions(f"bronze/nflverse/{f}/"), ctx.today, TUESDAY_SNAPSHOT_MAX_AGE_DAYS, f) for f in folders]

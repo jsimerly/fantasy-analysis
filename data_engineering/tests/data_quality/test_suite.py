@@ -295,7 +295,7 @@ def test_the_tuesday_snapshots_froze_while_the_job_died_on_contracts():
 
     r = failed(on(date(2026, 10, 27)))["bronze.nflverse.tuesday_snapshots_fresh"]
     assert "1 of 5 Tuesday snapshots stale: contracts: newest partition 2026-10-07 (20 days old)" in r["observed"] and r["value"] == 1
-    assert r["severity"] == "error" and r["effective_severity"] == "warn" and "FORCE_RUN" in r["known_open"]   # known open until the fixed job lands one
+    assert r["severity"] == "error" and r["effective_severity"] == "error" and r["known_open"] == ""   # enforced: the fixed job landed the 2026-10-28 snapshot
     parts["bronze/nflverse/contracts/"].append(("2026-10-27", "bronze/nflverse/contracts/load_date=2026-10-27/data.parquet"))   # the fixed job ran
     res = on(date(2026, 10, 27))
     assert res["passed"].all() and "5 Tuesday snapshots within 8 days" in res["observed"][0]
