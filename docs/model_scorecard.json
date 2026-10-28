@@ -1,7 +1,7 @@
 {
- "as_of": "2026-10-22",
+ "as_of": "2026-10-28",
  "season": 2026,
- "week": 6,
+ "week": 7,
  "model": "tabpfn stacked blend [base,career,injury,trend,situation,rookie,college]",
  "headline": [
   {
