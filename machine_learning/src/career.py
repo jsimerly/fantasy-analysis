@@ -337,11 +337,22 @@ class HorizonModels:
             w = self._weights(played); wp.append(w if w is not None else np.ones(played.height))
             if self.target == "blend":
                 yr.append(y - played["ppg"].fill_null(0.0).to_numpy().astype(float))
+        # heartbeat (2026-10-14: a refresh sat ten hours in this stage with nothing in the log): rows and seconds per pooled fit
+        import time as _time
+        t0 = _time.time()
         g = self._new().fit(np.vstack(Xg), np.concatenate(yg), sample_weight=np.concatenate(wg) if self.weight else None)
+        if self.backend != "xgb":
+            print(f"    pooled games model: {sum(len(y) for y in yg):,} rows x {len(self.horizons)} horizons fitted in {_time.time() - t0:.0f} s", flush=True)
+        t0 = _time.time()
         p = self._new().fit(np.vstack(Xp), np.concatenate(yp), sample_weight=np.concatenate(wp) if self.weight else None)
+        if self.backend != "xgb":
+            print(f"    pooled ppg model: {sum(len(y) for y in yp):,} rows fitted in {_time.time() - t0:.0f} s", flush=True)
         self.stacked_models = {"games": g, "ppg": p}
         if self.target == "blend":
+            t0 = _time.time()
             self.stacked_models["ppg_res"] = self._new().fit(np.vstack(Xp), np.concatenate(yr), sample_weight=np.concatenate(wp) if self.weight else None)
+            if self.backend != "xgb":
+                print(f"    pooled residual model fitted in {_time.time() - t0:.0f} s", flush=True)
         for k in self.horizons:                      # the per-horizon slots point at the shared models
             self.games_models[k], self.ppg_models[k] = g, p
 
@@ -578,9 +589,14 @@ class HorizonModels:
         X = self.feature_frame(df).to_numpy()
         cols = []
         sigma = getattr(self, "sigma", None)
+        import time as _time
+        t_all = _time.time()
         for k in self.horizons:
+            t0 = _time.time()
             games = np.clip((self.stacked_models["games"].predict(self._stack_X(df, k)) if self.stacked else self.games_models[k].predict(X)), 0.0, MAX_GAMES)
             ppg = self._ppg_hat(k, X, df)
+            if self.backend != "xgb":            # heartbeat: the TabPFN tail is one long silent call per horizon otherwise
+                print(f"    horizon {k}: {df.height:,} rows projected in {_time.time() - t0:.0f} s ({_time.time() - t_all:.0f} s so far)", flush=True)
             if self.games_table:
                 games = self._apply_games_table(df, k, games)
             if self.calibration:
@@ -610,7 +626,14 @@ class HorizonModels:
 
 
 def q_name(q: float) -> str:
-    return f"q{int(round(q * 100)):02d}"
+    """0.2 -> 'q20'; a half-percent level keeps its half: 0.025 -> 'q02p5', 0.975 -> 'q97p5'."""
+    pct = round(q * 1000) / 10
+    whole = int(pct)
+    return f"q{whole:02d}" if pct == whole else f"q{whole:02d}p{int(round((pct - whole) * 10))}"
+
+
+# the quantile-midpoint grid a distributional value integrates over (BACKLOG 47): 20 equal-probability bins
+QUANTILE_GRID = tuple(round((i + 0.5) / 20, 4) for i in range(20))
 
 
 def _range_columns_of(self, k: int, X: np.ndarray, df: pl.DataFrame) -> list[pl.Series]:
@@ -666,12 +689,19 @@ class AgeSurvival:
     model is over-optimistic (it is ~15 games for anyone under 30).
     """
 
-    def __init__(self, tiered: bool = False) -> None:
+    def __init__(self, tiered: bool = False, quadratic: bool = False) -> None:
         # tiered: a curve per (position, prior tier) as well: an elite 31-year-old is held to the elite
         # 31-year-olds' continuation odds, not the roster filler's (the good ones last longer, and the data says so)
-        self.coef: dict[str, tuple[float, float]] = {}      # position -> (intercept, slope on age)
-        self.tier_coef: dict[tuple[str, str], tuple[float, float]] = {}
+        # quadratic: the logit is a + b age + c age^2 (review 2026-10-13 C1 / C10: a logit linear in age, fitted on every age,
+        # cannot bend from a flat hazard at 27 to a steep one at 34 -- the "33+ too flat" and the 29+ over-pricing)
+        self.coef: dict[str, tuple[float, ...]] = {}        # position -> (intercept, slope on age[, curvature on age^2 / 100])
+        self.tier_coef: dict[tuple[str, str], tuple[float, ...]] = {}
         self.tiered = tiered
+        self.quadratic = quadratic
+
+    def _features(self, age: np.ndarray) -> np.ndarray:
+        age = np.asarray(age, float)
+        return np.column_stack([age, age * age / 100.0]) if self.quadratic else age.reshape(-1, 1)
 
     @staticmethod
     def tier_expr(ppg_col: str = "ppg", games_col: str = "games") -> pl.Expr:
@@ -686,15 +716,15 @@ class AgeSurvival:
             sub = rows.filter(pl.col("position") == pos)
             if sub.height < 50 or sub["h1_played"].n_unique() < 2:
                 continue
-            lr = LogisticRegression().fit(sub[["age_at_season"]].to_numpy(), sub["h1_played"].to_numpy().astype(int))
-            self.coef[pos] = (float(lr.intercept_[0]), float(lr.coef_[0][0]))
+            lr = LogisticRegression().fit(self._features(sub["age_at_season"].to_numpy()), sub["h1_played"].to_numpy().astype(int))
+            self.coef[pos] = (float(lr.intercept_[0]), *[float(c) for c in lr.coef_[0]])
         if self.tiered:
             rows = rows.with_columns(self.tier_expr().alias("_tier"))
             for (pos, tier), sub in rows.group_by(["position", "_tier"]):
                 if sub.height < 50 or sub["h1_played"].n_unique() < 2:
                     continue
-                lr = LogisticRegression().fit(sub[["age_at_season"]].to_numpy(), sub["h1_played"].to_numpy().astype(int))
-                self.tier_coef[(str(pos), str(tier))] = (float(lr.intercept_[0]), float(lr.coef_[0][0]))
+                lr = LogisticRegression().fit(self._features(sub["age_at_season"].to_numpy()), sub["h1_played"].to_numpy().astype(int))
+                self.tier_coef[(str(pos), str(tier))] = (float(lr.intercept_[0]), *[float(c) for c in lr.coef_[0]])
         return self
 
     def p_next(self, position: str, age: np.ndarray, tier: str | None = None) -> np.ndarray:
@@ -703,8 +733,8 @@ class AgeSurvival:
             c = self.coef.get(position)
         if c is None:
             return np.ones_like(np.asarray(age, float))
-        b0, b1 = c
-        return 1.0 / (1.0 + np.exp(-(b0 + b1 * np.asarray(age, float))))
+        z = c[0] + self._features(age) @ np.asarray(c[1:], float)
+        return 1.0 / (1.0 + np.exp(-z))
 
     def survival(self, position: str, age: np.ndarray, k: int, tier: str | None = None) -> np.ndarray:
         """P(plays in season age+k | plays now) = product of the yearly continuation odds."""
@@ -763,12 +793,13 @@ def fit_survival(season_df: pl.DataFrame, cap: str = DEFAULT_CAP) -> AgeSurvival
     """The survival prior a cap spec needs: tier-aware curves for the ``+t`` specs. Draft rows (no
     played season behind them) are left out: the prior is about players who were on a roster."""
     import draft_rows as dr
-    return AgeSurvival(tiered="+t" in str(cap)).fit(dr.drop_draft_rows(season_df))
+    return AgeSurvival(tiered="+t" in str(cap), quadratic=str(cap).endswith("q")).fit(dr.drop_draft_rows(season_df))
 
 
 def apply_cap(survival: AgeSurvival, df: pl.DataFrame, horizons: Iterable[int], cap: str = DEFAULT_CAP, **kw) -> pl.DataFrame:
-    """Apply a cap spec (see DEFAULT_CAP): none | all | "<age>+" | "<age>+t" | "<age>+t<age2>"."""
-    cap = str(cap)
+    """Apply a cap spec (see DEFAULT_CAP): none | all | "<age>+" | "<age>+t" | "<age>+t<age2>"; a trailing "q" means
+    the survival prior was fitted with a quadratic logit (fit_survival), e.g. "30+tq"."""
+    cap = str(cap).rstrip("q")
     if cap == "none":
         return df
     if "+" in cap:
@@ -812,7 +843,7 @@ XWALK_PATH = "silver/fantasy/dim_college_crosswalk/data.parquet"
 
 
 def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False, snapshot_weeks: Iterable[int] | None = None,
-                        snapshot_from: int = 2010) -> pl.DataFrame:
+                        snapshot_from: int = 2010, todate_weeks: Iterable[int] | None = None, todate_from: int = 2006) -> pl.DataFrame:
     """fact_player_season (lake) -> one-year lags -> career features -> horizon targets.
     Rows from the in-progress season are kept (they have no outcomes yet) so the latest
     complete season can be projected and the partial one inspected. With ``draft_rows`` every
@@ -832,6 +863,10 @@ def build_career_matrix(horizons: Iterable[int], draft_rows: bool = False, snaps
         import unified
         wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
         df = unified.with_snapshot_rows(df, unified.snapshot_rows(wk, df.filter(~__import__("draft_rows").is_aux(df)), snapshot_weeks, snapshot_from))
+    if todate_weeks:                 # the season seen through week W, in the season's own columns (BACKLOG 51)
+        import unified
+        wk = gcs_io.read_lake("silver/fantasy/fact_player_week/data.parquet")
+        df = unified.with_snapshot_rows(df, unified.season_to_date_rows(wk, season, todate_weeks, todate_from))
     return attach_horizon_targets(df, list(horizons))
 
 

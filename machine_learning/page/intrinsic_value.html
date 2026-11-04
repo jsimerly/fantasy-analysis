@@ -1,0 +1,1462 @@
+<title>Dynasty Intrinsic Value</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F3F5F7; --panel: #FFFFFF; --ink: #15202B; --muted: #5E6E7D; --line: #D7DEE5;
+    --accent: #1D6A86; --accent-ink: #FFFFFF; --cheap: #1E8A57; --rich: #C0532B; --cheap-bg: #E3F4EA; --rich-bg: #F9E6DE;
+    --row-alt: #F8FAFB; --chip: #E7EDF2; --focus: #1D6A86; --mine: #FFF4D6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper: #0F161C; --panel: #161F27; --ink: #E7EDF2; --muted: #96A6B4; --line: #2B3843;
+      --accent: #5DB4D3; --accent-ink: #0F161C; --cheap: #4FCB8C; --rich: #F0865C; --cheap-bg: #15362A; --rich-bg: #3F2419;
+      --row-alt: #121a21; --chip: #22303B; --focus: #5DB4D3; --mine: #3A3214;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #0F161C; --panel: #161F27; --ink: #E7EDF2; --muted: #96A6B4; --line: #2B3843;
+    --accent: #5DB4D3; --accent-ink: #0F161C; --cheap: #4FCB8C; --rich: #F0865C; --cheap-bg: #15362A; --rich-bg: #3F2419;
+    --row-alt: #121a21; --chip: #22303B; --focus: #5DB4D3; --mine: #3A3214;
+  }
+  body { background: var(--paper); color: var(--ink); font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
+  .wrap { padding-block: 20px 40px; padding-inline: 16px; max-width: 1600px; margin: 0 auto; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 6px; }
+  h1 { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-weight: 700; font-size: 34px; letter-spacing: 0.01em; margin: 0; text-wrap: balance; }
+  h2 { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-weight: 600; font-size: 24px; margin: 28px 0 8px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .sub b { color: var(--ink); font-weight: 600; }
+  .how { color: var(--muted); font-size: 13px; max-width: 86ch; margin: 6px 0 14px; }
+  .how b { color: var(--ink); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 12px; }
+  .controls label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .ctl { display: inline-flex; align-items: center; gap: 8px; }
+  input[type="search"], select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  input[type="search"] { min-width: 200px; }
+  input[type="range"] { width: 140px; accent-color: var(--accent); }
+  .val { font-variant-numeric: tabular-nums; min-width: 34px; font-weight: 600; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; text-transform: none; letter-spacing: 0; color: var(--ink); }
+  button:focus-visible, input:focus-visible, select:focus-visible, th:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .count { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 1280px; font-variant-numeric: tabular-nums; }
+  table.small { min-width: 0; }
+  thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; text-align: right; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 10px 8px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; user-select: none; }
+  table.small thead th { cursor: default; }
+  thead tr.groups th { top: 0; z-index: 2; text-align: center; font-size: 11px; letter-spacing: 0.1em; color: var(--accent); padding: 0 8px; height: 28px; line-height: 28px; cursor: default; }
+  thead tr#hdr th { top: 29px; }
+  thead tr#hdr th.gb, thead tr.groups th, tbody td.gb { border-left: 1px solid var(--line); }
+  thead tr.groups th:first-child { border-left: none; }
+  .team { color: var(--muted); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; margin-left: 5px; }
+  thead th.l, td.l { text-align: left; }
+  thead th[aria-sort="descending"]::after { content: " ▾"; color: var(--accent); }
+  thead th[aria-sort="ascending"]::after { content: " ▴"; color: var(--accent); }
+  tbody td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tbody tr.alt { background: var(--row-alt); }
+  .caret { font: inherit; font-size: 11px; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 6px 0 0; width: 18px; }
+  .caret:hover { color: var(--accent); }
+  tr.detail td { background: var(--panel); border-bottom: 2px solid var(--line); padding: 10px 14px 12px 36px; white-space: normal; text-align: left; }
+  .dgrid { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(360px, 2fr); gap: 10px 28px; align-items: start; }
+  .facts div { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; border-bottom: 1px dotted var(--line); font-variant-numeric: tabular-nums; }
+  .facts .k { color: var(--muted); }
+  table.spans { min-width: 0; width: auto; }
+  table.spans th, table.spans td { padding: 3px 10px; }
+  @media (max-width: 760px) { .dgrid { grid-template-columns: 1fr; } tr.detail td { padding-left: 14px; } }
+  td.name { font-weight: 500; }
+  td.dim { color: var(--muted); }
+  .pos { display: inline-block; min-width: 26px; text-align: center; font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: var(--chip); }
+  .mis { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; min-width: 120px; }
+  .bar { height: 8px; width: 60px; background: var(--chip); border-radius: 2px; position: relative; overflow: hidden; }
+  .bar i { position: absolute; top: 0; bottom: 0; }
+  .bar i.c { right: 50%; background: var(--cheap); }
+  .bar i.r { left: 50%; background: var(--rich); }
+  .mis.cheap { color: var(--cheap); } .mis.rich { color: var(--rich); }
+  .skew { font-size: 10px; } .skew.up { color: var(--cheap); } .skew.dn { color: var(--rich); }
+  .range { display: inline-block; width: 60px; height: 8px; background: var(--chip); border-radius: 2px; position: relative; overflow: hidden; vertical-align: middle; margin-right: 6px; }
+  .range i { position: absolute; top: 0; bottom: 0; left: var(--lo); right: calc(100% - var(--hi)); background: var(--accent); min-width: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .legend .lc::before { background: var(--cheap); } .legend .lr::before { background: var(--rich); }
+  .legend .none::before { display: none; }
+  .note { color: var(--muted); font-size: 12.5px; max-width: 96ch; margin-top: 14px; }
+  .leaguebox { color: var(--muted); font-size: 12.5px; margin: -6px 0 12px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0 14px; overflow-x: auto; }
+  .tabs button { font: inherit; font-size: 14px; font-weight: 600; padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  section[hidden] { display: none; }
+  .leaguebox b { color: var(--ink); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .rgrid { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .rgrid2 { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 16px; align-items: start; }
+  .card { overflow-x: auto; }
+  .card table.small { width: 100%; }
+  .teamhead { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline; margin: 2px 0 10px; }
+  .teamhead .big { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-size: 24px; font-weight: 600; }
+  .teamhead .stat b { font-size: 16px; }
+  .perf .lead { font-size: 13.5px; margin: 0 0 12px; max-width: 96ch; }
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 0 0 14px; }
+.hero .tile { padding: 12px 14px; }
+.hero.top { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.hero.top .tile { border-color: var(--accent); }
+.hero.top .n { font-size: 34px; }
+.tile .n { font-size: 26px; font-weight: 700; line-height: 1.1; margin: 2px 0 4px; }
+.tile .n small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.tile .t { font-size: 12.5px; color: var(--muted); }
+.tile .h { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.usecase { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 16px; margin: 6px 0 4px; padding: 0; list-style: none; }
+.usecase li { font-size: 13px; }
+  .perf .spec { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .perf .spec b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 900px) { .rgrid, .rgrid2 { grid-template-columns: 1fr; } }
+  .tf { margin-top: 16px; }
+  .tf .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 10px; }
+  .tf input[type="text"], .tf input[type="number"] { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  .tf input[type="text"] { min-width: 240px; }
+  .tf button.go { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  .tf .pkg { font-weight: 500; }
+  .tf td.pos, .tf .pos-t { color: var(--cheap); } .tf td.neg, .tf .neg-t { color: var(--rich); }
+  .tbwrap { margin-top: 8px; }
+  .tf table.tbt { width: auto; min-width: 100%; }
+  .tf table.tbt thead th { position: static; white-space: nowrap; }
+  .tf table.tbt thead tr.groups th { border-bottom: 1px solid var(--line); }
+  .tf table.tbt thead tr.groups th:not(.l) { border-left: 1px solid var(--line); }
+  .tf table.tbt td:nth-child(2), .tf table.tbt td:nth-child(5), .tf table.tbt td:nth-child(7), .tf table.tbt td:nth-child(9) { border-left: 1px solid var(--line); }
+  .tf table.tbt td.pkg { white-space: normal; min-width: 220px; max-width: 360px; line-height: 1.4; cursor: pointer; }
+  .tf table.tbt td.pkg:hover { text-decoration: underline; }
+  .tf .star { color: var(--accent); }
+  .tb2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .side { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--paper); position: relative; }
+  .side h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .chips2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 28px; }
+  .chip2 { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 10px; border-radius: 999px; background: var(--chip); font-size: 13px; }
+  .chip2 button { font: inherit; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+  .chip2 button:hover { color: var(--rich); }
+  .sugg { list-style: none; margin: 4px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-height: 220px; overflow-y: auto; }
+  .sugg li { padding: 6px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+  .sugg li:hover, .sugg li.hot { background: var(--chip); }
+  .sugg .m { color: var(--muted); }
+  .verdict { margin: 12px 0 6px; font-size: 13.5px; }
+  .verdict b { font-size: 15px; }
+  @media (max-width: 760px) { .tb2 { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 12px 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  table.small.sortable thead th { cursor: pointer; }
+  table.small.sortable thead th.on { color: var(--accent); }
+  #trades td.up { color: var(--cheap); } #trades td.down { color: var(--rich); }
+  #trades td.assets { text-align: left; max-width: 34ch; white-space: normal; font-size: 12px; line-height: 1.3; }
+  .trc { display: grid; grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr); gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .trc .side { min-width: 0; } .trc .side.b { text-align: right; }
+  .trc .mgr { font-weight: 600; font-size: 13.5px; } .trc .mgr .k { font-weight: 400; margin-left: 6px; }
+  .trc .side.b .mgr .k { margin-left: 0; margin-right: 6px; }
+  .trc .assets { font-size: 12.5px; line-height: 1.35; margin-top: 3px; white-space: normal; }
+  .trc .assets span { display: inline-block; background: var(--chip); border-radius: 4px; padding: 1px 6px; margin: 2px 3px 0 0; }
+  .trc .side.b .assets span { margin: 2px 0 0 3px; }
+  .trc .mid { text-align: center; font-size: 12px; color: var(--muted); }
+  .trc .date { font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .trc .bar { position: relative; height: 10px; background: var(--chip); border-radius: 5px; margin: 6px 0; overflow: hidden; }
+  .trc .bar::before { content: ""; position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--line); }
+  .trc .bar i { position: absolute; top: 0; height: 100%; border-radius: 5px; }
+  .trc .bar i.a { background: var(--cheap); } .trc .bar i.b { background: var(--rich); }
+  .trc .lean { font-weight: 600; color: var(--ink); } .trc .lean.a { color: var(--cheap); } .trc .lean.b { color: var(--rich); }
+  .trc .hz { display: flex; justify-content: space-between; gap: 4px; margin-top: 6px; font-size: 11px; }
+  .trc .hz b { display: block; font-weight: 500; color: var(--muted); } .trc .hz span { white-space: nowrap; } .trc .hz span.on { text-decoration: underline; }
+  .trc .hz .up { color: var(--cheap); } .trc .hz .down { color: var(--rich); }
+  .trc.rev { opacity: 0.55; }
+  .trc.multi { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
+  .trc.multi .mid { grid-column: 1 / -1; text-align: left; }
+  .trc.multi .side .k .up { color: var(--cheap); } .trc.multi .side .k .down { color: var(--rich); }
+  .pbar { display: inline-flex; width: 120px; height: 10px; border-radius: 5px; overflow: hidden; vertical-align: middle; margin-right: 6px; background: var(--chip); }
+  .pbar i { display: block; height: 100%; } .pbar i.e { background: var(--cheap); } .pbar i.m { background: var(--accent); } .pbar i.l { background: var(--rich); }
+  .heat td.c { text-align: center; font-variant-numeric: tabular-nums; }
+  .dbar { display: inline-flex; align-items: flex-end; gap: 1px; height: 18px; width: 72px; vertical-align: middle; }
+  .dbar i { display: block; flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; }
+  @media (max-width: 760px) { .trc { grid-template-columns: 1fr; } .trc .side.b { text-align: left; } .trc .side.b .assets span { margin: 2px 3px 0 0; } }
+  .card h4 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .card .k { color: var(--muted); font-size: 12.5px; }
+  tr.mine { background: var(--mine) !important; }
+  .standings td, .standings th { padding: 4px 8px; }
+  .perf .card { margin-bottom: 14px; }
+  .perf table.small th, .perf table.small td { padding: 4px 9px; }
+  .perf td.best { font-weight: 600; color: var(--accent); }
+  .perf .k { margin-bottom: 6px; }
+  .perf ul { margin: 6px 0 0 18px; padding: 0; color: var(--muted); font-size: 12.5px; }
+  .perf li { margin: 3px 0; }
+  @media (prefers-reduced-motion: no-preference) { .chip, tbody tr { transition: background-color 120ms; } }
+  @media (max-width: 600px) { h1 { font-size: 28px; } input[type="search"] { min-width: 0; width: 100%; } .count { margin-left: 0; } }
+  .heat td.hc { text-align: center; font-variant-numeric: tabular-nums; min-width: 46px; }
+  .heat td.hc.pos { background: color-mix(in srgb, var(--cheap) calc(var(--w) * 1%), transparent); }
+  .heat td.hc.neg { background: color-mix(in srgb, var(--rich) calc(var(--w) * 1%), transparent); }
+  .edges li { margin: 4px 0; }
+  .tvc { position: relative; }
+  .tvc svg { width: 100%; height: auto; display: block; color: var(--ink); }
+  .tvc .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.14); display: none; z-index: 3; min-width: 170px; }
+  .tvc .tip b { display: block; margin-bottom: 3px; }
+  .tvc .tip div { display: flex; justify-content: space-between; gap: 12px; white-space: nowrap; }
+  .tvc .tip i, .tv-sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .tvl { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 8px 0 2px; }
+  .tvl button { font: inherit; font-size: 12px; border: 1px solid transparent; background: none; color: var(--ink); padding: 2px 7px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .tvl button i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .tvl button[aria-pressed="true"] { border-color: var(--line); background: var(--chip); }
+  .tvl button.off { opacity: .45; }
+  .tvl button .dim { color: var(--muted); }
+  .perf figure.arch { margin: 10px 0 6px; }
+  .perf figure.arch svg { width: 100%; max-width: 1000px; height: auto; display: block; color: var(--ink); }
+  .perf figure.arch figcaption { color: var(--muted); font-size: 12.5px; max-width: 96ch; margin-top: 6px; }
+  .perf .arch-grid { display: grid; grid-template-columns: max-content 1fr 1fr; gap: 3px 14px; font-size: 12.5px; color: var(--muted); margin: 8px 0 4px; }
+  .perf .arch-grid b { color: var(--ink); font-weight: 600; }
+  .perf .arch-grid .h { color: var(--ink); font-weight: 600; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+  @media (max-width: 640px) { .perf .arch-grid { grid-template-columns: 1fr; } .perf .arch-grid .h:nth-child(n+2) { display: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Dynasty Intrinsic Value</h1>
+    <div class="sub" id="meta">Loading…</div>
+  </header>
+  <div class="tabs" role="tablist" aria-label="Views">
+    <button type="button" role="tab" id="tb-players" data-tab="players" aria-selected="true" aria-controls="tab-players">Players</button>
+    <button type="button" role="tab" id="tb-rosters" data-tab="rosters" aria-selected="false" aria-controls="tab-rosters">Rosters</button>
+    <button type="button" role="tab" id="tb-perf" data-tab="perf" aria-selected="false" aria-controls="tab-perf">Model performance</button>
+    <button type="button" role="tab" id="tb-trades" data-tab="trades" aria-selected="false" aria-controls="tab-trades">Trades</button>
+    <button type="button" role="tab" id="tb-slots" data-tab="slots" aria-selected="false" aria-controls="tab-slots">Draft slots</button>
+    <button type="button" role="tab" id="tb-teamvalue" data-tab="teamvalue" aria-selected="false" aria-controls="tab-teamvalue">Team value</button>
+    <button type="button" role="tab" id="tb-market" data-tab="market" aria-selected="false" aria-controls="tab-market">Market</button>
+  </div>
+
+  <div class="controls">
+    <span class="ctl"><label for="lg">League</label><select id="lg"></select></span>
+    <span class="ctl"><label for="view">View</label><select id="view"><option value="career" selected>Career (dynasty)</option><option value="ros">ROS (redraft)</option></select></span>
+    <span class="ctl"><label for="unit">Rank by</label><select id="unit"><option value="par" selected>Career PAR (points)</option><option value="par_ros">ROS PAR (points)</option><option value="war">Career WAR (wins)</option><option value="war_ros">ROS WAR (wins)</option></select></span>
+    <span class="ctl"><label for="disc">Discount rate</label><input type="range" id="disc" min="0" max="100" step="5" value="10" aria-valuetext="10% per year"><span class="val" id="discv">10%/yr</span></span>
+    <span class="ctl"><label for="years">Years</label><select id="years"><option>1</option><option>3</option><option>5</option><option>7</option><option selected>10</option></select></span>
+    <span class="ctl"><label for="fairm">Fair</label><select id="fairm"><option value="rank" selected>rank match</option><option value="curve">curve fit</option></select></span>
+    <span class="ctl"><label for="mkt">Market</label><select id="mkt"><option value="ktc" selected>KTC dynasty (SF)</option><option value="fc">FantasyCalc dynasty (SF)</option><option value="rd_sf">KTC redraft (SF)</option><option value="rd_1qb">KTC redraft (1QB)</option></select></span>
+  </div>
+  <div class="leaguebox" id="leaguebox"></div>
+
+  <section id="tab-players" role="tabpanel" aria-labelledby="tb-players">
+  <p class="how">Value starts as <b>points above replacement (PAR)</b>: each projected season's points above this league's replacement level (the best player left over after every lineup is filled from the players who actually play that week, so injuries and byes push the line deeper than the Nth starter). <b>PAR / game</b> is the plain version: how many points per game a player gives you over a waiver-wire player at his position, rest of this season. Seasons after this one are discounted at the <b>rate</b> you choose. <b>WAR</b> (wins above replacement) is the same PAR run through this league's own win curve, for comparing across leagues and positions in wins; rank by either. No market input goes into any of it. <b>Fair</b> is what the market would pay if it agreed with our value, two ways. <em>Rank match</em>: line players up by our value and by price; the player we rank 10th gets the 10th-highest price as his fair value. It keeps the market's own price ladder and only argues about who stands where, so inside a flat tier (KTC's 9990s) swaps show as 0% and the <em>Gap</em> column carries the signal. <em>Curve fit</em>: one smooth line through every (our value, price) point, and each player's fair price is read off the line. <b>Mispricing</b> compares the market to that fair value within the player's position, the read to trade on; <b>All positions</b> does it with one line across every position, which also carries the model's positional lean (it gives quarterbacks a larger share of league wins than the market or the realized seasons do, so receivers read rich there), so take that column with the Performance tab.</p>
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search player" aria-label="Search player">
+    <div class="chips" id="pos" role="group" aria-label="Position">
+      <button class="chip" data-pos="ALL" aria-pressed="true">All</button>
+      <button class="chip" data-pos="QB" aria-pressed="false">QB</button>
+      <button class="chip" data-pos="RB" aria-pressed="false">RB</button>
+      <button class="chip" data-pos="WR" aria-pressed="false">WR</button>
+      <button class="chip" data-pos="TE" aria-pressed="false">TE</button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="priced" checked> priced only</label>
+    <label class="toggle"><input type="checkbox" id="liquid" checked> market ≥ 1500</label>
+    <label class="toggle"><input type="checkbox" id="incpicks" checked> draft picks</label>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="tablewrap">
+    <table id="t">
+      <thead><tr id="hdr"></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+  <div class="legend"><span class="lc">market cheap vs fundamentals</span><span class="lr">market rich vs fundamentals</span><span class="none">· WAR floor–ceiling: the 20th to 80th percentile of the career model's own distribution, valued the same way as WAR (the bar is the band's place among all players)</span><span class="none">· ▸ next to a name opens the detail: last season, projected games and points, FantasyCalc, the preseason value, the rank gap, and every projected season's points, PAR and WAR with its weight at the chosen rate</span></div>
+  <p class="note" id="note"></p>
+
+  </section>
+
+  <section id="tab-perf" role="tabpanel" aria-labelledby="tb-perf" hidden>
+  <p class="how"><b>How the model is validated.</b> The test sets are seasons: for each season from 2015 to 2022 the model is trained only on earlier seasons, projects that season's players, and is scored against the wins above replacement those players actually delivered over the following years, in this league's units. Nothing from the market enters the score. A random split would leak a player's future into his past, so the split is by time. KTC appears only as context: what you would have done without a model, scored the same way on the same players.</p>
+  <div id="perf"></div>
+
+  </section>
+
+  <section id="tab-trades" role="tabpanel" aria-labelledby="tb-trades" hidden>
+  <p class="how"><b>How trades are scored.</b> Every completed trade in the league since 2021, both sides, priced in KTC dynasty value with KTC's own trade calculator, so a two-for-one is judged the way the calculator judges it (the best asset counts for more than its share). <b>At N</b>, the trade date, that is the market's verdict at the time: the fair share is how far the calculator leaned your way. The same assets are then re-priced <b>at N+1, N+2, N+3 years and today</b>: what the market later thought of each package, with a pick turning into the rookie it became. A horizon that has not arrived is blank. Wins delivered since (wins above replacement in this league's units, from the week after the trade) are the secondary column. Pick the horizon that drives the scorecards, filter by league, manager and trade age, and click a column header to sort.</p>
+  <div class="controls">
+    <span class="ctl"><label for="tr-lg">League</label><select id="tr-lg"></select></span>
+    <span class="ctl"><label for="tr-mgr">Manager</label><select id="tr-mgr"><option value="">everyone</option></select></span>
+    <span class="ctl"><label for="tr-h">Value as of</label><select id="tr-h"><option value="v0">N, the trade date</option><option value="v1">N + 1 year</option><option value="v2" selected>N + 2 years</option><option value="v3">N + 3 years</option><option value="v_now">today</option></select></span>
+    <span class="ctl"><label for="tr-min">Trade age</label><select id="tr-min"><option value="0">any</option><option value="1" selected>at least 1 season</option><option value="2">at least 2 seasons</option><option value="3">at least 3 seasons</option></select></span>
+    <span class="ctl"><label for="tr-sort">Trades sorted by</label><select id="tr-sort"><option value="date" selected>newest first</option><option value="oldest">oldest first</option><option value="lopsided">most lopsided at N+2</option><option value="closest">closest at N+2</option><option value="wins">winner's net wins since</option></select></span>
+  </div>
+  <div id="trades" class="perf"></div>
+  </section>
+
+  <section id="tab-slots" role="tabpanel" aria-labelledby="tb-slots" hidden>
+  <p class="how"><b>Where will each team's next pick land?</b> The market prices a pick by its expected slot, so a 1st from a 2-win team is not a 1st from the league leader. This is the empirical answer from 26,000 league-seasons of Sleeper history: given a team's record and points-for rank after k weeks, how often it finished in the Early, Mid or Late third of the draft order (the draft order is reverse standings). Before week 1 the prior is last season's finish. The Trades tab prices every traded pick this way at the trade date; this tab shows the model itself, every current team's outlook, and how well the table has called our own leagues' draft orders.</p>
+  <div class="controls">
+    <span class="ctl"><label for="ds-lg">League</label><select id="ds-lg"></select></span>
+  </div>
+  <div id="slots" class="perf"></div>
+  </section>
+
+  <section id="tab-teamvalue" role="tabpanel" aria-labelledby="tb-teamvalue" hidden>
+  <p class="how"><b>Every roster's value, week by week.</b> KTC's own power ranking replayed over the league's history: each week every held player and pick is priced on KTC dynasty (superflex, TE premium once KTC published it), ranked within the roster and depth-weighted the way KTC's team page does it, with the top team that week pinned at 99. So the default line is <em>standing</em>, not raw total: switch to "vs league average" or the plain sum to see level moves the 1–99 scale hides. Grey bands are regular seasons (NFL week 1 to the league's final week); dashed green lines are draft days. Click a team to highlight it; hover the chart for that week's standings.</p>
+  <div class="controls">
+    <span class="ctl"><label for="tv-lg">League</label><select id="tv-lg"></select></span>
+    <span class="ctl"><label for="tv-metric">Measure</label><select id="tv-metric"></select></span>
+    <span class="count" id="tv-count"></span>
+  </div>
+  <div id="teamvalue" class="perf"></div>
+  </section>
+
+  <section id="tab-market" role="tabpanel" aria-labelledby="tb-market" hidden>
+  <p class="how"><b>How the market prices over time.</b> KTC's own daily history since 2020 (superflex dynasty values, players priced at 1,000 or more), measured for its regularities. Every relative move is <em>market-adjusted</em>: a player's change minus the median priced player's change, because KTC rescales its 1–9,999 scale and the whole pool drifts with the calendar. Nothing here is modelled; it is what the pricing community does, and where it is systematically off against what players then delivered.</p>
+  <div id="market" class="perf"></div>
+  </section>
+
+  <section id="tab-rosters" role="tabpanel" aria-labelledby="tb-rosters" hidden>
+  <p class="how">Value to a specific roster is not the league value: it is the wins a player adds to <em>that</em> lineup (optimal lineup with him minus without him, at that roster's own point on the win curve). Pick a league above and a team here. Trade targets are players on other rosters ranked by what they would add to this one; free agents are unrostered.</p>
+  <div class="controls">
+    <span class="ctl"><label for="team">Team</label><select id="team"></select></span>
+    <span class="count" id="teamcount"></span>
+  </div>
+  <div id="roster"></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  const fmt = (v, d = 0) => v == null ? '<span class="dim">–</span>' : Number(v).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const pct = v => v == null ? '<span class="dim">–</span>' : (v > 0 ? '+' : '') + (100 * v).toFixed(0) + '%';
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let data = null, rows = [], sortKey = 'iv', sortDir = -1, posFilter = 'ALL', allCols = [], colGroups = [];
+  const open = new Set();
+  const st = { rate: 0.1, years: 10, mkt: 'ktc', fair: 'rank', unit: 'par', league: null, team: null, picks: true };
+  const rowsIn = () => data.rows.filter(r => !r.pick || st.picks);     // pick rows take part in ranking and pricing only when shown
+
+  function misCell(m) {
+    if (m == null) return '<span class="dim">–</span>';
+    const v = Math.max(-1, Math.min(1, m)), w = Math.abs(v) * 30;
+    const cls = m < -0.1 ? 'cheap' : m > 0.1 ? 'rich' : '';
+    const bar = v < 0 ? `<i class="c" style="width:${w}px"></i>` : `<i class="r" style="width:${w}px"></i>`;
+    return `<span class="mis ${cls}"><span class="bar">${bar}</span>${pct(m)}</span>`;
+  }
+
+  function seasonal(r) {   // the month's market tailwind for this player's position and age band (market-adjusted 30-day change, Market tab)
+    const S = data.market_trends && data.market_trends.seasonality;
+    if (!S || r.pick || r.pos === 'PICK') return null;
+    const ymd = String(data.run_date || '').match(/\d{4}-\d{2}-\d{2}/) || String(data.as_of || '').match(/\d{4}-\d{2}-\d{2}/);
+    const month = (ymd ? new Date(ymd[0] + 'T12:00:00') : new Date()).getMonth() + 1;
+    const band = r.age == null ? null : r.age < 25 ? '<25' : r.age < 29 ? '25-28' : '29+';
+    const p = (S.by_position || []).find(x => x.position === r.pos && x.month === month), a = band && (S.by_age || []).find(x => x.age_band === band && x.month === month);
+    const xs = [p, a].filter(x => x && x.pct != null).map(x => x.pct);
+    return xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length / 100 : null;
+  }
+  function windCell(m) {
+    if (m == null) return '<span class="dim">–</span>';
+    const v = Math.max(-0.1, Math.min(0.1, m)), w = Math.abs(v) * 300;
+    const cls = m > 0.01 ? 'cheap' : m < -0.01 ? 'rich' : '';
+    const bar = v > 0 ? `<i class="c" style="width:${w}px"></i>` : `<i class="r" style="width:${w}px"></i>`;
+    return `<span class="mis ${cls}" title="The market's usual move for this position and age band over the next 30 days from this month, net of the whole market (Market tab)"><span class="bar">${bar}</span>${(m > 0 ? '+' : '') + (100 * m).toFixed(1)}%</span>`;
+  }
+
+  function buildCols(d) {
+    const L = d.labels, yy = d.season != null ? '’' + String(d.season % 100).padStart(2, '0') : '';
+    const unitLabel = ({ war: 'Career WAR', war_ros: 'ROS WAR', par: 'Career PAR', par_ros: 'ROS PAR' })[st.unit];
+    const B = (k, html) => st.unit === k ? `<b>${html}</b>` : html;
+    const ins = d.mode === 'inseason';
+    const hasRange = d.rows.some(r => r.L && r.L[st.league] && r.L[st.league].wl);
+    const maxHi = hasRange ? Math.max(1e-9, ...d.rows.map(r => r.war_hi || 0)) : 1;
+    const rangePos = v => Math.max(0, Math.min(100, 100 * (v || 0) / maxHi)).toFixed(1) + '%';
+    const nameCell = r => `<button class="caret" type="button" data-name="${esc(r.name)}" aria-expanded="${open.has(r.name)}" aria-label="Details for ${esc(r.name)}">${open.has(r.name) ? '▾' : '▸'}</button>${esc(r.name)}${r.team ? ` <span class="team">${esc(r.team)}</span>` : ''}`;
+    const groups = [
+      { label: 'Player', cols: [
+        { key: 'iv_rank_all', label: '#', get: r => r.iv_rank_all, cell: r => fmt(r.iv_rank_all) },
+        { key: 'name', label: 'Player', left: true, get: r => r.name, cell: nameCell, cls: 'name' },
+        { key: 'pos', label: 'Pos', left: true, get: r => r.pos, cell: r => `<span class="pos">${r.pos}</span>` },
+        { key: 'age', label: 'Age', get: r => r.age, cell: r => fmt(r.age, 0) },
+      ] },
+      { label: ins ? 'Rest of season' : 'Season 1', cols: [
+        ...(ins ? [{ key: 'td_ppg', label: yy + ' PPG so far', get: r => r.td_ppg, cell: r => fmt(r.td_ppg, 1) }] : []),
+        { key: 'h1_ppg', label: 'Proj PPG', get: r => r.h1_ppg, cell: r => fmt(r.h1_ppg, 1) },
+        { key: 'par_pg', label: 'PAR / game', title: 'Points per game above a freely available player at his position, rest of this season', get: r => r.par_pg, cell: r => r.par_pg == null ? '<span class="dim">–</span>' : fmt(r.par_pg, 1) },
+        { key: 'par_ros', label: 'PAR', get: r => r.par_ros, cell: r => B('par_ros', fmt(r.par_ros)) },
+        { key: 'war_ros', label: 'WAR', get: r => r.war_ros, cell: r => B('war_ros', fmt(r.war_ros, 2)) },
+      ] },
+      { label: 'Career', cols: [
+        { key: 'war', label: 'WAR', get: r => r.war, cell: r => B('war', fmt(r.war, 2)) },
+        ...(hasRange ? [{ key: 'war_hi', label: 'WAR floor–ceiling', get: r => r.war_hi, cell: r => r.war_lo == null ? '<span class="dim">–</span>' : `<span class="range"><i style="--lo:${rangePos(r.war_lo)};--hi:${rangePos(r.war_hi)}"></i></span>${fmt(r.war_lo, 1)}–${fmt(r.war_hi, 1)}` }] : []),
+        { key: 'par', label: 'PAR', get: r => r.par, cell: r => B('par', fmt(r.par)) },
+      ] },
+      { label: 'Pricing', cols: [
+        { key: 'ktc', label: 'KTC', get: r => r.ktc, cell: r => fmt(r.ktc) },
+        { key: 'market_rank', label: 'Mkt rank', get: r => r.market_rank, cell: r => fmt(r.market_rank) },
+        { key: 'iv_rank', label: unitLabel + ' rank*', get: r => r.iv_rank, cell: r => fmt(r.iv_rank) },
+        { key: 'fair', label: 'Fair', get: r => r.fair, cell: r => fmt(r.fair) },
+        { key: 'mis_pct_pos', label: 'Mispricing', title: "Market price against fair value within the player's position: the read to trade on", get: r => r.mis_pct_pos, cell: r => misCell(r.mis_pct_pos) },
+        { key: 'mis_pct', label: 'All positions', title: "The same gap with one fair-value line across every position; it carries the model's positional lean (quarterbacks heavy, receivers light), so read it with the Performance tab", get: r => r.mis_pct, cell: r => misCell(r.mis_pct) },
+        ...(d.market_trends && d.market_trends.seasonality ? [{ key: 'season_pct', label: 'Season', get: r => r.season_pct, cell: r => windCell(r.season_pct) }] : []),
+      ] },
+    ];
+    groups.forEach(g => g.cols.forEach((c, i) => { c.first = i === 0; }));
+    colGroups = groups;
+    return groups.flatMap(g => g.cols);
+  }
+
+  function outcomeCurve(q, rep, label) {   // a player's predictive distribution from his 20 equal-probability quantiles (BACKLOG 47)
+    if (!q || q.length < 4) return '';
+    const W = 300, H = 70, pad = 4, lo = Math.min(q[0], rep != null ? rep : q[0]) - 1, hi = Math.max(q[q.length - 1], rep != null ? rep : 0) + 1;
+    const x = v => pad + (v - lo) / Math.max(hi - lo, 1e-6) * (W - 2 * pad);
+    const bars = [];                 // each gap between neighbouring quantiles holds 1/20 of the probability: height = 1 / width
+    for (let j = 0; j + 1 < q.length; j++) { const w = Math.max(q[j + 1] - q[j], 0.15); bars.push([q[j], q[j + 1], 1 / w]); }
+    const top = Math.max(...bars.map(b => b[2]));
+    const y = d => H - 14 - d / top * (H - 22);
+    let d = `M${x(bars[0][0]).toFixed(1)},${(H - 14).toFixed(1)}`;
+    for (const [a, b, h] of bars) d += ` L${x(a).toFixed(1)},${y(h).toFixed(1)} L${x(b).toFixed(1)},${y(h).toFixed(1)}`;
+    d += ` L${x(bars[bars.length - 1][1]).toFixed(1)},${(H - 14).toFixed(1)} Z`;
+    const md = (q[9] + q[10]) / 2, mean = q.reduce((a, b) => a + b, 0) / q.length;
+    const above = rep == null ? null : q.filter(v => v > rep).length / q.length;
+    const tick = (v, t) => `<line x1="${x(v).toFixed(1)}" x2="${x(v).toFixed(1)}" y1="6" y2="${H - 12}" stroke="currentColor" stroke-dasharray="${t}" stroke-width="1"/>`;
+    return `<figure class="arch" style="margin:8px 0 0"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}: the spread of likely points per game, median ${fmt(md, 1)}${rep != null ? `, replacement ${fmt(rep, 1)}` : ''}" style="max-width:340px;width:100%;height:auto">` +
+      `<path d="${d}" fill="var(--accent)" fill-opacity="0.25" stroke="var(--accent)" stroke-width="1"/>` +
+      (rep != null ? tick(rep, '3 3') + `<text x="${(x(rep) + 3).toFixed(1)}" y="12" font-size="10" fill="currentColor">replacement</text>` : '') +
+      tick(md, '0') + `<text x="${x(lo + 0.2).toFixed(1)}" y="${H - 2}" font-size="10" fill="currentColor">${fmt(q[0], 1)}</text>` +
+      `<text x="${(W - pad).toFixed(1)}" y="${H - 2}" font-size="10" text-anchor="end" fill="currentColor">${fmt(q[q.length - 1], 1)} ppg</text></svg>` +
+      `<figcaption class="k">${esc(label)}: median ${fmt(md, 1)} ppg, average ${fmt(mean, 1)}${above == null ? '' : `; ${Math.round(above * 100)}% of outcomes above replacement`}. Lopsided to the right = more upside than downside.</figcaption></figure>`;
+  }
+
+  function details(r) {
+    if (r.pick) return `<div class="k">A draft pick valued as the expected wins of the player taken there (see the Rosters tab for how). Its wins land in the season its player arrives (${esc(r.name.slice(0, 4))}), so it carries ${esc(r.name.slice(0, 4))} − ${data.picks ? data.picks.now : ''} year(s) of your discount today and gains that back as the draft nears. Priced at KTC's tier value; fair value and the gap come from the same rank match as every player.</div>`;
+    const c = comps(r), L = data.labels, d = 1 - st.rate;
+    const yy = data.season != null ? '’' + String(data.season % 100).padStart(2, '0') : '';
+    const gap = r.rank_gap == null ? '–' : (r.rank_gap > 0 ? '+' : '') + r.rank_gap;
+    const facts = [
+      [data.prev_label, fmt(r.fpts)], [data.prev_label.replace('Pts', 'Games'), fmt(r.games, 0)],
+      ...(data.mode === 'inseason' ? [[yy + ' games so far', fmt(r.td_games, 0)]] : []),
+      ['Proj games, ' + L[0], fmt(r.h1_games, 1)], ['Proj points, ' + L[0], fmt(r.h[0])],
+      ['Preseason value (points)', fmt(r.iv_pre)], ['FantasyCalc', fmt(r.fc)],
+      ['Rank gap (ours − market)', gap], ['Market match', esc(r.match || '–')],
+    ];
+    const band = r.band, hasBand = !!(band && band.lo), hasW = !!(c.wl && c.wh);
+    const spans = L.map((lab, i) => ({ lab, pts: r.h[i], par: c.v ? c.v[i] : null, war: c.w ? c.w[i] : null, w: i < st.years ? Math.pow(d, i) : 0,
+      pg: r.pg ? r.pg[i] : null, lo: hasBand ? band.lo[i] : null, hi: hasBand ? band.hi[i] : null, wl: hasW ? c.wl[i] : null, wh: hasW ? c.wh[i] : null }));
+    const bandTh = hasBand ? '<th>PPG (20th–80th)</th>' : '', wTh = hasW ? '<th>WAR floor–ceiling</th>' : '';
+    const skewOf = s => { if (s.md == null || s.lo == null || s.hi == null) return ''; const up = s.hi - s.md, dn = s.md - s.lo; if (up > 1.25 * dn + 0.05) return ' <span class="skew up" title="right-skewed: more upside than downside (mean above median)">▲</span>'; if (dn > 1.25 * up + 0.05) return ' <span class="skew dn" title="left-skewed: more downside than upside (mean below median)">▼</span>'; return ''; };
+    const bandTd = s => hasBand ? `<td>${s.lo == null ? '<span class="dim">–</span>' : `${fmt(s.pg, 1)}${s.md == null ? '' : ` <span class="dim">med ${fmt(s.md, 1)}</span>`} <span class="dim">(${fmt(s.lo, 1)}–${fmt(s.hi, 1)})</span>${skewOf(s)}`}</td>` : '';
+    const wTd = s => hasW ? `<td>${s.wl == null ? '<span class="dim">–</span>' : `${fmt(s.wl, 2)}–${fmt(s.wh, 2)}`}</td>` : '';
+    // review 2026-10-13 (D8): the curves are drawn against THIS league's replacement line (the one the WAR columns use), not the
+    // model's internal share line in data.replacement_ppg (QB 15.4 vs the league's 13.5: a QB at 14.5 ppg read as below replacement)
+    const lgRep = (leagueOf(st.league) || {}).replacement;
+    const repPos = lgRep && lgRep[r.pos] != null ? lgRep[r.pos] : (data.replacement_ppg ? data.replacement_ppg[r.pos] : null);
+    const curves = r.dist ? outcomeCurve(r.dist.next, repPos, `Next season (${L[1] || 'next'})`) + outcomeCurve(r.dist.ros, repPos, `Rest of this season (${L[0] || 'ROS'})`) : '';
+    return `<div class="dgrid"><div class="facts">${facts.map(([k, v]) => `<div><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` + curves +
+      `<table class="small spans"><thead><tr><th class="l">Season</th><th>Proj pts</th>${bandTh}<th>PAR</th><th>WAR</th>${wTh}<th>Weight</th></tr></thead><tbody>${spans.map(s => `<tr><td class="l">${esc(s.lab)}</td><td>${fmt(s.pts)}</td>${bandTd(s)}<td>${fmt(s.par)}</td><td>${fmt(s.war, 2)}</td>${wTd(s)}<td class="dim">${s.w ? s.w.toFixed(2) : '0'}</td></tr>`).join('')}</tbody></table>` +
+      (hasBand || hasW ? `<div class="k" style="margin-top:6px">The band is the 20th to 80th percentile of the career model's predictive distribution (TabPFN) for seasons two and on; the point is the mean of that distribution and "med" its median; ▲ marks a right-skewed season (more upside than downside, the usual shape for RB, WR and TE) and ▼ a left-skewed one (a fat downside, the usual shape for QBs). This season and next season are point projections from the in-season model, so their floor and ceiling equal the point. Rookies without a modelled tail carry the position's spread.</div>` : '') + `</div>`;
+  }
+
+  // least-squares log(market) = a + b*log(iv+1); returns fair(iv)
+  function powerFit(pairs) {
+    if (pairs.length < 3) return null;
+    const xs = pairs.map(p => Math.log1p(Math.max(p[0], 0))), ys = pairs.map(p => Math.log(p[1]));
+    const mx = xs.reduce((s, v) => s + v, 0) / xs.length, my = ys.reduce((s, v) => s + v, 0) / ys.length;
+    let sxy = 0, sxx = 0;
+    for (let i = 0; i < xs.length; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; }
+    const b = Math.max(sxx > 0 ? sxy / sxx : 0, 1e-6), a = my - b * mx;
+    return iv => Math.exp(a) * Math.pow(1 + Math.max(iv, 0), b);
+  }
+
+  function comps(r) {   // value components for the selected league: w (wins), v (points)
+    const l = r.L && r.L[st.league];
+    return l ? l : { w: null, v: r.v };
+  }
+
+  function recompute() {
+    const d = 1 - st.rate, N = st.years, mk = st.mkt;
+    for (const r of data.rows) {
+      const c = comps(r);
+      let par = 0, war = 0;
+      for (let k = 0; k < Math.min(N, (c.v || []).length); k++) par += c.v[k] * Math.pow(d, k);
+      if (c.w) for (let k = 0; k < Math.min(N, c.w.length); k++) war += c.w[k] * Math.pow(d, k);
+      let lo = 0, hi = 0;
+      if (c.wl && c.wh) for (let k = 0; k < Math.min(N, c.wl.length); k++) { lo += c.wl[k] * Math.pow(d, k); hi += c.wh[k] * Math.pow(d, k); }
+      r.war_lo = c.wl ? lo : null; r.war_hi = c.wh ? hi : null;
+      r.par = par; r.war = c.w ? war : null; r.par_ros = c.v ? c.v[0] : null; r.war_ros = c.w ? c.w[0] : null;
+      r.par_pg = c.v && r.g && r.g[0] > 0.5 ? c.v[0] / r.g[0] : null;   // points above replacement per game, rest of season: the manager's number
+      r.iv = r[st.unit] == null ? 0 : r[st.unit];
+      r.market = r[mk] != null && r[mk] > 0 ? r[mk] : null;
+      r.fair = r.mis_pct = r.fair_pos = r.mis_pct_pos = r.market_rank = r.iv_rank = r.rank_gap = null;
+      r.season_pct = seasonal(r);
+    }
+    for (const r of data.rows) if (r.pick && !st.picks) r.iv_rank_all = null;
+    rowsIn().slice().sort((a, b) => b.iv - a.iv).forEach((r, i) => { r.iv_rank_all = i + 1; });
+    const priced = rowsIn().filter(r => r.market != null);
+    if (st.fair === 'rank') {
+      const rankFair = (rs, key) => { const ms = rs.map(r => r.market).sort((a, b) => b - a); rs.slice().sort((a, b) => b.iv - a.iv).forEach((r, i) => { r[key] = ms[i]; }); };
+      rankFair(priced, 'fair');
+      for (const p of ['QB', 'RB', 'WR', 'TE', 'PICK']) rankFair(priced.filter(r => r.pos === p), 'fair_pos');   // picks compare with picks
+      for (const r of priced) { r.mis_pct = (r.market - r.fair) / Math.max(r.fair, 1); r.mis_pct_pos = (r.market - r.fair_pos) / Math.max(r.fair_pos, 1); }
+    } else {
+      const pooled = powerFit(priced.map(r => [r.iv, r.market]));
+      const byPos = {};
+      for (const p of ['QB', 'RB', 'WR', 'TE', 'PICK']) byPos[p] = powerFit(priced.filter(r => r.pos === p).map(r => [r.iv, r.market])) || pooled;
+      if (pooled) for (const r of priced) {
+        r.fair = pooled(r.iv); r.mis_pct = (r.market - r.fair) / Math.max(r.fair, 1);
+        r.fair_pos = byPos[r.pos](r.iv); r.mis_pct_pos = (r.market - r.fair_pos) / Math.max(r.fair_pos, 1);
+      }
+    }
+    priced.slice().sort((a, b) => b.market - a.market).forEach((r, i) => { r.market_rank = i + 1; });
+    priced.slice().sort((a, b) => b.iv - a.iv).forEach((r, i) => { r.iv_rank = i + 1; r.rank_gap = r.iv_rank - r.market_rank; });
+    data.n_priced = priced.length;
+  }
+
+  function header() {
+    const thead = document.querySelector('#t thead');
+    thead.innerHTML = `<tr class="groups">${colGroups.map(g => `<th colspan="${g.cols.length}">${g.label}</th>`).join('')}</tr>`
+      + `<tr id="hdr">${allCols.map(c => `<th scope="col" tabindex="0" data-key="${c.key}" class="${c.left ? 'l ' : ''}${c.first ? 'gb' : ''}" aria-sort="${c.key === sortKey ? (sortDir < 0 ? 'descending' : 'ascending') : 'none'}"${c.title ? ` title="${c.title}"` : ''}>${c.label}</th>`).join('')}</tr>`;
+    thead.querySelectorAll('#hdr th').forEach(th => {
+      const go = () => { const k = th.dataset.key; if (k === sortKey) sortDir = -sortDir; else { sortKey = k; sortDir = (k === 'name' || k === 'pos' || k.includes('rank')) ? 1 : -1; } render(); };
+      th.addEventListener('click', go);
+      th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+  }
+
+  function leagueOf(id) { return (data.leagues || []).find(l => l.id === id); }
+
+  function render() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const priced = document.getElementById('priced').checked, liquid = document.getElementById('liquid').checked;
+    allCols = buildCols(data);
+    const col = allCols.find(c => c.key === sortKey) || allCols.find(c => c.key === 'iv_rank_all');
+    rows = rowsIn().filter(r => (posFilter === 'ALL' || r.pos === posFilter) && (!q || r.name.toLowerCase().includes(q)) && (!priced || r.market != null) && (!liquid || (r.market != null && r.market >= 1500)));
+    rows.sort((a, b) => { const x = col.get(a), y = col.get(b); if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x < y ? -1 : x > y ? 1 : 0) * sortDir; });
+    const n = allCols.length;
+    document.getElementById('body').innerHTML = rows.map((r, i) => `<tr class="${i % 2 ? 'alt' : ''}">${allCols.map(c => `<td class="${c.left ? 'l ' : ''}${c.cls || ''}${c.first ? ' gb' : ''}">${c.cell(r)}</td>`).join('')}</tr>`
+      + (open.has(r.name) ? `<tr class="detail"><td colspan="${n}">${details(r)}</td></tr>` : '')).join('');
+    document.getElementById('count').textContent = `${rows.length} of ${data.rows.length} players`;
+    const mkName = ({ ktc: 'KTC dynasty', fc: 'FantasyCalc', rd_sf: 'KTC redraft (SF)', rd_1qb: 'KTC redraft (1QB)' })[st.mkt] || st.mkt;
+    const lg = leagueOf(st.league);
+    const backendName = b => !b || /^xgb/.test(b) ? 'gradient-boosted trees' : /tabpfn/.test(b) ? 'TabPFN' + (/v2/.test(b) ? ' v2' : /3\.5|v3/.test(b) ? ' 3.5' : '') : /blend/.test(b) ? 'trees + TabPFN blend' : b;
+    document.getElementById('meta').innerHTML = `<b>${esc(data.as_of)}</b> · run ${data.run_date} · <b>${data.n}</b> players, <b>${data.n_priced}</b> priced by ${mkName} · discount <b>${Math.round(100 * st.rate)}%</b> per year, <b>${st.years}</b> years${lg ? ` · league <b>${esc(lg.name)}</b>` : ''} · career model <b>${esc(backendName(data.career_backend))}</b>`;
+    if (lg) {
+      const slots = Object.entries(lg.slots).map(([s, n]) => `${n} ${s.replace('SUPER_FLEX', 'SF')}`).join(', ');
+      const rep = Object.entries(lg.replacement).map(([p, v]) => `${p} ${v}`).join(' · ');
+      const starters = lg.starters ? Object.entries(lg.starters).map(([p, v]) => `${p} ${v}`).join(' · ') : '';
+      document.getElementById('leaguebox').innerHTML = `<b>${esc(lg.name)}</b>: ${lg.teams} teams, starts ${slots}${starters ? ` (actually fills ${starters})` : ''} · weekly replacement ppg ${rep} · win curve: weekly mean ${lg.curve.mean}, spread ${lg.curve.sd} (${lg.curve.n} team-weeks); +10 ppg ≈ +${lg.curve.per10} wins/week for an average team${lg.note ? ` · ${esc(lg.note)}` : ''}`;
+    }
+    header();
+  }
+
+  function nextCard(nn, TO) {   // next season's title equity (analysis/title_odds.py next_season_summary): standings from projected lineups + picks, this roster's picks
+    if (!nn || !TO || !TO.next_season) return '';
+    const N = TO.next_season, yy = '’' + String(N.season % 100).padStart(2, '0');
+    const rows = N.teams.map((x, i) => `<tr${x.rid === nn.rid ? ' class="me"' : ''}><td class="l">${i + 1}</td><td class="l name">${esc(x.name)}${x.owner ? ' (you)' : ''}</td><td>${fmt(x.lineup, 1)}</td><td>${pp(x.p_playoffs)}</td><td>${pp(x.p_bye)}</td><td>${pp(x.p_title, 1)}</td><td>${fmt(x.exp_wins, 1)}</td></tr>`).join('');
+    const pk = nn.picks && nn.picks.length
+      ? `<table class="small"><thead><tr><th class="l">Pick</th><th class="l">From</th><th title="Rookie-year points per game above the line that a pick of this slot has returned (the pick curve)">Edge ppg</th><th title="Title odds next season this roster loses without the pick (percentage points)">Title ${yy}</th></tr></thead><tbody>${nn.picks.map(p => `<tr><td class="l name">${esc(p.name)}</td><td class="l">${esc(p.from || '')}</td><td>${fmt(p.edge, 1)}</td><td>${dpp(p.d_title)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="k">No picks valued for this roster.</div>';
+    return `<div class="card"><h3>Next season (${yy}): title equity</h3><div class="k">Who is set up for next year, roughly: each roster's optimal lineup from every player's projected ${yy} rate and games plus the rookies its ${yy} picks bring (a pick's slot from the original roster's current lineup rank, its rookie-year edge from the pick curve), the league's format, a round-robin schedule and a blank record. ${N.n_picks} picks placed; ${N.weeks} regular-season weeks simulated.</div><div class="rgrid"><div><table class="small"><thead><tr><th class="l">#</th><th class="l">Team</th><th>Lineup ${yy}</th><th>Playoffs</th><th>Bye</th><th>Title</th><th>Exp. wins</th></tr></thead><tbody>${rows}</tbody></table></div><div><div class="k"><b>${esc(nn.name)}'s ${yy} picks</b> and what each is worth to the title run.</div>${pk}</div></div></div>`;
+  }
+
+  function titleFor(leagueId) {   // the league's title-odds block (analysis/title_odds.py), matched by league id, else by name
+    const T = data.title_odds && data.title_odds.leagues;
+    if (!T) return null;
+    const lg = leagueOf(leagueId);
+    const lid = data.league_ids ? data.league_ids[leagueId] : null;
+    return T.find(x => lid && String(x.id) === String(lid)) || T.find(x => lg && x.name === lg.name) || T.find(x => x.slug === leagueId) || null;
+  }
+  const pp = (v, d = 0) => v == null ? '–' : (100 * v).toFixed(d) + '%';
+  const dpp = v => v == null ? '<span class="dim">–</span>' : `<span class="${v > 0.005 ? 'cheap' : v < -0.005 ? 'rich' : ''}">${v > 0 ? '+' : ''}${(100 * v).toFixed(1)} pts</span>`;
+  function titleCurveSvg(team) {
+    const c = team.curve; if (!c || !c.shift) return '';
+    const W = 420, H = 150, mL = 36, mR = 10, mT = 8, mB = 24, iw = W - mL - mR, ih = H - mT - mB;
+    const xs = c.shift, X = v => mL + (v - xs[0]) / (xs[xs.length - 1] - xs[0]) * iw, Y = v => mT + ih - v * ih;
+    const line = (arr, color) => `<polyline fill="none" stroke="${color}" stroke-width="2" points="${arr.map((v, i) => `${X(xs[i]).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}"></polyline>`;
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map(v => `<line x1="${mL}" x2="${W - mR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="currentColor" opacity="0.12"></line><text x="${mL - 4}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">${Math.round(100 * v)}%</text>`).join('');
+    const xt = [-20, -10, 0, 10, 20].filter(v => v >= xs[0] && v <= xs[xs.length - 1]).map(v => `<text x="${X(v).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">${v > 0 ? '+' : ''}${v}</text>`).join('');
+    const now = `<line x1="${X(0).toFixed(1)}" x2="${X(0).toFixed(1)}" y1="${mT}" y2="${mT + ih}" stroke="currentColor" opacity="0.3" stroke-dasharray="3 3"></line>`;
+    return `<figure class="arch"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Title and playoff odds against a change in weekly lineup points" style="max-width:420px"><g>${ticks}${now}${line(c.p_playoffs, 'var(--muted)')}${line(c.p_title, 'var(--accent)')}${xt}</g></svg><figcaption class="k">Title odds (accent) and playoff odds (grey) as this lineup's weekly points move by the amount on the axis. The slope at zero is what a point a week is worth to this team; the S-shape is why the same player is worth different title odds to different teams.</figcaption></figure>`;
+  }
+
+  function renderRoster() {
+    const box = document.getElementById('roster'), sel = document.getElementById('team');
+    const teams = (data.teams && data.teams[st.league]) || [];
+    if (!teams.length) { sel.innerHTML = ''; box.innerHTML = '<p class="note">No roster view for this league in this run.</p>'; document.getElementById('teamcount').textContent = ''; return; }
+    if (!teams.some(t => String(t.rid) === String(st.team))) { const mine = teams.find(t => t.owner); st.team = mine ? mine.rid : teams[0].rid; }
+    const order = teams.slice().sort((a, b) => b.ppg - a.ppg);
+    sel.innerHTML = order.map(t => `<option value="${t.rid}" ${String(t.rid) === String(st.team) ? 'selected' : ''}>${esc(t.name)}${t.owner ? ' (you)' : ''}</option>`).join('');
+    const t = teams.find(x => String(x.rid) === String(st.team));
+    const rank = order.findIndex(x => x.rid === t.rid) + 1;
+    const TO = titleFor(st.league), tmap = TO ? Object.fromEntries(TO.teams.map(x => [String(x.rid), x])) : null, tt = tmap ? tmap[String(t.rid)] : null;
+    const tPlayers = tt ? Object.fromEntries(tt.players.map(p => [p.name, p])) : {}, tTargets = tt ? Object.fromEntries(tt.targets.map(p => [p.name, p])) : {};
+    const NX = TO && TO.next_season ? Object.fromEntries(TO.next_season.teams.map(x => [String(x.rid), x])) : null, nn = NX ? NX[String(t.rid)] : null;
+    const nPlayers = nn ? Object.fromEntries(nn.players.map(p => [p.name, p])) : {}, nyy = TO && TO.next_season ? '’' + String(TO.next_season.season % 100).padStart(2, '0') : '';
+    const meanWp = teams.reduce((s, x) => s + x.wp, 0) / teams.length;
+    document.getElementById('teamcount').textContent = `${teams.length} rosters · win probabilities average ${fmt(100 * meanWp, 0)}%`;
+    const head = `<div class="teamhead"><span class="big">${esc(t.name)}${t.owner ? ' (you)' : ''}</span><span class="stat">lineup <b>${fmt(t.ppg, 1)}</b> ppg</span><span class="stat">#<b>${rank}</b> of ${teams.length}</span>${tt ? `<span class="stat">title <b>${pp(tt.p_title, 1)}</b></span><span class="stat">playoffs <b>${pp(tt.p_playoffs)}</b></span>${nn ? `<span class="stat" title="Title odds next season from projected lineups and the picks each roster holds">title ${nyy} <b>${pp(nn.p_title, 1)}</b></span>` : ''}<span class="stat">${tt.wins}-${tt.losses}${tt.ties ? '-' + tt.ties : ''}, ${fmt(tt.pf)} pf</span>` : ''}<span class="stat">P(win) <b>${fmt(100 * t.wp, 0)}%</b></span></div>`;
+    const standings = `<div class="card"><h3>Projected lineups now</h3><div class="k">Points per week from each roster's optimal lineup; P(win) = chance against a league-average opponent on this league's curve, centred on the league's average projected lineup.</div>${TO ? `<div class="k">Title odds: ${TO.n_sims ? TO.n_sims.toLocaleString() : (data.title_odds.n_sims || 0).toLocaleString()} simulated seasons of the remaining schedule (weeks ${TO.weeks_simulated[0]}–${TO.weeks_simulated[TO.weeks_simulated.length - 1]}), seeded by record then points for; ${TO.playoff_teams} teams make the bracket from week ${TO.playoff_week_start}${TO.byes ? `, the top ${TO.byes} get a bye` : ''}. Gap between the two favourites: ${pp(TO.top_heaviness, 0)}.</div>` : ''}<table class="small standings"><thead><tr><th class="l">Team</th><th>PPG</th><th>P(win)</th>${TO ? `<th>Playoffs</th>${TO.byes ? '<th>Bye</th>' : ''}<th>Title</th>` : ''}</tr></thead><tbody>${order.map(x => { const o = tmap ? tmap[String(x.rid)] : null; return `<tr class="${x.rid === t.rid ? 'mine' : ''}"><td class="l">${esc(x.name)}${x.owner ? ' (you)' : ''}</td><td>${fmt(x.ppg, 1)}</td><td>${fmt(100 * x.wp, 0)}%</td>${TO ? `<td>${o ? pp(o.p_playoffs) : '–'}</td>${TO.byes ? `<td>${o ? pp(o.p_bye) : '–'}</td>` : ''}<td><b>${o ? pp(o.p_title, 1) : '–'}</b></td>` : ''}</tr>`; }).join('')}</tbody></table>${tt ? titleCurveSvg(tt) : ''}</div>`;
+    const players = `<div class="card"><h3>Marginal wins per rostered player</h3><div class="k">Wins this lineup loses without him: rest of season, and career at the export's ${data.discount_rate != null ? Math.round(data.discount_rate * 100) + '%' : 'own'} rate (these columns are computed server-side and do not follow the slider, which moves the Players tab). League WAR is his value to an average roster, for comparison.</div><table class="small"><thead><tr><th class="l">Player</th><th class="l">Pos</th><th>ROS wins</th>${tt ? '<th title="Title odds this roster loses without him this season (percentage points)">Title odds</th>' : ''}${nn ? `<th title="Title odds next season this roster loses without him (percentage points)">Title ${nyy}</th>` : ''}<th>Career wins</th><th>Career PAR</th><th>League WAR</th><th>KTC</th></tr></thead><tbody>${t.players.map(p => `<tr><td class="l name">${esc(p[0])}${p[7] && p[7] !== 'active' ? ` <span class="team">${p[7]}</span>` : ''}</td><td class="l"><span class="pos">${p[1]}</span></td><td>${fmt(p[6], 2)}</td>${tt ? `<td>${dpp(tPlayers[p[0]] ? tPlayers[p[0]].d_title : null)}</td>` : ''}${nn ? `<td>${dpp(nPlayers[p[0]] ? nPlayers[p[0]].d_title : null)}</td>` : ''}<td>${fmt(p[2], 2)}</td><td>${fmt(p[3])}</td><td>${fmt(p[4], 2)}</td><td>${fmt(p[5])}</td></tr>`).join('')}</tbody></table></div>`;
+    const targets = `<div class="card"><h3>Trade targets</h3><div class="k">Players on other rosters, ranked by what they would add to this lineup; the career columns are at the export's ${data.discount_rate != null ? Math.round(data.discount_rate * 100) + '%' : 'own'} rate.</div><table class="small"><thead><tr><th class="l">Player</th><th class="l">Pos</th><th class="l">Owned by</th><th>Adds ROS</th>${tt ? '<th title="Title odds he adds to this roster this season (percentage points)">+ title</th>' : ''}<th>Adds career</th><th>KTC</th><th>Wins / 1,000 KTC</th></tr></thead><tbody>${t.targets.map(p => `<tr><td class="l name">${esc(p[0])}</td><td class="l"><span class="pos">${p[1]}</span></td><td class="l">${esc(p[2])}${p[7] && p[7] !== 'active' ? ` <span class="team">${p[7]}</span>` : ''}</td><td>+${fmt(p[6], 2)}</td>${tt ? `<td>${dpp(tTargets[p[0]] ? tTargets[p[0]].d_title : null)}</td>` : ''}<td>+${fmt(p[3], 2)}</td><td>${fmt(p[5])}</td><td>${p[5] ? fmt(1000 * p[3] / p[5], 2) : '–'}</td></tr>`).join('')}</tbody></table></div>`;
+    const free = `<div class="card"><h3>Free agents</h3><div class="k">Players on no roster, taxi squad or IR in this league, by career wins they would add here.</div>${t.free.length ? `<table class="small"><thead><tr><th class="l">Player</th><th class="l">Pos</th><th>Adds career</th></tr></thead><tbody>${t.free.map(p => `<tr><td class="l name">${esc(p[0])}</td><td class="l"><span class="pos">${p[1]}</span></td><td>+${fmt(p[2], 2)}</td></tr>`).join('')}</tbody></table>` : '<div class="k">None add a starter.</div>'}</div>`;
+    box.innerHTML = head + `<div class="rgrid">${standings}${players}</div><div class="rgrid2">${targets}${free}</div>` + nextCard(nn, TO) + picksCard() + tradeFinderCard(t);
+    wireTradeFinder(t);
+  }
+
+  // ---- trade builder: lineup math in the page --------------------------------------------------
+  // Every rostered player is in or out each week by projected availability (games / span), drawn with
+  // fixed common random numbers, so bench depth has value and both sides of a deal are scored alike.
+  const ELIG = { QB: ['QB'], RB: ['RB'], WR: ['WR'], TE: ['TE'], FLEX: ['RB', 'WR', 'TE'], SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'] };
+  const tb = { recv: [], give: [], slack: 5, maxAdd: 3, obj: 'both', other: 'any', picks: false };
+  // draft picks as pieces: a roster's owned picks (export: season, round, projected tier, original team, wins, KTC);
+  // a pick adds its discounted wins to career value, nothing to ROS, and is priced at KTC's tier value
+  const ord = n => n + (['st', 'nd', 'rd'][n - 1] || 'th');
+  function pickWins(p) { const k = p.pickSeason - ((data.picks && data.picks.now) || p.pickSeason); return k < st.years && p.pickBase != null ? p.pickBase * Math.pow(1 - st.rate, Math.max(k, 0)) : 0; }
+  function teamPicks(teamObj) { return (teamObj.picks || []).map(([season, rnd, tier, orig, base, ktc]) => ({ name: `${season} ${ord(rnd)} ${tier} (${orig})`, pos: 'PICK', ktc, pick: true, pickSeason: season, pickBase: base, rid: teamObj.rid })); }
+  function assetsOf(teamObj) { return rosterRows(teamObj).concat(tb.picks ? teamPicks(teamObj) : []); }
+  function assetOf(name) { const r = rowOf(name); if (r) return r; for (const t of data.teams[st.league] || []) { const p = teamPicks(t).find(x => x.name === name); if (p) return p; } return null; }
+  function teamOfAsset(name) { return teamOfPlayer(name) || (data.teams[st.league] || []).find(t => (t.picks || []).some(([s, r, tier, orig]) => `${s} ${ord(r)} ${tier} (${orig})` === name)); }   // KTC balance is the acceptance test; the other side's wins are shown, filtering is opt-in
+  const DRAWS = 12, EPS = 0.005, NONE = new Set();
+  // objective: career = discounted wins over the valued years (includes ROS); ros = this season only; both = must improve both, ranked by ROS + career
+  function score(e) { return tb.obj === 'career' ? e.gain : tb.obj === 'ros' ? e.gainRos : (e.gainRos > EPS && e.gain > EPS ? e.gainRos + e.gain : -Infinity); }
+  function okOther(e) { return tb.other === 'any' || (tb.other === 'ros' ? e.theirsRos > -EPS : e.theirs > -EPS); }
+  function rankDeals(res) { res.sort((a, b) => score(b.e) - score(a.e) || b.e.gain - a.e.gain || a.pkg.length - b.pkg.length); for (const r of res) r.pareto = score(r.e) > -Infinity && !res.some(o => o !== r && o.e.gainRos >= r.e.gainRos - EPS && o.e.gain >= r.e.gain - EPS && (o.e.gainRos > r.e.gainRos + EPS || o.e.gain > r.e.gain + EPS)); return res; }
+  function nowLater(e) { const now = e.gainRos > EPS ? 1 : e.gainRos < -EPS ? -1 : 0, later = e.gain - e.gainRos > EPS ? 1 : e.gain - e.gainRos < -EPS ? -1 : 0; const w = x => x > 0 ? 'wins' : x < 0 ? 'costs' : 'flat'; return `${w(now)} now, ${w(later)} later`; }
+  const slotCache = {};
+  function slotList(slots) { const key = JSON.stringify(slots); if (slotCache[key]) return slotCache[key]; const order = Object.keys(slots).filter(s => ELIG[s]).sort((a, b) => ELIG[a].length - ELIG[b].length || a.localeCompare(b)); const out = []; for (const s of order) for (let i = 0; i < slots[s]; i++) out.push(s); return slotCache[key] = out; }
+  function spanGames(k) { return k === 0 && data.mode === 'inseason' && data.season != null ? Math.max(17 - (data.week || 0), 1) : 17; }
+  function effPpg(r, k, lid) { const s = (r.L && r.L[lid] && r.L[lid].s) || 1; return ((r.pg ? r.pg[k] : 0) || 0) * s; }
+  function avail(r, k) { return Math.min(((r.g ? r.g[k] : 0) || 0) / spanGames(k), 1); }
+  function hashU(s, k, j) { let h = 2166136261 ^ (k * 97 + j * 7919); for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15; return (h >>> 0) / 4294967296; }
+  function isIn(r, k, j) { return hashU(r.name, k, j) < avail(r, k); }
+  function careerWarOf(r) { if (r && r.pick) return pickWins(r); const w = r.L && r.L[st.league] && r.L[st.league].w; if (!w) return 0; const d = 1 - st.rate; let s = 0; for (let k = 0; k < Math.min(st.years, w.length); k++) s += w[k] * Math.pow(d, k); return s; }
+  function slotFill(list, slots, floor) {   // list sorted by points, descending; floor = replacement ppg by position (a free agent is always there)
+    const used = new Array(list.length).fill(false); let total = 0;
+    for (const s of slotList(slots)) {
+      const fl = floor ? Math.max(...ELIG[s].map(p => floor[p] || 0)) : 0;
+      let best = -1;
+      for (let i = 0; i < list.length; i++) if (!used[i] && ELIG[s].includes(list[i].pos)) { best = i; break; }
+      if (best >= 0 && list[best].v >= fl) { used[best] = true; total += list[best].v; } else total += fl;
+    }
+    return total;
+  }
+  function lineupTotal(players, slots, k, lid, floor) { return slotFill(players.map(r => ({ pos: r.pos, v: effPpg(r, k, lid) })).sort((a, b) => b.v - a.v), slots, floor); }
+  function winProb(lg, x) { return 1 / (1 + Math.exp(-(lg.curve.a + lg.curve.b * x))); }
+  const prepCache = {};
+  function prep(teamObj, lg) {   // per roster: for every (year, draw) the active players who are in, sorted by that year's points
+    const key = `${lg.id}|${teamObj.rid}`; if (prepCache[key]) return prepCache[key];
+    const rows = rosterRows(teamObj, true), n = (data.labels || []).length, byK = [];
+    for (let k = 0; k < n; k++) { const byJ = []; for (let j = 0; j < DRAWS; j++) byJ.push(rows.filter(r => isIn(r, k, j)).map(r => ({ name: r.name, pos: r.pos, v: effPpg(r, k, lg.id) })).sort((a, b) => b.v - a.v)); byK.push(byJ); }
+    return prepCache[key] = { rows, byK };
+  }
+  const offsetCache = {};
+  function offsets(lg) {   // per-year centring: the league's average expected lineup sits at the curve's 50 % point in every valued year
+    if (offsetCache[lg.id]) return offsetCache[lg.id];
+    const n = (data.labels || []).length, teams = data.teams[lg.id] || [], out = [];
+    for (let k = 0; k < n; k++) { let s = 0; for (const t of teams) { const P = prep(t, lg); for (let j = 0; j < DRAWS; j++) s += slotFill(P.byK[k][j], lg.slots, lg.replacement); } out.push(teams.length ? lg.curve.mean - s / (teams.length * DRAWS) : (lg.offset || 0)); }
+    return offsetCache[lg.id] = out;
+  }
+  function winsChanged(teamObj, lg, removeNames, addRows) {   // expected wins of a roster after removing / adding players
+    const P = prep(teamObj, lg), d = 1 - st.rate, n = Math.min(st.years, P.byK.length), off = offsets(lg); let total = 0, ros = 0;
+    for (let k = 0; k < n; k++) {
+      let p = 0;
+      for (let j = 0; j < DRAWS; j++) {
+        let list = P.byK[k][j];
+        if (removeNames.size) list = list.filter(x => !removeNames.has(x.name));
+        if (addRows.length) { list = list.slice(); for (const r of addRows) if (isIn(r, k, j)) { const v = effPpg(r, k, lg.id); let i = list.findIndex(x => x.v < v); if (i < 0) i = list.length; list.splice(i, 0, { name: r.name, pos: r.pos, v }); } }
+        p += winProb(lg, slotFill(list, lg.slots, lg.replacement) + off[k]);
+      }
+      const w = spanGames(k) * (p / DRAWS) * Math.pow(d, k); total += w; if (k === 0) ros = w;
+    }
+    return { total, ros };
+  }
+  const baseCache = {};
+  function baseWins(teamObj, lg) { const key = `${lg.id}|${teamObj.rid}|${st.rate}|${st.years}`; return baseCache[key] || (baseCache[key] = winsChanged(teamObj, lg, NONE, [])); }
+  function pv(v, vmax) { return (0.1 * Math.pow(v / 10099, 1.4) + 0.7 * Math.pow(v / (1.05 * vmax), 1.25) + 0.2) * v; }   // KTC's calculator (processVNew)
+  function rosterRows(teamObj, forLineup = false) {
+    const keep = new Set(teamObj.players.filter(p => !forLineup || !p[7] || p[7] === 'active').map(p => p[0]));
+    return data.rows.filter(r => keep.has(r.name));
+  }
+  function teamOfPlayer(name) { return (data.teams[st.league] || []).find(x => x.players.some(p => p[0] === name)); }
+  function rowOf(name) { return data.rows.find(r => r.name === name); }
+  function statusOf(name) { const tm = teamOfPlayer(name); const p = tm && tm.players.find(x => x[0] === name); return p && p[7] && p[7] !== 'active' ? p[7] : ''; }
+  function suggestions(side, me, q) {
+    q = q.trim().toLowerCase(); if (q.length < 2) return [];
+    const other = tb.recv.length ? teamOfAsset(tb.recv[0]) : null;
+    const pool = side === 'give' ? assetsOf(me) : (data.teams[st.league] || []).filter(t => t.rid !== me.rid && (!other || t.rid === other.rid)).flatMap(t => assetsOf(t));
+    return pool.filter(r => r.name.toLowerCase().includes(q) && !tb.recv.includes(r.name) && !tb.give.includes(r.name)).sort((a, b) => (b.ktc || 0) - (a.ktc || 0)).slice(0, 8);
+  }
+  function dealPrice(recvRows, giveRows) {
+    const all = recvRows.concat(giveRows), vmax = Math.max(1, ...all.map(r => r.ktc || 0));
+    const give = giveRows.reduce((s, r) => s + pv(r.ktc || 0, vmax), 0), get = recvRows.reduce((s, r) => s + pv(r.ktc || 0, vmax), 0);
+    return { give, get, diff: give - get, unfair: Math.abs(give - get) / Math.max(give + get, 1) };
+  }
+  function passes(pr, tol) { return pr.give >= pr.get * (1 - tol) && pr.give <= pr.get * (1 + Math.max(0.15, 3 * tol)); }   // meets the calculator; an overpay past 15 % (or 3x slack) is not a proposal
+  function dealEval(me, recvRows, giveRows) {
+    const lg = leagueOf(st.league), other = teamOfAsset(recvRows[0].name);
+    const { give, get } = dealPrice(recvRows, giveRows);
+    const recvP = recvRows.filter(r => !r.pick), giveP = giveRows.filter(r => !r.pick);
+    const pickIn = recvRows.filter(r => r.pick).reduce((s, p) => s + pickWins(p), 0), pickOut = giveRows.filter(r => r.pick).reduce((s, p) => s + pickWins(p), 0);
+    const gn = new Set(giveP.map(r => r.name)), rn = new Set(recvP.map(r => r.name));
+    const base = baseWins(me, lg), after = winsChanged(me, lg, gn, recvP);          // an acquired taxi / IR player is activated
+    const tBase = baseWins(other, lg), tAfter = winsChanged(other, lg, rn, giveP);
+    const diff = give - get, unfair = Math.abs(diff) / Math.max(give + get, 1);
+    const warGive = giveRows.reduce((s, r) => s + careerWarOf(r), 0), warGet = recvRows.reduce((s, r) => s + careerWarOf(r), 0);
+    return { other, give, get, diff, unfair, warGive, warGet, gain: after.total - base.total + pickIn - pickOut, gainRos: after.ros - base.ros,
+             theirs: tAfter.total - tBase.total + pickOut - pickIn, theirsRos: tAfter.ros - tBase.ros };
+  }
+  function combos(items, maxK) { const out = []; const n = items.length; for (let i = 0; i < n; i++) { out.push([items[i]]); if (maxK >= 2) for (let j = i + 1; j < n; j++) { out.push([items[i], items[j]]); if (maxK >= 3) for (let l = j + 1; l < n; l++) out.push([items[i], items[j], items[l]]); } } return out; }
+  function f2s(v) { return (v >= 0 ? '+' : '') + v.toFixed(2); }
+  function picksCard() {
+    const pk = data.picks; if (!pk || !pk.rows || !pk.rows.length) return '';
+    const d = 1 - st.rate, now = pk.now;
+    const rows = pk.rows.map(([season, rnd, tier, n, base, ktc]) => { const wins = base * Math.pow(d, Math.max(season - now, 0)); return { season, rnd, tier, n, base, wins, ktc, per: ktc ? wins / ktc * 1000 : null }; });
+    const order = { Early: 0, Mid: 1, Late: 2 };
+    rows.sort((a, b) => a.season - b.season || a.rnd - b.rnd || order[a.tier] - order[b.tier]);
+    const m = pk.meta || {};
+    // review 2026-10-13: the comparison with rostered players comes from the payload (the old "0.15-0.27" was hard-coded and stale),
+    // and the pick sum embeds the export's discount rate from the draft year (fit on war_disc), which the slider does not change
+    const per = (data.rows || []).filter(r => r.ktc > 0 && r.L && r.L[st.league]).map(r => careerWarOf(r) / r.ktc * 1000).filter(x => isFinite(x)).sort((a, b) => a - b);
+    const q = p => per.length ? per[Math.min(per.length - 1, Math.floor(p * per.length))].toFixed(2) : '–';
+    const xr = data.discount_rate != null ? Math.round(data.discount_rate * 100) : null;
+    return `<div class="card" style="margin-top:16px"><h3>Draft picks in wins</h3><div class="k">A pick is a claim on the player taken there. Wins by NFL draft capital come from every drafted QB / RB / WR / TE of the ${m.classes ? m.classes.join('–') : ''} classes (${m.n_players || ''} players, ten seasons, never-played counted as zero, this league's line and curve); which NFL picks go at each slot comes from your leagues' own rookie drafts (${m.n_rookie_picks || ''} picks). A ${now + 1} pick's player arrives next season, so it carries one more year of the discount you set; KTC tier prices as of ${esc(m.ktc_date || '')}. A pick is worth ${Math.round(st.rate * 100)}% more the day this season ends, because a year of waiting falls off. Compare wins per 1,000 KTC with the roster tables: at this discount your rostered players run ${q(0.25)}–${q(0.75)} (median ${q(0.5)}). The pick's ten-season sum is built at the export's ${xr != null ? xr + '%' : 'own'} rate from the draft year and the slider only moves the waiting years, so at another rate players and picks are not on one scale.</div>
+      <div class="tablewrap tbwrap"><table class="small tbt"><thead><tr><th class="l">Pick</th><th>Slots seen</th><th>Wins (10 seasons${xr != null ? `, at ${xr}%/yr from the draft year` : ''})</th><th>Wins at ${Math.round(st.rate * 100)}%/yr of waiting</th><th>KTC</th><th>Wins / 1,000 KTC</th></tr></thead><tbody>${rows.map(r => `<tr><td class="l">${r.season} ${r.tier} ${ord(r.rnd)}</td><td>${r.n}</td><td>${r.base.toFixed(2)}</td><td>${r.wins.toFixed(2)}</td><td>${r.ktc ? fmt(r.ktc) : '–'}</td><td>${r.per != null ? r.per.toFixed(3) : '–'}</td></tr>`).join('')}</tbody></table></div></div>`;
+  }
+  function tradeFinderCard(me) {
+    const side = (key, title, hint) => `<div class="side" data-side="${key}"><h4>${title}</h4><div class="chips2">${tb[key].map(n => `<span class="chip2">${esc(n)}${statusOf(n) ? ` <span class="team">${statusOf(n)}</span>` : ''} <span class="m">${fmt((assetOf(n) || {}).ktc)}</span><button type="button" data-rm="${esc(n)}" aria-label="Remove ${esc(n)}">×</button></span>`).join('') || `<span class="k">${hint}</span>`}</div><input type="text" class="q" placeholder="type a name…" autocomplete="off" aria-label="Search ${title}"><ul class="sugg" hidden></ul></div>`;
+    return `<div class="card tf"><h3>Trade builder</h3><div class="k">Type names to build both sides (the other side is one roster: the first player you receive sets it). Price is KTC's own calculator. Wins are expected wins from each roster's lineup over the valued years, every player in or out each week by his projected availability, so bench depth counts and a player who does not start today still matters when he would start later or when someone is hurt. Every slot is floored at the league's replacement line (a free agent at that level is always available), so a player's gain for a roster is his edge over the line plus what he adds on the weeks your own depth falls below it, never a credit for a weak bench. League WAR given / received is the asset side: what the players are worth to any roster, which the price should track. Leave your side empty for package suggestions; add players and it tells you whether the deal passes and what would complete or balance it. Packages are capped at ${tb.maxAdd} pieces. Draft picks (checkbox) are valued at the discount you set and priced at KTC's tier value: a ${(data.picks && data.picks.now || 0) + 1} pick is worth ${Math.round(st.rate * 100)}% more the day this season ends, because a year of waiting falls off, so a pick is usually better held than traded in-season unless the other side pays for that rise.</div>
+      <div class="tb2">${side('recv', 'You receive', 'players on another roster')}${side('give', 'You give', 'players on this roster (or leave empty for suggestions)')}</div>
+      <div class="row" style="margin-top:10px"><label for="tf-obj">Optimise for</label><select id="tf-obj"><option value="both" ${tb.obj === 'both' ? 'selected' : ''}>ROS and career wins (both must improve)</option><option value="career" ${tb.obj === 'career' ? 'selected' : ''}>Career wins</option><option value="ros" ${tb.obj === 'ros' ? 'selected' : ''}>ROS wins</option></select><label for="tf-other">Other side</label><select id="tf-other"><option value="any" ${tb.other === 'any' ? 'selected' : ''}>any outcome (KTC balance decides)</option><option value="ros" ${tb.other === 'ros' ? 'selected' : ''}>must not lose ROS wins</option><option value="career" ${tb.other === 'career' ? 'selected' : ''}>must not lose career wins</option></select><label for="tf-slack">Calculator slack %</label><input type="number" id="tf-slack" min="0" max="25" step="1" value="${tb.slack}" style="width:64px"><label class="toggle"><input type="checkbox" id="tf-picks" ${tb.picks ? 'checked' : ''}> include draft picks</label><button type="button" class="go" id="tf-go">Evaluate / suggest</button><button type="button" class="chip" id="tf-clear">Clear</button></div><div id="tf-out"></div></div>`;
+  }
+  function wireTradeFinder(me) {
+    const card = document.querySelector('.tf'); if (!card) return;
+    card.querySelectorAll('.side').forEach(sideEl => {
+      const key = sideEl.dataset.side, input = sideEl.querySelector('input.q'), list = sideEl.querySelector('ul.sugg');
+      const show = () => { const s = suggestions(key, me, input.value); list.innerHTML = s.map((r, i) => `<li data-name="${esc(r.name)}" class="${i === 0 ? 'hot' : ''}"><span>${esc(r.name)} <span class="pos">${r.pos}</span>${statusOf(r.name) ? ` <span class="team">${statusOf(r.name)}</span>` : ''}</span><span class="m">${key === 'recv' ? esc((teamOfAsset(r.name) || {}).name || '') + ' · ' : ''}KTC ${fmt(r.ktc)} · WAR ${careerWarOf(r).toFixed(2)}</span></li>`).join(''); list.hidden = s.length === 0; };
+      input.addEventListener('input', show);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { const first = list.querySelector('li'); if (first) { tb[key].push(first.dataset.name); renderRoster(); } } });
+      list.addEventListener('click', e => { const li = e.target.closest('li'); if (li) { tb[key].push(li.dataset.name); renderRoster(); } });
+      sideEl.querySelectorAll('button[data-rm]').forEach(b => b.addEventListener('click', () => { tb[key] = tb[key].filter(n => n !== b.dataset.rm); renderRoster(); }));
+    });
+    document.getElementById('tf-obj').addEventListener('change', e => { tb.obj = e.target.value; if (tb.recv.length) runTradeFinder(me); });
+    document.getElementById('tf-other').addEventListener('change', e => { tb.other = e.target.value; if (tb.recv.length) runTradeFinder(me); });
+    document.getElementById('tf-picks').addEventListener('change', e => { tb.picks = e.target.checked; if (!tb.picks) { tb.recv = tb.recv.filter(n => !(assetOf(n) || {}).pick); tb.give = tb.give.filter(n => !(assetOf(n) || {}).pick); } renderRoster(); });
+    document.getElementById('tf-go').addEventListener('click', () => { tb.slack = Math.max(0, Math.min(25, parseFloat(document.getElementById('tf-slack').value) || 0)); runTradeFinder(me); });
+    document.getElementById('tf-clear').addEventListener('click', () => { tb.recv = []; tb.give = []; renderRoster(); });
+    if (tb.recv.length) runTradeFinder(me);
+  }
+  function runTradeFinder(me) {
+    const out = document.getElementById('tf-out');
+    const recvRows = tb.recv.map(assetOf).filter(Boolean), giveRows = tb.give.map(assetOf).filter(Boolean);
+    if (!recvRows.length) { out.innerHTML = '<p class="note">Add at least one player you would receive.</p>'; return; }
+    if (recvRows.some(r => !r.ktc)) { out.innerHTML = '<p class="note">Every player in a deal needs a KTC value for the calculator.</p>'; return; }
+    const mine = assetsOf(me).filter(r => r.ktc && !tb.give.includes(r.name));
+    const tol = tb.slack / 100, otherName = esc((teamOfAsset(recvRows[0].name) || {}).name || ''), otherTxt = tb.other === 'any' ? '' : ` leave ${otherName} no worse on ${tb.other === 'ros' ? 'ROS' : 'career'} wins`;
+    const cls = v => v > EPS ? 'pos' : v < -EPS ? 'neg' : '';
+    const groups = `<tr class="groups"><th class="l"></th><th colspan="3">KTC calculator</th><th colspan="2">League WAR</th><th colspan="2">Your wins</th><th colspan="2">Their wins</th></tr>`;
+    const pkgCell = r => `<td class="l pkg">${r.pareto ? '<span class="star" title="No other listed package beats it on both your ROS and career wins">★</span> ' : ''}${r.pkg.map(x => esc(x.name) + ' <span class="pos">' + x.pos + '</span>').join(' + ')}</td>`;
+    const numCells = e => `<td>${fmt(e.give)}</td><td>${fmt(e.get)}</td><td class="${e.diff >= 0 ? '' : 'neg'}">${f2s(e.diff / Math.max(e.get, 1) * 100).replace('.00', '')}%</td><td>${e.warGive.toFixed(2)}</td><td>${e.warGet.toFixed(2)}</td><td class="${cls(e.gainRos)}">${f2s(e.gainRos)}</td><td class="${cls(e.gain)}">${f2s(e.gain)}</td><td class="${cls(e.theirsRos)}">${f2s(e.theirsRos)}</td><td class="${cls(e.theirs)}">${f2s(e.theirs)}</td>`;
+    const table = (rows, giveLabel) => `<div class="tablewrap tbwrap"><table class="small tbt"><thead>${groups}<tr><th class="l">${giveLabel}</th><th>Given</th><th>Received</th><th>Balance</th><th>Given</th><th>Received</th><th>ROS</th><th>Career</th><th>ROS</th><th>Career</th></tr></thead><tbody>${rows.map(r => `<tr>${pkgCell(r)}${numCells(r.e)}</tr>`).join('')}</tbody></table></div>`;
+    const load = (td, i, best, fn) => td.addEventListener('click', () => { fn(best[i]); renderRoster(); });
+    if (!giveRows.length) {
+      const priced = combos(mine, tb.maxAdd).filter(pkg => passes(dealPrice(recvRows, pkg), tol));
+      const res = priced.map(pkg => ({ pkg, e: dealEval(me, recvRows, pkg) })).filter(r => okOther(r.e));
+      rankDeals(res);
+      const best = res.filter(r => score(r.e) > 0).slice(0, 12);
+      out.innerHTML = priced.length === 0 ? `<p class="note">No package of up to ${tb.maxAdd} of your priced players reaches the calculator value of ${recvRows.map(r => esc(r.name)).join(' + ')} within ${tb.slack}% slack.</p>`
+        : best.length === 0 ? `<p class="note">${priced.length} packages pass the calculator${otherTxt ? ', ' + res.length + ' of them' + otherTxt : ''}, but none improves your lineup on the chosen objective. Try another objective, more slack, or "any outcome" for the other side.</p>`
+        : `<div class="verdict">For <b>${recvRows.map(r => esc(r.name)).join(' + ')}</b> (${otherName}, league WAR ${recvRows.reduce((s, r) => s + careerWarOf(r), 0).toFixed(2)}): ${priced.length} packages pass the calculator${otherTxt ? ', ' + res.length + otherTxt : ''}; the ${best.length} best on the chosen objective. ★ before a package: no other listed beats it on both your ROS and career wins. Click a package to load it above.</div>` + table(best, 'You give');
+      out.querySelectorAll('td.pkg').forEach((td, i) => load(td, i, best, r => { tb.give = r.pkg.map(x => x.name); }));
+      return;
+    }
+    const e = dealEval(me, recvRows, giveRows);
+    const pct = e.diff / Math.max(e.get, 1) * 100;
+    const fairTxt = e.unfair <= tol ? `fair within ${tb.slack}%` : (e.diff > 0 ? `you overpay by ${pct.toFixed(0)}%` : `they would be short by ${(-pct).toFixed(0)}%`);
+    const sp = (v, txt) => `<span class="${v > EPS ? 'pos-t' : v < -EPS ? 'neg-t' : ''}">${f2s(v)} ${txt}</span>`;
+    let html = `<div class="verdict"><b>${e.unfair <= tol ? 'Passes the calculator' : e.diff > 0 ? 'Overpay' : 'Does not pass'}</b> · you give ${fmt(e.give)} adj. KTC, receive ${fmt(e.get)} (${fairTxt}) · league WAR given ${e.warGive.toFixed(2)}, received ${e.warGet.toFixed(2)} · your lineup ${sp(e.gainRos, 'ROS')}, ${sp(e.gain, 'career wins')} (${nowLater(e)}) · ${esc(e.other.name)} ${sp(e.theirsRos, 'ROS')}, ${sp(e.theirs, 'career wins')}</div>`;
+    if (e.diff < -tol * e.get) {                       // short: what to add from your roster
+      const extra = Math.max(1, tb.maxAdd - giveRows.length);
+      const res = combos(mine, Math.min(2, extra)).map(add => giveRows.concat(add)).filter(pkg => passes(dealPrice(recvRows, pkg), tol)).map(pkg => ({ pkg, add: pkg.slice(giveRows.length), e: dealEval(me, recvRows, pkg) })).filter(r => okOther(r.e));
+      rankDeals(res);
+      const best = res.filter(r => score(r.e) > 0).slice(0, 10);
+      html += best.length ? `<div class="k">Short of the calculator. Adding from your roster, the deals that pass${otherTxt ? ' and' + otherTxt : ''}, best on the chosen objective first:</div>` + table(best, 'You give (completed)') : `<p class="note">No addition of up to ${Math.min(2, extra)} more players from your roster makes this pass within ${tb.slack}%${otherTxt ? ',' + otherTxt : ''} and improve your lineup on the chosen objective (packages are capped at ${tb.maxAdd}).</p>`;
+      out.innerHTML = html; out.querySelectorAll('td.pkg').forEach((td, i) => load(td, i, best, r => { tb.give = r.pkg.map(x => x.name); })); return;
+    }
+    if (e.diff > tol * e.get) {                        // overpaying: what to ask for from their roster
+      const theirs = assetsOf(e.other).filter(r => r.ktc && !tb.recv.includes(r.name));
+      const res = theirs.filter(add => { const pr = dealPrice(recvRows.concat([add]), giveRows); return pr.unfair <= tol || pr.diff > 0; }).map(add => ({ pkg: recvRows.concat([add]), add, e: dealEval(me, recvRows.concat([add]), giveRows) })).filter(r => okOther(r.e));
+      rankDeals(res);
+      const best = res.filter(r => score(r.e) > -Infinity).slice(0, 10);
+      html += best.length ? `<div class="k">You are overpaying. Players you could ask for in addition (deal stays fair or still in their favour${otherTxt ? ', and' + otherTxt : ''}), best on the chosen objective first:</div><div class="tablewrap tbwrap"><table class="small tbt"><thead>${groups}<tr><th class="l">Also receive</th><th>Given</th><th>Received</th><th>Balance</th><th>Given</th><th>Received</th><th>ROS</th><th>Career</th><th>ROS</th><th>Career</th></tr></thead><tbody>${best.map(r => `<tr><td class="l pkg">${esc(r.add.name)} <span class="pos">${r.add.pos}</span>${statusOf(r.add.name) ? ` <span class="team">${statusOf(r.add.name)}</span>` : ''}</td>${numCells(r.e)}</tr>`).join('')}</tbody></table></div>` : `<p class="note">Nothing on their roster balances this${otherTxt ? ' and' + otherTxt : ''} while keeping your lineup's gain.</p>`;
+      out.innerHTML = html; out.querySelectorAll('td.pkg').forEach((td, i) => load(td, i, best, r => { tb.recv.push(r.add.name); })); return;
+    }
+    out.innerHTML = html + `<div class="k">Wins are expected wins over the valued spans at the current discount, each roster's lineup re-optimised every week with players in or out by projected availability; every valued year is centred so the league's average roster sits at 50 %. KTC values are adjusted the way KTC's calculator adjusts packages.</div>`;
+  }
+  // ---- trades tab: the published trade log, priced at N and re-priced at N+1.. and today, filtered and sorted client-side
+  const HZ = { v0: 'N', v1: 'N+1', v2: 'N+2', v3: 'N+3', v_now: 'today' };
+  const tr = { lg: null, mgr: '', h: 'v2', min: 1, sort: { cards: ['net_h', -1], log: ['date', -1], partners: ['net_h', 1] }, wired: false };
+  function renderTrades() {
+    const T = data.trades, box = document.getElementById('trades');
+    if (!box) return;
+    if (!T || !T.trade_log || !T.trade_log.length) { box.innerHTML = '<p class="k">No trade data in this export.</p>'; return; }
+    const L = T.trade_log, h = tr.h;
+    const leagues = [...new Set(L.map(r => r.league_name))].sort();
+    if (!tr.lg || !leagues.includes(tr.lg)) tr.lg = leagues.find(l => /Stuck/.test(l)) || leagues[0];
+    const lgSel = document.getElementById('tr-lg'), mgSel = document.getElementById('tr-mgr');
+    if (lgSel.options.length !== leagues.length) lgSel.innerHTML = leagues.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+    lgSel.value = tr.lg;
+    const inLg = L.filter(r => r.league_name === tr.lg);
+    const mgrs = [...new Set(inLg.map(r => r.manager))].sort();
+    if (mgSel.dataset.lg !== tr.lg) { mgSel.innerHTML = '<option value="">everyone</option>' + mgrs.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join(''); mgSel.dataset.lg = tr.lg; if (!mgrs.includes(tr.mgr)) tr.mgr = ''; }
+    mgSel.value = tr.mgr;
+    if (!tr.wired) {
+      tr.wired = true;
+      lgSel.addEventListener('change', e => { tr.lg = e.target.value; renderTrades(); });
+      mgSel.addEventListener('change', e => { tr.mgr = e.target.value; renderTrades(); });
+      document.getElementById('tr-h').addEventListener('change', e => { tr.h = e.target.value; renderTrades(); });
+      document.getElementById('tr-min').addEventListener('change', e => { tr.min = Number(e.target.value); renderTrades(); });
+      document.getElementById('tr-sort').addEventListener('change', e => { tr.order = e.target.value; renderTrades(); });
+    }
+    const net = (r, c) => r['recv_' + c] == null || r['give_' + c] == null ? null : r['recv_' + c] - r['give_' + c];
+    const aged = inLg.filter(r => (r.seasons_since || 0) >= tr.min).map(r => ({ ...r, net_v0: net(r, 'v0'), net_v1: net(r, 'v1'), net_v2: net(r, 'v2'), net_v3: net(r, 'v3'), net_v_now: net(r, 'v_now'), net_h: net(r, h), net_wins: (r.recv_wins || 0) - (r.give_wins || 0) }));
+    const counted = aged.filter(r => !r.reversal);      // a trade undone within days is shown but not scored
+    const n = (v, d = 2) => v == null ? '–' : Number(v).toFixed(d), s = v => v == null ? '–' : (v >= 0 ? '+' : '') + Number(v).toFixed(2), k = v => v == null ? '–' : (v > 0 ? '+' : '') + Math.round(v).toLocaleString(), ku = v => v == null ? '–' : Math.round(v).toLocaleString();
+    const pct = v => v == null || isNaN(v) ? '–' : Math.round(v * 100) + '%';
+    const sgn = v => v == null ? '' : v > 0 ? 'up' : v < 0 ? 'down' : '';
+    const tbl = (id, cols, rows) => {
+      const [key, dir] = tr.sort[id];
+      const sorted = rows.slice().sort((a, b) => { const x = a[key], y = b[key]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+      return `<table class="small sortable" data-sort="${id}"><thead><tr>${cols.map(c => `<th class="${c.l ? 'l ' : ''}${c.k === key ? 'on' : ''}" data-k="${c.k}" title="${c.t || ''}">${c.h}${c.k === key ? (dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('')}</tr></thead><tbody>${sorted.map(r => `<tr>${cols.map(c => `<td class="${c.l ? 'l' : ''}${c.cls ? ' ' + c.cls(r) : ''}">${c.f(r)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    };
+    // scorecards from the filtered log
+    const by = {};
+    for (const r of counted) {
+      const m = by[r.manager] || (by[r.manager] = { manager: r.manager, trades: 0, in_season: 0, fair: 0, nfair: 0, net0: 0, n0: 0, net_h: 0, n_h: 0, won_h: 0, best: null, worst: null, wins_in: 0, wins_out: 0, wwon: 0, picks_in: 0, picks_out: 0 });
+      m.trades++; m.in_season += r.in_season ? 1 : 0;
+      if (r.fair_v0 != null) { m.fair += r.fair_v0; m.nfair++; }
+      if (r.net_v0 != null) { m.net0 += r.net_v0; m.n0++; }
+      if (r.net_h != null) { m.net_h += r.net_h; m.n_h++; m.won_h += r.net_h > 0 ? 1 : 0; m.best = m.best == null ? r.net_h : Math.max(m.best, r.net_h); m.worst = m.worst == null ? r.net_h : Math.min(m.worst, r.net_h); }
+      m.wins_in += r.recv_wins || 0; m.wins_out += r.give_wins || 0; m.wwon += r.net_wins > 0.05 ? 1 : 0; m.picks_in += r.recv_picks || 0; m.picks_out += r.give_picks || 0;
+    }
+    const cards = Object.values(by).map(m => ({ ...m, in_share: m.in_season / m.trades, fair_mean: m.nfair ? m.fair / m.nfair : null, net0_per: m.n0 ? m.net0 / m.n0 : null, net_h_per: m.n_h ? m.net_h / m.n_h : null, won_h: m.n_h ? m.won_h / m.n_h : null, net_wins: m.wins_in - m.wins_out, wins_won: m.wwon / m.trades, net_picks: m.picks_in - m.picks_out }));
+    const cardCols = [
+      { k: 'manager', h: 'Manager', l: true, f: r => esc(r.manager) }, { k: 'trades', h: 'Trades', f: r => r.trades }, { k: 'in_share', h: 'In-season', f: r => pct(r.in_share) },
+      { k: 'fair_mean', h: 'Verdict at N', t: 'mean fair share by the calculator at the trade date; + = the calculator leaned your way', f: r => pct(r.fair_mean), cls: r => sgn(r.fair_mean) },
+      { k: 'net0', h: 'Net KTC at N', t: 'combined package received minus given at the trade date, summed over the trades', f: r => k(r.net0), cls: r => sgn(r.net0) },
+      { k: 'net0_per', h: 'per trade', t: 'the same, per trade', f: r => k(r.net0_per), cls: r => sgn(r.net0_per) },
+      { k: 'n_h', h: `Trades priced at ${HZ[h]}`, f: r => r.n_h }, { k: 'net_h', h: `Net KTC at ${HZ[h]}`, t: 'the same assets re-priced at the chosen horizon, received minus given, summed', f: r => k(r.net_h), cls: r => sgn(r.net_h) },
+      { k: 'net_h_per', h: 'per trade', f: r => k(r.net_h_per), cls: r => sgn(r.net_h_per) }, { k: 'won_h', h: `Won at ${HZ[h]}`, f: r => pct(r.won_h) }, { k: 'best', h: 'Best single trade', f: r => k(r.best) }, { k: 'worst', h: 'Worst single trade', f: r => k(r.worst) },
+      { k: 'net_wins', h: 'Net wins since', t: 'secondary: wins above replacement delivered by what you received minus what you gave', f: r => s(r.net_wins), cls: r => sgn(r.net_wins) }, { k: 'wins_won', h: 'Won on wins', f: r => pct(r.wins_won) },
+      { k: 'net_picks', h: 'Net picks', f: r => (r.net_picks > 0 ? '+' : '') + r.net_picks }];
+    // one row per trade: side A (the filtered manager, else the side that received the larger raw value) against side B;
+    // every net is from A's point of view (+ = A ahead). Three-team trades stay one row per side, marked.
+    const byTx = {};
+    for (const r of aged) (byTx[r.transaction_id] = byTx[r.transaction_id] || []).push(r);
+    const logRows = [];
+    for (const sides of Object.values(byTx)) {
+      if (tr.mgr && !sides.some(r => r.manager === tr.mgr)) continue;
+      if (sides.length === 2 && sides[0].n_teams === 2) {
+        let [a, b] = sides;
+        if (tr.mgr ? b.manager === tr.mgr : (b.recv_v0_sum || 0) > (a.recv_v0_sum || 0)) [a, b] = [b, a];
+        logRows.push({ date: a.date, a: a.manager, b: b.manager, a_recv: a.recv_assets, b_recv: b.recv_assets, a_raw: a.recv_v0_sum, b_raw: b.recv_v0_sum, net_v0: a.net_v0, fair_v0: a.fair_v0,
+          net_v1: a.net_v1, net_v2: a.net_v2, net_v3: a.net_v3, net_v_now: a.net_v_now, net_wins: a.net_wins, seasons_since: a.seasons_since, teams: 2,
+          a_v: a['recv_' + h], b_v: b['recv_' + h], a_sum: a['recv_' + h + '_sum'], b_sum: b['recv_' + h + '_sum'], net_h: a.net_h,
+          a_unpriced: a.recv_unpriced_names, b_unpriced: b.recv_unpriced_names, reversal: !!a.reversal });
+      } else {
+        // a multi-team trade: one card, a column per side, each side's net against the other two
+        const ss = sides.slice().sort((x, y) => (y.net_h == null ? -Infinity : y.net_h) - (x.net_h == null ? -Infinity : x.net_h));
+        const best = ss[0];
+        logRows.push({ date: best.date, multi: ss.map(r => ({ manager: r.manager, recv: r.recv_assets, v: r['recv_' + h], sum: r['recv_' + h + '_sum'], raw: r.recv_v0_sum, net_h: r.net_h, net_v0: r.net_v0, net_wins: r.net_wins, unpriced: r.recv_unpriced_names })),
+          a: best.manager, b: ss.slice(1).map(r => r.manager).join(' & '), a_recv: best.recv_assets, b_recv: '', a_raw: best.recv_v0_sum, b_raw: null, net_v0: best.net_v0, fair_v0: best.fair_v0,
+          net_v1: best.net_v1, net_v2: best.net_v2, net_v3: best.net_v3, net_v_now: best.net_v_now, net_wins: best.net_wins, seasons_since: best.seasons_since, teams: best.n_teams || sides.length,
+          a_v: best['recv_' + h], b_v: best['give_' + h], a_sum: best['recv_' + h + '_sum'], b_sum: best['give_' + h + '_sum'], net_h: best.net_h, reversal: !!best.reversal });
+      }
+    }
+    const logCols = [
+      { k: 'date', h: 'Date', l: true, f: r => esc(r.date) },
+      { k: 'a', h: 'Side A', l: true, t: 'the manager you filtered on, otherwise the side that received the larger raw value', f: r => esc(r.a) }, { k: 'a_recv', h: 'A received', l: true, f: r => esc(r.a_recv || '—'), cls: () => 'assets' },
+      { k: 'b', h: 'Side B', l: true, f: r => esc(r.b) }, { k: 'b_recv', h: 'B received', l: true, f: r => esc(r.b_recv || '—'), cls: () => 'assets' },
+      { k: 'a_raw', h: 'KTC to A (raw)', f: r => ku(r.a_raw) }, { k: 'b_raw', h: 'KTC to B (raw)', f: r => ku(r.b_raw) },
+      { k: 'net_v0', h: 'Net at N', t: 'calculator-combined, A minus B at the trade date', f: r => k(r.net_v0), cls: r => sgn(r.net_v0) }, { k: 'fair_v0', h: 'Verdict', t: "the calculator's lean toward A", f: r => pct(r.fair_v0), cls: r => sgn(r.fair_v0) },
+      { k: 'net_v1', h: 'Net at N+1', f: r => k(r.net_v1), cls: r => sgn(r.net_v1) }, { k: 'net_v2', h: 'Net at N+2', f: r => k(r.net_v2), cls: r => sgn(r.net_v2) }, { k: 'net_v3', h: 'Net at N+3', f: r => k(r.net_v3), cls: r => sgn(r.net_v3) }, { k: 'net_v_now', h: 'Net today', f: r => k(r.net_v_now), cls: r => sgn(r.net_v_now) },
+      { k: 'net_wins', h: 'Net wins since', t: 'wins delivered by what A received minus what B received', f: r => s(r.net_wins), cls: r => sgn(r.net_wins) }, { k: 'seasons_since', h: 'Seasons ago', f: r => n(r.seasons_since, 1) }];
+    const flip = r => ({ ...r, a: r.b, b: r.a, a_recv: r.b_recv, b_recv: r.a_recv, a_raw: r.b_raw, b_raw: r.a_raw, a_v: r.b_v, b_v: r.a_v, a_sum: r.b_sum, b_sum: r.a_sum, a_unpriced: r.b_unpriced, b_unpriced: r.a_unpriced,
+      net_v0: r.net_v0 == null ? null : -r.net_v0, net_v1: r.net_v1 == null ? null : -r.net_v1, net_v2: r.net_v2 == null ? null : -r.net_v2, net_v3: r.net_v3 == null ? null : -r.net_v3, net_v_now: r.net_v_now == null ? null : -r.net_v_now,
+      net_h: r.net_h == null ? null : -r.net_h, fair_v0: r.fair_v0 == null ? null : -r.fair_v0, net_wins: r.net_wins == null ? null : -r.net_wins });
+    for (let i = 0; i < logRows.length; i++) if (logRows[i].net_h != null && logRows[i].net_h < 0) logRows[i] = flip(logRows[i]);   // the winner at the chosen horizon sits on the left
+    const chips = s => (s || '—').split(' + ').map(x => `<span>${esc(x)}</span>`).join('');
+    const order = tr.order || 'date';
+    logRows.sort((x, y) => {
+      const lop = r => r.a_v == null || r.b_v == null || r.a_v === 0 || r.b_v === 0 ? -1 : Math.abs(r.a_v - r.b_v);   // lopsided = the KTC gap between the packages; a side with nothing priced (FAAB) sorts last
+      if (order === 'lopsided') return lop(y) - lop(x);
+      if (order === 'closest') { const lx = lop(x), ly = lop(y); if (lx < 0 && ly < 0) return 0; if (lx < 0) return 1; if (ly < 0) return -1; return lx - ly; }
+      if (order === 'wins') return (y.net_wins || 0) - (x.net_wins || 0);
+      if (order === 'oldest') return x.date < y.date ? -1 : x.date > y.date ? 1 : 0;
+      return x.date < y.date ? 1 : x.date > y.date ? -1 : 0;
+    });
+    for (const [v, label] of [['lopsided', 'most lopsided at '], ['closest', 'closest at ']]) { const o = document.querySelector(`#tr-sort option[value="${v}"]`); if (o) o.textContent = label + HZ[h]; }
+    const multiCard = r => `<div class="trc multi${r.reversal ? ' rev' : ''}"><div class="mid"><div class="date">${esc(r.date)} · ${n(r.seasons_since, 1)} seasons ago · ${r.multi.length}-team trade</div><div class="k">each side's package at ${HZ[h]}, by KTC's calculator, and its net against the other sides (what it received minus what it gave)</div></div>` +
+      r.multi.map((s, i) => `<div class="side${i === 0 ? ' a' : ''}"><div class="mgr">${esc(s.manager)}<span class="k">${s.net_h != null && i === 0 && s.net_h > 0 ? 'ahead at ' + HZ[h] + ' · ' : ''}received</span></div><div class="assets">${chips(s.recv)}</div><div class="k">${s.v == null ? 'not yet priced at ' + HZ[h] : `${ku(s.v)}${s.sum != null ? ` (raw ${ku(s.sum)})` : ''} · net <span class="${s.net_h > 0 ? 'up' : s.net_h < 0 ? 'down' : ''}">${k(s.net_h)}</span>`}${s.net_wins == null ? '' : ` · wins since ${sgnTxt(s.net_wins)}`}${s.unpriced ? `<br>not priced by KTC: ${esc(s.unpriced)}` : ''}</div></div>`).join('') + `</div>`;
+    const sgnTxt = v => v == null ? '–' : (v >= 0 ? '+' : '') + Number(v).toFixed(2);
+    const tradeCards = rows => rows.map(r => {
+      if (r.multi) return multiCard(r);
+      const has = r.a_v != null && r.b_v != null, tot = has ? Math.max(r.a_v + r.b_v, 1) : 1, share = has ? (r.a_v - r.b_v) / tot : 0, w = Math.min(Math.abs(share), 1) * 50;
+      const bar = has ? `<div class="bar"><i class="${share >= 0 ? 'a' : 'b'}" style="${share >= 0 ? `right:50%;width:${w}%` : `left:50%;width:${w}%`}"></i></div>` : `<div class="bar"></div>`;
+      const lean = !has ? `<span class="lean">not yet priced at ${HZ[h]}</span>` : Math.abs(share) < 0.005 ? `<span class="lean">even</span>` : `<span class="lean ${share > 0 ? 'a' : 'b'}">${share > 0 ? esc(r.a) : esc(r.b.replace(/ \(\d-team\)$/, ''))} by ${ku(Math.abs(r.a_v - r.b_v))} (${Math.round(Math.abs(share) * 100)}%)</span>${(r.a_unpriced || r.b_unpriced) ? `<div class="k">not priced by KTC: ${esc([r.a_unpriced, r.b_unpriced].filter(Boolean).join(' · '))}</div>` : (r.a_v === 0 || r.b_v === 0 ? '<div class="k">one side holds nothing KTC prices at this horizon</div>' : '')}${r.reversal ? '<div class="k"><b>reversed</b>: undone by a mirror trade within days, not counted in the scorecards</div>' : ''}`;
+      return `<div class="trc${r.reversal ? ' rev' : ''}"><div class="side a"><div class="mgr">${esc(r.a)}<span class="k">${has && Math.abs(share) >= 0.005 ? 'ahead at ' + HZ[h] + ' · received' : 'received'}</span></div><div class="assets">${chips(r.a_recv)}</div></div>` +
+        `<div class="mid"><div class="date">${esc(r.date)} · ${n(r.seasons_since, 1)} seasons ago</div>${bar}<div>${lean}</div><div class="k">${has ? `${ku(r.a_v)}${r.a_sum != null ? ` <span title="plain sum of the pieces before KTC's calculator">(raw ${ku(r.a_sum)})</span>` : ''} vs ${ku(r.b_v)}${r.b_sum != null ? ` <span title="plain sum of the pieces before KTC's calculator">(raw ${ku(r.b_sum)})</span>` : ''} at ${HZ[h]}, by KTC's calculator` : `raw ${ku(r.a_raw)} vs ${ku(r.b_raw)} at N`}${r.net_wins == null ? '' : ` · wins since ${s(r.net_wins)}`}</div></div>` +
+        `<div class="side b"><div class="mgr"><span class="k">received</span>${esc(r.b)}</div><div class="assets">${chips(r.b_recv)}</div></div></div>`;
+    }).join('');
+    const pb = {};
+    for (const r of counted) { if (r.n_teams !== 2 || !r.partners) continue; if (tr.mgr && r.manager !== tr.mgr) continue; const key = r.manager + '|' + r.partners; const p = pb[key] || (pb[key] = { manager: r.manager, partner: r.partners, trades: 0, net0: 0, net_h: 0, n_h: 0, won_h: 0, net_wins: 0 }); p.trades++; p.net0 += r.net_v0 || 0; if (r.net_h != null) { p.net_h += r.net_h; p.n_h++; p.won_h += r.net_h > 0 ? 1 : 0; } p.net_wins += r.net_wins; }
+    const partners = Object.values(pb).filter(p => p.trades >= 2).map(p => ({ ...p, won_h: p.n_h ? p.won_h / p.n_h : null }));
+    const partCols = [{ k: 'manager', h: 'Manager', l: true, f: r => esc(r.manager) }, { k: 'partner', h: 'Against', l: true, f: r => esc(r.partner) }, { k: 'trades', h: 'Trades', f: r => r.trades }, { k: 'net0', h: 'Net KTC at N', f: r => k(r.net0), cls: r => sgn(r.net0) }, { k: 'net_h', h: `Net KTC at ${HZ[h]}`, f: r => k(r.net_h), cls: r => sgn(r.net_h) }, { k: 'won_h', h: `Won at ${HZ[h]}`, f: r => pct(r.won_h) }, { k: 'net_wins', h: 'Net wins since', f: r => s(r.net_wins), cls: r => sgn(r.net_wins) }];
+    const pat = (title, rows, keyCol) => rows && rows.length ? `<h4>${title}</h4><table class="small"><thead><tr><th class="l">Side</th><th>Sides</th><th>Net at N, mean</th><th>Verdict, mean</th><th>Net at N+1, mean</th><th>Won at N+1</th><th>Net at N+2, mean</th><th>Won at N+2</th><th>Net today, mean</th><th>Won today</th><th>Net wins, mean</th><th>Won on wins</th></tr></thead><tbody>${rows.map(r => `<tr><td class="l">${esc(String(r[keyCol]))}</td><td>${r.sides}</td><td class="${sgn(r.net_v0_mean)}">${k(r.net_v0_mean)}</td><td class="${sgn(r.fair_v0_mean)}">${pct(r.fair_v0_mean)}</td><td class="${sgn(r.net_v1_mean)}">${k(r.net_v1_mean)}</td><td>${pct(r.won_v1)}</td><td class="${sgn(r.net_v2_mean)}">${k(r.net_v2_mean)}</td><td>${pct(r.won_v2)}</td><td class="${sgn(r.net_v_now_mean)}">${k(r.net_v_now_mean)}</td><td>${pct(r.won_v_now)}</td><td class="${sgn(r.net_wins_mean)}">${s(r.net_wins_mean)}</td><td>${pct(r.wins_won)}</td></tr>`).join('')}</tbody></table>` : '';
+    const M = T.meta || {};
+    box.innerHTML = `<div class="card"><h3>Scorecards · ${esc(tr.lg)} · ${aged.length} trade sides${tr.min ? `, at least ${tr.min} season${tr.min > 1 ? 's' : ''} old` : ''} · value as of ${HZ[h]}</h3>${tbl('cards', cardCols, cards)}</div>` +
+      `<div class="card"><h3>Trades${tr.mgr ? ' · ' + esc(tr.mgr) : ''} (${logRows.length})</h3><div class="k">Team A on the left, Team B on the right, what each received. The side that came out ahead at ${HZ[h]} (the "Value as of" choice above) is on the left; the bar shows by how much, by KTC's trade calculator: each piece is run through KTC's curve with the trade's best asset as the reference, so a package of lesser pieces is worth less than its raw sum (shown in brackets). A three-team trade is one card with a column per side, the side ahead first, each with its net against the other two.</div>${tradeCards(logRows)}</div>` +
+      `<div class="card"><h3>Head to head (two-team trades, 2+ between the pair)</h3>${tbl('partners', partCols, partners)}</div>` +
+      `<div class="card"><h3>Patterns, all leagues (two-team trades at least ${M.min_seasons == null ? 1 : M.min_seasons} season old)</h3>` +
+      pat('Does the calculator\'s verdict at the time hold up?', T.verdict, 'verdict') + pat('Picks for players', T.picks, 'pick_side') + pat('Consolidation', T.consolidation, 'side') + pat('In-season vs offseason', T.timing, 'when') +
+      (T.by_position_bought && T.by_position_bought.length ? `<h4>Players bought, by position: what was paid, what they were worth a year and two later, wins per 1,000 paid</h4><table class="small"><thead><tr><th class="l">Position</th><th>Legs</th><th>Paid, mean</th><th>Value kept after 1 yr</th><th>after 2 yrs</th><th>Wins since, mean</th><th>Wins / 1k KTC</th></tr></thead><tbody>${T.by_position_bought.map(r => `<tr><td class="l">${esc(r.pos)}</td><td>${r.legs}</td><td>${ku(r.paid_mean)}</td><td>${pct(r.value_kept_1y)}</td><td>${pct(r.value_kept_2y)}</td><td>${n(r.wins_mean)}</td><td>${n(r.wins_per_1k)}</td></tr>`).join('')}</tbody></table>` : '') +
+      (T.picks_bought_by_round && T.picks_bought_by_round.length ? `<h4>Picks bought, by round: what was paid for the pick, what the rookie was worth a year and two after the trade</h4><table class="small"><thead><tr><th class="l">Round</th><th>Legs</th><th>Paid, mean</th><th>Value kept after 1 yr</th><th>after 2 yrs</th><th>Wins since, mean</th></tr></thead><tbody>${T.picks_bought_by_round.map(r => `<tr><td class="l">R${r.pick_round}</td><td>${r.legs}</td><td>${ku(r.paid_mean)}</td><td>${pct(r.value_kept_1y)}</td><td>${pct(r.value_kept_2y)}</td><td>${n(r.wins_mean)}</td></tr>`).join('')}</tbody></table>` : '') +
+      `<div class="k" style="margin-top:8px">Scored through ${esc(M.through || '')}; ${M.n_trades || ''} trades across the three leagues. Prices are KTC dynasty (superflex) by Sleeper id, from the silver fact and, for players no longer listed, KTC's archive (to 2024-08); a player who dropped off the list reads zero. Team defenses, kickers and FAAB dollars carry no KTC price and are named on the card; a pick is priced at the tier its original team was likely to land in (the Draft slots tab), never at the player later taken. Trades undone by a mirror trade within days are shown greyed and left out of the scorecards.</div></div>`;
+    box.querySelectorAll('table.sortable thead th').forEach(th => th.addEventListener('click', () => { const id = th.closest('table').dataset.sort, key = th.dataset.k; const cur = tr.sort[id]; tr.sort[id] = cur[0] === key ? [key, -cur[1]] : [key, key === 'manager' || key === 'partner' || key === 'date' ? 1 : -1]; renderTrades(); }));
+  }
+
+  // ---- draft slots tab
+  const ds = { lg: null, wired: false };
+  function renderSlots() {
+    const S = data.pick_slots, box = document.getElementById('slots');
+    if (!box) return;
+    if (!S || !S.teams || !S.teams.length) { box.innerHTML = '<p class="k">No draft-slot data in this export.</p>'; return; }
+    const leagues = [...new Set(S.teams.map(r => r.league_name))].sort();
+    if (!ds.lg || !leagues.includes(ds.lg)) ds.lg = leagues.find(l => /Stuck/.test(l)) || leagues[0];
+    const sel = document.getElementById('ds-lg');
+    if (sel.options.length !== leagues.length) sel.innerHTML = leagues.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+    sel.value = ds.lg;
+    if (!ds.wired) { ds.wired = true; sel.addEventListener('change', e => { ds.lg = e.target.value; renderSlots(); }); }
+    const pct = v => v == null ? '–' : Math.round(v * 100) + '%', ku = v => v == null ? '–' : Math.round(v).toLocaleString(), n1 = v => v == null ? '–' : Number(v).toFixed(1);
+    const pbar = r => `<span class="pbar" title="Early ${pct(r.p_early)} · Mid ${pct(r.p_mid)} · Late ${pct(r.p_late)}"><i class="e" style="width:${r.p_early * 100}%"></i><i class="m" style="width:${r.p_mid * 100}%"></i><i class="l" style="width:${r.p_late * 100}%"></i></span>`;
+    const dbar = r => r.dist ? `<span class="dbar" title="${r.dist.map((p, i) => `slot ${(i * r.teams / 12 + 1) | 0}: ${pct(p)}`).join(' · ')}">${r.dist.map(p => `<i style="height:${Math.max(2, p * 100 * 1.6)}%"></i>`).join('')}</span>` : '';
+    const teams = S.teams.filter(r => r.league_name === ds.lg).sort((a, b) => a.exp_slot - b.exp_slot);
+    const M = S.meta || {};
+    const teamTbl = `<table class="small"><thead><tr><th class="l">Manager</th><th>Record</th><th>Rank</th><th>PF rank</th><th class="l">Early / Mid / Late</th><th class="l">Slot distribution</th><th>Expected slot</th><th>${M.pick_season || ''} 1st worth</th><th>vs Mid</th><th>${M.pick_season || ''} 2nd worth</th></tr></thead><tbody>${teams.map(r => {
+      const d1 = r.first_mid ? (r.first_value - r.first_mid) : null;
+      return `<tr><td class="l">${esc(r.manager)}</td><td>${r.wins % 1 ? r.wins : r.wins | 0}–${r.played - r.wins}</td><td>${r.rank_now} / ${r.teams}</td><td>${r.pf_rank}</td><td class="l">${pbar(r)} <span class="k">${pct(r.p_early)} · ${pct(r.p_mid)} · ${pct(r.p_late)}</span></td><td class="l">${dbar(r)}</td><td>${n1(r.exp_slot)}</td><td>${ku(r.first_value)}</td><td class="${d1 > 0 ? 'up' : d1 < 0 ? 'down' : ''}">${d1 == null ? '–' : (d1 > 0 ? '+' : '') + ku(d1)}</td><td>${ku(r.second_value)}</td></tr>`; }).join('')}</tbody></table>`;
+    const curve = S.curve || [];
+    const rounds = [...new Set(curve.map(r => r.round))].sort();
+    const relOf = (rd, b) => { const r = curve.find(x => x.round === rd && x.bin === b); return r ? r.rel : null; };
+    const lvl = teams.length ? { 1: teams[0].first_level, 2: teams[0].second_level } : {};
+    const curveTbl = rounds.length ? `<table class="small heat"><thead><tr><th class="l">Round</th>${Array.from({ length: 12 }, (_, i) => `<th>${i + 1}</th>`).join('')}<th>1st vs 12th slot</th></tr></thead><tbody>${rounds.map(rd => `<tr><td class="l">R${rd}${lvl[rd] ? ` <span class="k">(round mean today ${ku(lvl[rd])})</span>` : ''}</td>${Array.from({ length: 12 }, (_, i) => { const v = relOf(rd, i + 1); return `<td class="c" title="${v == null ? '' : 'x' + v.toFixed(2) + ' the round mean' + (lvl[rd] ? ' = ' + ku(v * lvl[rd]) + ' today' : '')}" style="background: rgba(30,138,87,${v == null ? 0 : Math.max(0, (v - 0.75) * 0.9).toFixed(2)})">${v == null ? '–' : (lvl[rd] ? ku(v * lvl[rd]) : v.toFixed(2))}</td>`; }).join('')}<td class="c">${relOf(rd, 1) && relOf(rd, 12) ? (relOf(rd, 1) / relOf(rd, 12)).toFixed(2) + 'x' : '–'}</td></tr>`).join('')}</tbody></table>` : '';
+    const asOf = teams.length ? teams[0].as_of : '';
+    const cal = (S.calibration || []).length ? `<table class="small"><thead><tr><th class="l">As of</th><th>Team-seasons</th><th>Called the tier</th><th>Mid for everyone</th><th>Brier (lower is better)</th><th>Mid for everyone</th></tr></thead><tbody>${S.calibration.map(r => `<tr><td class="l">${r.played === 0 ? 'before week 1 (last season\'s finish)' : 'after week ' + r.played}</td><td>${r.n}</td><td>${pct(r.accuracy)}</td><td>${pct(r.mid_for_all_accuracy)}</td><td>${Number(r.brier).toFixed(3)}</td><td>${Number(r.mid_for_all_brier).toFixed(3)}</td></tr>`).join('')}</tbody></table>` : '';
+    const weeks = [...new Set((S.by_week || []).map(r => r.played))].sort((a, b) => a - b);
+    const cell = (w, k) => { const r = (S.by_week || []).find(x => x.played === w && x.rk5 === k); return r ? `<td class="c" title="n = ${r.n.toLocaleString()} · Early ${pct(r.p_early)} · Mid ${pct(r.p_mid)} · Late ${pct(r.p_late)}" style="background: rgba(30,138,87,${(r.p_early * 0.6).toFixed(2)})">${pct(r.p_early)}</td>` : '<td class="c">–</td>'; };
+    const heat = weeks.length ? `<table class="small heat"><thead><tr><th class="l">Weeks played</th><th>Top fifth by record</th><th>2nd fifth</th><th>Middle</th><th>4th fifth</th><th>Bottom fifth</th></tr></thead><tbody>${weeks.map(w => `<tr><td class="l">${w}</td>${[0, 1, 2, 3, 4].map(k => cell(w, k)).join('')}</tr>`).join('')}</tbody></table>` : '';
+    const prior = (S.prior || []).length ? `<table class="small"><thead><tr><th class="l">Last season's finish</th><th>Team-seasons</th><th>Early</th><th>Mid</th><th>Late</th><th>Expected slot (share of the order)</th></tr></thead><tbody>${S.prior.map(r => `<tr><td class="l">${['top fifth', '2nd fifth', 'middle', '4th fifth', 'bottom fifth'][r.prev5] || r.prev5}</td><td>${r.n.toLocaleString()}</td><td>${pct(r.p_early)}</td><td>${pct(r.p_mid)}</td><td>${pct(r.p_late)}</td><td>${pct(r.slot_pct_mean)}</td></tr>`).join('')}</tbody></table>` : '';
+    box.innerHTML = `<div class="card"><h3>${esc(ds.lg)} · next year's picks, as of ${esc(asOf)}</h3><div class="k">Standing today, the chance the team's ${M.pick_season || ''} pick lands in each third of the draft order, the full slot distribution (twelfths, worst team first), the expected slot, and what that makes its own 1st and 2nd worth: the distribution weighted by the market's slot curve below, at today's KTC price level for the round (vs the flat Mid price).</div>${teamTbl}</div>` +
+      `<div class="card"><h3>The market's slot curve</h3><div class="k">What the player taken at each slot was worth on KTC a month after the draft, over ${(S.curve_n || 0).toLocaleString()} rookie picks in the crawl's drafts (2021–2025), by twelfth of the order: a 1.01 is worth about 1.8 times a 1.12, and a 2.01 more than a late 1st. Each cell is the slot's value at today's round mean; hover for the multiplier. KTC only prices individual slots once the order is set, so this curve is how the Trades tab spreads a pick's value over where its team is likely to finish.</div>${curveTbl}</div>` +
+      `<div class="card"><h3>Does it call our leagues' draft orders?</h3><div class="k">Our three leagues' past seasons: the tier the table put most weight on vs the actual final third, against pricing every pick as Mid.</div>${cal}</div>` +
+      `<div class="card"><h3>The table: chance of an Early pick by weeks played and record</h3><div class="k">${(M.league_seasons || 0).toLocaleString()} league-seasons, ${(M.team_weeks || 0).toLocaleString()} team-weeks, ${M.seasons ? M.seasons.join('–') : ''}. Columns are fifths of the standings by record and points for; hover a cell for Mid and Late.</div>${heat}</div>` +
+      `<div class="card"><h3>Before week 1: last season's finish as the prior</h3>${prior}</div>`;
+  }
+
+  const tv = { lg: null, metric: 'power_index', hi: null, wired: false };
+  function renderTeamValue() {
+    const T = data.team_value, box = document.getElementById('teamvalue');
+    if (!box) return;
+    if (!T || !T.leagues || !T.leagues.length) { box.innerHTML = '<p class="k">No team-value history in this export.</p>'; return; }
+    const names = T.leagues.map(l => l.name);
+    if (!tv.lg || !names.includes(tv.lg)) { const cur = (data.leagues || []).find(l => l.id === st.league); tv.lg = (cur && names.includes(cur.name)) ? cur.name : (names.find(n => /Stuck/.test(n)) || names[0]); }
+    const L = T.leagues.find(l => l.name === tv.lg);
+    const sel = document.getElementById('tv-lg');
+    if (sel.options.length !== names.length) sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    sel.value = tv.lg;
+    const metrics = Object.entries(T.metrics || {}); if (L.fc) metrics.push(['fc_value', 'FantasyCalc value (players + picks)']);
+    const msel = document.getElementById('tv-metric');
+    if (msel.options.length !== metrics.length) msel.innerHTML = metrics.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    if (!metrics.some(([k]) => k === tv.metric)) tv.metric = 'power_index';
+    msel.value = tv.metric;
+    if (!tv.wired) { tv.wired = true; sel.addEventListener('change', e => { tv.lg = e.target.value; tv.hi = null; renderTeamValue(); }); msel.addEventListener('change', e => { tv.metric = e.target.value; renderTeamValue(); }); }
+    const label = (metrics.find(([k]) => k === tv.metric) || ['', ''])[1];
+    const fc = tv.metric === 'fc_value';
+    const dates = (fc ? L.fc.dates : L.dates).map(s => new Date(s + 'T00:00:00Z')), series = fc ? L.fc.series : L.series[tv.metric];
+    const pageLg = (data.leagues || []).find(l => l.name === L.name), pageTeams = (pageLg && data.teams && data.teams[pageLg.id]) || [];
+    const mine = new Set(pageTeams.filter(x => x.owner).map(x => String(x.rid)));
+    const teams = L.teams.map(x => ({ ...x, rid: x.id.split('_').pop(), arr: series[x.id] || [] })).filter(x => x.arr.some(v => v != null));
+    teams.forEach(x => { x.last = [...x.arr].reverse().find(v => v != null); x.you = mine.has(x.rid); });
+    teams.sort((a, b) => (b.last ?? -1) - (a.last ?? -1));
+    const W = 960, H = 420, mL = 50, mR = 14, mT = 12, mB = 30, iw = W - mL - mR, ih = H - mT - mB;
+    const x0 = dates[0].getTime(), x1 = dates[dates.length - 1].getTime(), X = ms => mL + (x1 > x0 ? (ms - x0) / (x1 - x0) : 0.5) * iw;
+    const all = teams.flatMap(x => x.arr.filter(v => v != null));
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if (tv.metric === 'power_index' || tv.metric === 'power_players') { lo = 0; hi = 100; }
+    else if (tv.metric === 'rel_mean') { const pad = Math.max(5, (hi - lo) * 0.08); lo = Math.min(lo, 100) - pad; hi = Math.max(hi, 100) + pad; }
+    else { lo = 0; hi = hi * 1.05; }
+    const Y = v => mT + ih - (v - lo) / (hi - lo || 1) * ih;
+    const fmtV = v => v == null ? '–' : (tv.metric === 'rel_mean' ? Math.round(v).toString() : Math.round(v).toLocaleString());
+    const bands = (L.bands || []).map(([s, e, yr]) => [Date.parse(s + 'T00:00:00Z'), Date.parse(e + 'T00:00:00Z'), yr]).filter(([s, e]) => e >= x0 && s <= x1);
+    const drafts = (L.drafts || []).map(([d, k, yr]) => [Date.parse(d + 'T00:00:00Z'), k, yr]).filter(([d]) => d >= x0 && d <= x1);
+    const bandSvg = bands.map(([s, e, yr]) => { const a = X(Math.max(s, x0)), b = X(Math.min(e, x1)); return `<rect x="${a.toFixed(1)}" y="${mT}" width="${Math.max(1, b - a).toFixed(1)}" height="${ih}" fill="currentColor" opacity="0.06"></rect><text x="${((a + b) / 2).toFixed(1)}" y="${mT + 12}" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.5">${yr} season</text>`; }).join('');
+    const draftSvg = drafts.map(([d, k]) => `<line x1="${X(d).toFixed(1)}" x2="${X(d).toFixed(1)}" y1="${mT}" y2="${mT + ih}" stroke="var(--cheap)" stroke-width="${k === 'startup_draft' ? 1.4 : 1}" stroke-dasharray="4 3" opacity="${k === 'startup_draft' ? 0.8 : 0.55}"><title>${k === 'startup_draft' ? 'Startup draft' : 'Rookie draft'} ${new Date(d).toISOString().slice(0, 10)}</title></line>`).join('');
+    const yt = 5, yticks = Array.from({ length: yt + 1 }, (_, i) => lo + (hi - lo) * i / yt);
+    const yAxis = yticks.map(v => `<line x1="${mL}" x2="${W - mR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="currentColor" opacity="0.12"></line><text x="${mL - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10.5" fill="currentColor" opacity="0.7">${fmtV(v)}</text>`).join('');
+    const ref = tv.metric === 'rel_mean' ? `<line x1="${mL}" x2="${W - mR}" y1="${Y(100).toFixed(1)}" y2="${Y(100).toFixed(1)}" stroke="currentColor" opacity="0.35"></line>` : '';
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const span = (x1 - x0) / 864e5, step = span > 900 ? 6 : span > 400 ? 3 : 1;
+    const xt = []; let prevKey = null;
+    for (const d of dates) { const key = d.getUTCFullYear() * 12 + d.getUTCMonth(); if (prevKey == null || key - prevKey >= step) { if (prevKey != null) xt.push(d); prevKey = key; } }
+    const xAxis = xt.map(d => `<text x="${X(d.getTime()).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.7">${mon[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}</text>`).join('');
+    const path = x => { let s = '', pen = false; x.arr.forEach((v, i) => { if (v == null) { pen = false; return; } s += (pen ? 'L' : 'M') + X(dates[i].getTime()).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; }); return s; };
+    const lines = teams.map(x => { const on = tv.hi == null || tv.hi === x.id; return `<path d="${path(x)}" fill="none" stroke="${x.color}" stroke-width="${tv.hi === x.id ? 3 : (x.you && tv.hi == null ? 2.6 : 1.7)}" opacity="${on ? 0.92 : 0.16}" stroke-linejoin="round" stroke-linecap="round"></path>`; }).join('');
+    const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L.name)}: ${esc(label)} by week"><g>${bandSvg}${yAxis}${ref}${draftSvg}${lines}<line id="tv-rule" x1="0" x2="0" y1="${mT}" y2="${mT + ih}" stroke="currentColor" opacity="0" stroke-width="1"></line>${xAxis}<rect id="tv-hit" x="${mL}" y="${mT}" width="${iw}" height="${ih}" fill="transparent"></rect></g></svg>`;
+    const legend = `<div class="tvl">${teams.map(x => `<button type="button" data-id="${x.id}" aria-pressed="${tv.hi === x.id}" class="${tv.hi != null && tv.hi !== x.id ? 'off' : ''}"><i style="background:${x.color}"></i>${esc(x.name)}${x.you ? ' (you)' : ''} <span class="dim">${fmtV(x.last)}</span></button>`).join('')}</div>`;
+    const now = L.now || [];
+    const sg = v => v == null ? '<span class="dim">–</span>' : (v > 0 ? '+' : '') + (Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : v);
+    const tbl = `<table class="small"><thead><tr><th>#</th><th class="l">Team</th><th>Power index</th><th>4 weeks</th><th>13 weeks</th><th>52 weeks</th><th>Since the draft${L.latest_draft ? ' (' + L.latest_draft + ')' : ''}</th><th>Peak</th><th>Low</th><th>vs league avg</th><th>Roster value (KTC)</th></tr></thead><tbody>${now.map(r => `<tr class="${mine.has(r.id.split('_').pop()) ? 'mine' : ''}"><td>${r.rank}</td><td class="l"><span class="tv-sw" style="background:${r.color}"></span>${esc(r.name)}${mine.has(r.id.split('_').pop()) ? ' (you)' : ''}</td><td><b>${r.power_index}</b></td><td>${sg(r.d4w)}</td><td>${sg(r.d13w)}</td><td>${sg(r.d52w)}</td><td>${sg(r.since_draft)}</td><td>${r.peak} <span class="dim">${(r.peak_date || '').slice(0, 7)}</span></td><td>${r.trough}</td><td>${r.rel_mean == null ? '–' : Math.round(r.rel_mean)}</td><td>${r.value == null ? '–' : Math.round(r.value).toLocaleString()}</td></tr>`).join('')}</tbody></table>`;
+    const M = T.meta || {};
+    box.innerHTML = `<div class="card"><h3>${esc(L.name)} · ${esc(label)}</h3><div class="tvc" id="tvc">${svg}<div class="tip" id="tv-tip"></div></div>${legend}</div>` +
+      `<div class="card"><h3>Where everyone stands, ${esc(L.dates[L.dates.length - 1])}</h3><div class="k">Power index now (picks included) and how it moved, in index points. The top team is pinned at 99, so a leader's own moves show in the "vs league avg" and roster-value columns. Peak and low span the league's whole history.</div>${tbl}` +
+      `<div class="k" style="margin-top:8px">${esc(M.lens || '')}. Weekly from ${esc(L.dates[0])}; the first weeks of a startup are dropped until the rosters are ${Math.round((M.ramp_share || 0.95) * 100)}% full.${L.fc ? ' FantasyCalc values from ' + esc(M.fc_from || '') + '.' : ''}</div></div>`;
+    document.getElementById('tv-count').textContent = `${teams.length} teams · ${dates.length} weeks`;
+    box.querySelectorAll('.tvl button').forEach(b => b.addEventListener('click', () => { tv.hi = tv.hi === b.dataset.id ? null : b.dataset.id; renderTeamValue(); }));
+    const hit = box.querySelector('#tv-hit'), rule = box.querySelector('#tv-rule'), tip = box.querySelector('#tv-tip'), svgEl = box.querySelector('svg');
+    const move = ev => {
+      const r = svgEl.getBoundingClientRect(), px = (ev.clientX - r.left) / (r.width || 1) * W;
+      let best = 0, bd = Infinity; dates.forEach((d, i) => { const dd = Math.abs(X(d.getTime()) - px); if (dd < bd) { bd = dd; best = i; } });
+      const xx = X(dates[best].getTime()).toFixed(1); rule.setAttribute('x1', xx); rule.setAttribute('x2', xx); rule.setAttribute('opacity', '0.5');
+      const rows = teams.map(x => [x, x.arr[best]]).filter(([, v]) => v != null).sort((a, b) => b[1] - a[1]);
+      tip.innerHTML = `<b>${dates[best].toISOString().slice(0, 10)}</b>` + rows.map(([x, v]) => `<div><span><i style="background:${x.color}"></i>${esc(x.name)}</span><span>${fmtV(v)}</span></div>`).join('');
+      tip.style.display = 'block';
+      const left = ev.clientX - r.left, flip = left > r.width * 0.6;
+      tip.style.left = flip ? 'auto' : (left + 14) + 'px'; tip.style.right = flip ? (r.width - left + 14) + 'px' : 'auto'; tip.style.top = Math.max(0, ev.clientY - r.top - 20) + 'px';
+    };
+    hit.addEventListener('mousemove', move); hit.addEventListener('mouseleave', () => { tip.style.display = 'none'; rule.setAttribute('opacity', '0'); });
+  }
+
+  function renderMarket() {
+    const M = data.market_trends, box = document.getElementById('market');
+    if (!box) return;
+    if (!M || !M.seasonality) { box.innerHTML = '<p class="k">No market-trend summary in this export.</p>'; return; }
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const pc = v => v == null ? '–' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%';
+    const heatCell = (v, scale) => { if (v == null) return '<td class="hc dim">–</td>'; const w = Math.min(60, Math.abs(v) / scale * 60); return `<td class="hc ${v > 0 ? 'pos' : 'neg'}" style="--w:${w.toFixed(0)}" title="${pc(v)} market-adjusted over the next ${M.seasonality.days} days">${pc(v)}</td>`; };
+    const heat = (rows, key, order, scale) => {
+      const groups = order.filter(g => rows.some(r => r[key] === g));
+      const cell = (g, m) => { const r = rows.find(x => x[key] === g && x.month === m); return r ? r.pct : null; };
+      return `<table class="small heat"><thead><tr><th class="l">${esc(key === 'position' ? 'Position' : key === 'stage' ? 'Career stage' : 'Age')}</th>${mon.map(m => `<th>${m}</th>`).join('')}</tr></thead><tbody>${groups.map(g => `<tr><td class="l">${esc(g)}</td>${mon.map((_, i) => heatCell(cell(g, i + 1), scale)).join('')}</tr>`).join('')}</tbody></table>`;
+    };
+    const S = M.seasonality;
+    const whole = `<table class="small heat"><thead><tr><th class="l">Whole market (raw)</th>${mon.map(m => `<th>${m}</th>`).join('')}</tr></thead><tbody><tr><td class="l">median priced player</td>${mon.map((_, i) => { const r = (S.whole_market || []).find(x => x.month === i + 1); return heatCell(r ? r.pct : null, 3); }).join('')}</tr></tbody></table>`;
+    const parts = [];
+    parts.push(`<div class="card"><h3>1. Seasonality: mean market-adjusted change over the next ${S.days} days, by month</h3><div class="k">Green = that group gains against the market in that month, red = loses; the whole-market row is the raw drift of the median priced player (the pool deflates every month, most in April when the draft class takes value out of it).</div>` +
+      heat(S.by_age || [], 'age_band', ['<25', '25-28', '29+'], 4) + '<h4>By career stage</h4>' + heat(S.by_stage || [], 'stage', ['rookie', 'yr2-3', 'yr4-6', 'yr7+'], 4) + '<h4>By position</h4>' + heat(S.by_position || [], 'position', ['QB', 'RB', 'WR', 'TE'], 4) + '<h4>The whole market</h4>' + whole + '</div>');
+    parts.push(`<div class="card"><h3>2. The calendar of edges</h3><div class="k">Each a few percent, systematic across six seasons on the whole priced pool; to combine with the model's own mispricing, not to trade on alone.</div><ul class="edges">` + [
+      'Buy productive 29-year-olds and older in December and sell in February or March: they are marked down 2 to 3% a month from October to December and re-rated +4.9% when the season ends.',
+      'Buy second- and third-year players in March and April (-1.3% and -2.6%: the new class takes the attention) and under-25s in February and March, the one window the young do not appreciate; through the season they gain 1.5 to 3% a month against the market.',
+      'Buy rookie picks before the NFL draft: the incoming class is marked down 2.9% in February and re-rated +19% in April; a 1st is 9 to 13% cheaper a year before its draft and 22% cheaper two years before.',
+      'Ride risers for about eight weeks (the past month\'s move continues, +4.1% for the top decile); buy an RB, WR or TE after a 15%+ fall (they bounce +3.7 to +4%); do not catch a falling QB (-3.1% more).',
+      'A big game is momentum, not a fade: +7.5 to +10.5% in the week and +10 to +15% at eight weeks for every position (TEs most); buying the week after still earns +2 to +4.5%.',
+      'Buy TEs in July and August (-1.5 to -1.7%), sell in October (+4.1%); buy QBs May to October, sell in January and February (+3% a month); RBs are cheapest January to March.',
+      'An injured under-25 at week four is a modest buy (-2.2%, back above water by week 16); an injured 29-year-old or older is a sell (-8% by week four, still -4% at week 16); knee and Achilles absences are the ones that stay down (-3.7% at week 16), concussions and soft-tissue absences recover fully.'].map(s => `<li>${s}</li>`).join('') + '</ul></div>');
+    const mo = M.momentum || {};
+    if (mo.deciles) {
+      const dec = mo.deciles.slice().sort((a, b) => Number(a.decile) - Number(b.decile));
+      parts.push(`<div class="card"><h3>3. Momentum or reversion</h3><div class="k">The market-adjusted move over the previous ${mo.back_days} days against the move over the next ${mo.fwd_days} days, ${(mo.n || 0).toLocaleString()} player-weeks; correlation ${Number(mo.corr_overall || 0).toFixed(3)} overall${mo.corr_by_position ? ' (' + Object.entries(mo.corr_by_position).map(([k, v]) => k + ' ' + Number(v).toFixed(3)).join(', ') + ')' : ''}. A positive slope is momentum.</div>` +
+        `<table class="small"><thead><tr><th>Decile of the past move</th><th>Past ${mo.back_days}d</th><th>Next ${mo.fwd_days}d, adjusted</th><th>n</th></tr></thead><tbody>${dec.map(r => `<tr><td>${r.decile}</td><td>${pc(r.past_pct)}</td><td>${pc(r.next_pct)}</td><td>${r.n.toLocaleString()}</td></tr>`).join('')}</tbody></table>` +
+        (mo.big_moves ? `<h4>After a move of 15% or more</h4><table class="small"><thead><tr><th class="l">Move</th><th>Position</th><th>Next ${mo.fwd_days}d, adjusted</th><th>Share up</th><th>n</th></tr></thead><tbody>${mo.big_moves.map(r => `<tr><td class="l">${esc(r.move)}</td><td>${r.position}</td><td>${pc(r.next_pct)}</td><td>${Math.round(r.share_up * 100)}%</td><td>${r.n}</td></tr>`).join('')}</tbody></table>` : '') + '</div>');
+    }
+    const ag = M.age_discount;
+    if (ag && ag.by_age) {
+      const AGE = ['<24', '24-26', '27-29', '30+'], POS = ['QB', 'RB', 'WR', 'TE'];
+      const ord = rows => rows.slice().sort((a, b) => (POS.indexOf(a.position || 'QB') - POS.indexOf(b.position || 'QB')) || (AGE.indexOf(a.age_band) - AGE.indexOf(b.age_band)));
+      const tbl = rows => `<table class="small"><thead><tr><th class="l">Group</th><th>Players</th><th>Finished worse than priced by (ranks)</th><th>Wins per 1,000 KTC</th><th>Mean KTC</th><th>Mean realized WAR</th></tr></thead><tbody>${rows.map(r => `<tr><td class="l">${esc((r.position ? r.position + ' ' : '') + r.age_band)}</td><td>${r.n}</td><td>${r.finished_worse_by > 0 ? '+' : ''}${r.finished_worse_by}</td><td>${Number(r.wins_per_1k).toFixed(3)}</td><td>${Math.round(r.ktc_mean).toLocaleString()}</td><td>${Number(r.war_mean).toFixed(2)}</td></tr>`).join('')}</tbody></table>`;
+      parts.push(`<div class="card"><h3>4. The age discount, against what the players delivered</h3><div class="k">Every KTC-priced player each February of ${esc((ag.cohorts || []).join(', '))}, ranked by price and by realized three-year WAR: a positive gap means the group finished worse than it was priced (over-priced), negative better (under-priced). Wins per 1,000 KTC is the realized return on price.</div>` + tbl(ord(ag.by_age)) + '<h4>By position and age</h4>' + tbl(ord(ag.by_age_position || [])) + '</div>');
+    }
+    const pk = M.pick_cycle;
+    if (pk && pk.rows && pk.rows.length) {
+      const rounds = [...new Set(pk.rows.map(r => r.round))].sort(), months = [...new Set(pk.rows.map(r => r.months_to_draft))].sort((a, b) => a - b).filter(m => m <= 24);
+      const W = 640, H = 220, mL = 44, mR = 12, mT = 10, mB = 26, iw = W - mL - mR, ih = H - mT - mB;
+      const vals = pk.rows.filter(r => r.months_to_draft <= 24).map(r => r.pct_vs_month_before_draft), lo = Math.min(...vals, 0), hi = Math.max(...vals, 0);
+      const X = m => mL + (24 - m) / 24 * iw, Y = v => mT + ih - (v - lo) / (hi - lo || 1) * ih;
+      const colors = { 1: 'var(--accent)', 2: 'var(--cheap)', 3: 'var(--rich)', 4: 'var(--muted)' };
+      const lines = rounds.map(rd => { const pts = months.map(m => { const r = pk.rows.find(x => x.round === rd && x.months_to_draft === m); return r ? `${X(m).toFixed(1)},${Y(r.pct_vs_month_before_draft).toFixed(1)}` : null; }).filter(Boolean); const last = months.map(m => pk.rows.find(x => x.round === rd && x.months_to_draft === m)).filter(Boolean).sort((a, b) => a.months_to_draft - b.months_to_draft)[0]; return `<polyline points="${pts.join(' ')}" fill="none" stroke="${colors[rd] || 'currentColor'}" stroke-width="2"></polyline>` + (last ? `<text x="${(X(last.months_to_draft) + 3).toFixed(1)}" y="${(Y(last.pct_vs_month_before_draft) + 3.5).toFixed(1)}" font-size="10" fill="${colors[rd] || 'currentColor'}">R${rd}</text>` : ''); }).join('');
+      const yt = [0, -10, -20, -30, -40, -50].filter(v => v >= lo - 1).map(v => `<line x1="${mL}" x2="${W - mR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="currentColor" opacity="0.12"></line><text x="${mL - 6}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" opacity="0.7">${v}%</text>`).join('');
+      const xt = [24, 18, 12, 6, 0].map(m => `<text x="${X(m).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">${m === 0 ? 'draft' : m + ' mo before'}</text>`).join('');
+      parts.push(`<div class="card"><h3>5. The rookie-pick cycle</h3><div class="k">A pick's KTC value by months before its draft, relative to its value one month before the draft (round level, KTC's Mid tier; drafts ${esc(String(Math.min(...pk.seasons)))}–${esc(String(Math.max(...pk.seasons)))}). Picks appreciate steadily into the draft: part time value, part hype.</div><figure class="arch"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Rookie pick value by months before the draft, by round" style="max-width:640px"><g>${yt}${lines}${xt}</g></svg></figure></div>`);
+    }
+    const bw = M.big_weeks;
+    if (bw && bw.by_position) parts.push(`<div class="card"><h3>6. One big game</h3><div class="k">Weeks a player scored two standard deviations above his season rate so far (at least four games in): the market-adjusted change over the next week and the next eight weeks; "after the pop" is the eight-week change minus the first week's. ${bw.events} events.</div><table class="small"><thead><tr><th class="l">Position</th><th>n</th><th>Next week</th><th>Next 8 weeks</th><th>After the pop</th></tr></thead><tbody>${bw.by_position.map(r => `<tr><td class="l">${r.position}</td><td>${r.n}</td><td>${pc(r.next_week_pct)}</td><td>${pc(r.next_8w_pct)}</td><td>${pc(r.after_the_pop_pct)}</td></tr>`).join('')}</tbody></table></div>`);
+    const inj = M.injuries;
+    if (inj && inj.by_class) {
+      const ordI = (rows, key) => rows.slice().sort((a, b) => key === 'age_band' ? ['<25', '25-28', '29+'].indexOf(a[key]) - ['<25', '25-28', '29+'].indexOf(b[key]) : key === 'position' ? ['QB', 'RB', 'WR', 'TE'].indexOf(a[key]) - ['QB', 'RB', 'WR', 'TE'].indexOf(b[key]) : (a[key] == null) - (b[key] == null) || b.n - a.n);
+      const tbl = (rows, key) => `<table class="small"><thead><tr><th class="l">${key === 'injury_class' ? 'Injury' : key === 'age_band' ? 'Age' : 'Position'}</th><th>n</th><th>Week 1</th><th>Week 4</th><th>Week 16</th></tr></thead><tbody>${rows.map(r => `<tr><td class="l">${esc(String(r[key] == null ? 'unclassified' : r[key]).replace(/_/g, ' '))}</td><td>${r.n}</td><td>${pc(r.week1_pct)}</td><td>${pc(r.week4_pct)}</td><td>${pc(r.week16_pct)}</td></tr>`).join('')}</tbody></table>`;
+      parts.push(`<div class="card"><h3>7. The price path around an injury</h3><div class="k">The first week a player misses as injured after playing the week before: the market-adjusted change from the last price before the miss to one, four and sixteen weeks after. ${inj.events} absences since 2020.</div>${tbl(ordI(inj.by_class, 'injury_class'), 'injury_class')}<h4>By age</h4>${tbl(ordI(inj.by_age || [], 'age_band'), 'age_band')}<h4>By position</h4>${tbl(ordI(inj.by_position || [], 'position'), 'position')}</div>`);
+    }
+    const pp = M.price_per_point;
+    if (pp && pp.rows && pp.rows.length) {
+      const seasons = pp.seasons || [...new Set(pp.rows.map(r => r.season))].sort(), POSN = ['QB', 'RB', 'WR', 'TE'];
+      const cell = (p, s) => pp.rows.find(r => r.position === p && r.season === s);
+      const grid = (title, f, note) => `<h4>${title}</h4><div class="k">${note}</div><table class="small"><thead><tr><th class="l">Position</th>${seasons.map(s => `<th>${s}</th>`).join('')}</tr></thead><tbody>${POSN.map(p => `<tr><td class="l">${p}</td>${seasons.map(s => { const r = cell(p, s); const v = r ? f(r) : null; return `<td>${v == null ? '<span class="dim">–</span>' : v}</td>`; }).join('')}</tr>`).join('')}</tbody></table>`;
+      parts.push(`<div class="card"><h3>8. What the market pays per point</h3><div class="k">Each player's first September price (the preseason snapshot, players priced at ${(M.meta && M.meta.min_value || 1000).toLocaleString()}+) against the points per game he then scored that season (at least ${pp.min_games} games). The current season is in the value share only.</div>` +
+        grid('KTC per point of PPG, the top of the position (median)', r => r.ktc_per_ppg_top == null ? null : Math.round(r.ktc_per_ppg_top).toLocaleString(), 'What a point a game cost among the starters going into the season (the top ' + Object.entries(pp.top_n || {}).map(([k, v]) => v + ' ' + k).join(', ') + ' by price); a rising number is a position getting dearer for what it scores.') +
+        grid('KTC per point of PPG, every priced player (median)', r => r.ktc_per_ppg == null ? null : Math.round(r.ktc_per_ppg).toLocaleString(), 'The same over the whole priced pool, which deepens every year (KTC prices more players), so this drifts towards lesser players.') +
+        grid('Share of all priced value', r => r.value_share == null ? null : r.value_share.toFixed(1) + '%', 'Where the market keeps its money: the position\'s share of the summed value of every priced player in the September snapshot.') +
+        grid('Preseason price vs the season\'s PPG (Spearman)', r => r.spearman_price_ppg == null ? null : Number(r.spearman_price_ppg).toFixed(2), 'How well the September price ranked that season\'s scorers within the position; lower is a position the market finds harder to call, where a better projection pays most.') +
+        grid('Median PPG of priced players', r => r.ppg_median == null ? null : Number(r.ppg_median).toFixed(1), 'The scoring behind the price, for scale (priced players with at least ' + pp.min_games + ' games).') + '</div>');
+    }
+    const meta = M.meta || {};
+    parts.push(`<div class="k">KTC dynasty (SF) daily history ${esc(meta.from || '')} to ${esc(meta.through || '')}; players priced at ${(meta.min_value || 1000).toLocaleString()} or more; run ${esc(meta.run_date || '')}.</div>`);
+    box.innerHTML = parts.join('');
+  }
+
+  function showTab(id) {
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+    for (const k of ['players', 'rosters', 'perf', 'trades', 'slots', 'teamvalue', 'market']) document.getElementById('tab-' + k).hidden = k !== id;
+    try { localStorage.setItem('dv_tab', id); } catch (e) { /* per-viewer convenience only */ }
+  }
+
+  function update() { recompute(); render(); renderRoster(); }
+
+  function renderPerformance() {
+    const P = data.performance || {}, box = document.getElementById('perf');
+    const f3 = v => v == null ? '–' : Number(v).toFixed(3), f1 = v => v == null ? '–' : Number(v).toFixed(1);
+    const tbl = (head, rows, bestCols) => `<table class="small"><thead><tr>${head.map((h, i) => `<th class="${i === 0 ? 'l' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => {
+      const vals = r.slice(1).map(Number); const best = bestCols ? Math.max(...bestCols.map(i => vals[i - 1]).filter(x => !isNaN(x))) : null;
+      return `<tr><td class="l">${r[0]}</td>${r.slice(1).map((v, i) => `<td class="${bestCols && bestCols.includes(i + 1) && Number(v) === best ? 'best' : ''}">${v}</td>`).join('')}</tr>`; }).join('')}</tbody></table>`;
+    const spec = (rows) => `<div class="spec">${rows.map(([k, v]) => `<b>${k}</b><span>${v}</span>`).join('')}</div>`;
+    const parts = [];
+    const ins = P.inseason, v = P.value, c = P.career_eval, e = P.experiments;
+    // the story first: what the model does for the team, in numbers a visitor can read; the method cards follow
+    const pctf = x => x == null ? '–' : Math.round(x * 100) + '%';
+    const top = [], tiles = [];
+    const mk0 = P.market, ov0 = mk0 && mk0.overall && mk0.overall.length ? mk0.overall.slice().sort((a, b) => b.horizon - a.horizon)[0] : null;
+    const sw0 = ov0 && mk0.swap_overall ? mk0.swap_overall.find(r => r.variant === ov0.variant && r.horizon === ov0.horizon) : null;
+    const cohortsTxt = esc((mk0 && mk0.meta || {}).cohorts || '');
+    // a cohort T is priced at KTC on 15 February T+1 and scored on seasons T+1..T+3: label swaps by that February
+    const febTxt = (() => { const m = String((mk0 && mk0.meta || {}).cohorts || '').match(/(\d{4})\D+(\d{4})/); return m ? `${+m[1] + 1}–${+m[2] + 1}` : ''; })();
+    if (sw0 && sw0.pairs) {
+      // review 2026-10-13: lead with the model's own unit (points above replacement, wins), not raw points across positions
+      // (31 of 65 sells were receivers, 17 buys quarterbacks: raw points mostly say "quarterbacks score more"), and show what the model promised
+      const sg = (x, d) => x == null ? null : `${x >= 0 ? '+' : ''}${d === 0 ? Math.round(x) : Number(x).toFixed(d)}`;
+      const pts = sg(sw0.gain_pts_mean, 0), par = sg(sw0.gain_par_mean, 0), wins = sg(sw0.gain_mean, 2), said = sg(sw0.model_said, 2);
+      top.push({ h: 'The swap test: trades the model would have made', n: par != null ? `${par} <small>points above replacement per swap, three seasons · ${wins} wins</small>` : `${wins} <small>wins per swap · ${pctf(sw0.win_rate)} won</small>`,
+        t: `Every February ${febTxt}, the model's "sell this one, buy that one" pairs at the same market price: ${sw0.pairs} swaps, free to make. Three seasons later the player bought had delivered ${par != null ? `${par} more points above a replacement-level player at his position` : 'more'}${pts != null ? ` (${pts} raw points, a number that mixes positions)` : ''}; in this league's wins ${wins} per swap, ${pctf(sw0.win_rate)} won${said != null ? `, against the ${said} the model had said` : ''}. Three overlapping windows, mostly mid-market players, and the gain is largely "sell the under-25 premium": the caveats below.` });
+    }
+    if (ov0 && ov0.cheap_gap_real != null) {
+      // review 2026-10-13: the raw gap (ktc_rank - real_rank on the third the model liked most relative to KTC) is positive for ANY model
+      // that disagrees with the market -- a pure-noise model scores about +10 / -10 on it. The honest numbers are net of the market's own
+      // regression to the mean (cheap_net / rich_net) and how much closer our rank sat than KTC's on the disagreed players (cheap_closer)
+      const net = ov0.cheap_net != null;
+      top.push({ h: net ? 'The mispricing column, net of regression to the mean' : 'The mispricing column, against the market',
+        n: net ? `+${f1(ov0.cheap_net)} <small>ranks better than their market rank predicts · ${f1(ov0.rich_net)} worse</small>` : `+${f1(ov0.cheap_gap_real)} <small>ranks better · ${f1(ov0.rich_gap_real)} worse (raw)</small>`,
+        t: net ? `Players the model called cheap finished ${f1(ov0.cheap_net)} places better than a player at their market rank usually does, the ones it called rich ${f1(Math.abs(ov0.rich_net))} worse; on the players we disagreed about, our rank sat ${f1(ov0.cheap_closer)} places closer to the finish than the market's. The raw gap (+${f1(ov0.cheap_gap_real)} / ${f1(ov0.rich_gap_real)}) is larger only because disagreeing with the market selects players who regress toward the middle: a model with no skill scores about +10 there.`
+               : `Players the model called cheap finished ${f1(ov0.cheap_gap_real)} places higher than the market ranked them, the ones it called rich ${f1(Math.abs(ov0.rich_gap_real))} lower. Most of that is regression to the mean (a model with no skill scores about +10 / −10 on this construction); the version net of it appears once the market backtest is re-scored.` });
+    }
+    if (ins && ins.ros && ins.ros.length) {
+      // review 2026-10-13: the market's dynasty price is not a rest-of-season ranking; the provider's own projection is the fair
+      // yardstick, and points above replacement (parb_*) the fair measure when the summary carries them (the production model's table)
+      const w = ins.ros[0], last = ins.ros[ins.ros.length - 1];
+      const par = w['ros|parb_model'] != null;
+      const y = par ? { m: 'ros|parb_model', p: 'ros|parb_provider', k: 'ros|parb_ktc' } : { m: 'ros|model', p: 'ros|consensus', k: 'ros|ktc' };
+      const hasP = w[y.p] != null, beatsP = hasP && ins.ros.every(r => r[y.m] > r[y.p]);
+      tiles.push({ h: 'Rest of this season', n: `${f3(w[y.m])} <small>${hasP ? `vs the provider's projection ${f3(w[y.p])} · ` : 'vs '}market ${f3(w[y.k])}</small>`,
+        t: `How well we ordered players by ${par ? 'the points above replacement they then delivered' : 'what they then averaged'} over the rest of the season, from week ${w.W}${beatsP ? '; ahead of the provider at every checkpoint' : ''} (${f3(last[y.m])} vs ${hasP ? f3(last[y.p]) : '–'} at week ${last.W}). A dynasty price is not a rest-of-season ranking, so the provider's weekly projection is the yardstick that counts; the edge over it is a few hundredths${par ? '' : ' (this card is from an older run of the tree model until the production table replaces it)'}.` });
+      const nx = ins.next && ins.next.length && ins.next[0]['next|parb_model'] != null ? ins.next : null;
+      if (nx) {
+        const n0 = nx[0], nl = nx[nx.length - 1];
+        tiles.push({ h: 'Next season, from a mid-season snapshot', n: `${f3(n0['next|parb_model'])} <small>vs market ${f3(n0['next|parb_ktc'])}</small>`,
+          t: `Ordering by next season's points above replacement, from week ${n0.W} (${f3(nl['next|parb_model'])} vs ${f3(nl['next|parb_ktc'])} at week ${nl.W}): behind or level with the market early in the season, ahead from week 9. The players hurt right now are where the market knows more than the model.` });
+      }
+    }
+    if (ov0) tiles.push({ h: `${ov0.horizon} years out`, n: `${f3(ov0.rho_model)} <small>vs market ${f3(ov0.rho_ktc)} · a statistical tie</small>`,
+      t: `How well we ordered ${ov0.n} player-cohorts (the priced players, each February ${febTxt}) by the wins they then delivered over the next three seasons: projected at the time, scored years later. The difference sits inside its own noise (a 95 % interval of about −0.02 to +0.06 over the players); the market orders under-25s and rookies better, the model ages 25-32 and running backs.` });
+    if (c && c.mae && c.mae.length) {
+      const r3 = c.mae.find(r => r.horizon === 3) || c.mae[c.mae.length - 1];       // three years out: the span the market test uses
+      // review 2026-10-13: lead with the stronger baseline (the age curve); "repeat last season" is punished by attrition on a
+      // set that counts a season never played as zero. Name the run: this evaluation is the tree walk-forward until it is re-run on production
+      tiles.push({ h: `Career projection, ${r3.horizon} years ahead`, n: `−${Math.abs(r3['model_%_vs_decay']).toFixed(0)}% <small>error vs an age curve</small>`,
+        t: `Season-points error against the stronger naive rule, an age-decay curve; −${Math.abs(r3['model_%_vs_carry']).toFixed(0)}% against "repeat last season", a baseline that attrition punishes. ${Number(r3.n_total).toLocaleString()} player-seasons since ${c.start_season}, seasons never played counted as zero. From the ${esc(c.run_date || '')} evaluation (${esc(c.backend || 'the tree walk-forward, not the production TabPFN')}).` });
+    }
+    const tile = x => `<div class="card tile"><div class="h">${x.h}</div><div class="n">${x.n}</div><div class="t">${x.t}</div></div>`;
+    if (top.length) parts.push(`<div class="hero top">${top.map(tile).join('')}</div>`);
+    if (tiles.length) parts.push(`<div class="hero">${tiles.map(tile).join('')}</div>`);
+    // the swaps themselves: named, dated, scored
+    const named = (mk0 && mk0.top_swaps || []).filter(r => r.gain != null).sort((a, b) => b.gain - a.gain);
+    if (named.length && sw0) {
+      const byC = (mk0.swap_by_cohort || []).filter(r => r.variant === sw0.variant && r.horizon === sw0.horizon).sort((a, b) => a.cohort - b.cohort);
+      const byP = (mk0.swap_by_buy_pos || []).filter(r => r.variant === sw0.variant && r.horizon === sw0.horizon);
+      const bestP = byP.length ? byP.slice().sort((a, b) => b.win_rate - a.win_rate)[0] : null;
+      const sg2 = x => (x >= 0 ? '+' : '') + Number(x).toFixed(2);
+      const hasPts = named.some(r => r.sell_pts != null), f0 = v => v == null ? '–' : Math.round(v).toLocaleString();
+      const namedRows = named.slice(0, 8).map(r => hasPts
+        ? [r.cohort + 1, esc(r.sell) + ' (' + esc(r.sell_pos) + ')', r.sell_ktc, f0(r.sell_pts), f0(r.sell_par), esc(r.buy) + ' (' + esc(r.buy_pos) + ')', r.buy_ktc, f0(r.buy_pts), f0(r.buy_par), (r.gain_pts >= 0 ? '+' : '') + f0(r.gain_pts), sg2(r.gain)]
+        : [r.cohort + 1, esc(r.sell) + ' (' + esc(r.sell_pos) + ')', r.sell_ktc, f3(r.sell_real), esc(r.buy) + ' (' + esc(r.buy_pos) + ')', r.buy_ktc, f3(r.buy_real), sg2(r.gain)]);
+      const namedHead = hasPts ? ['Swap (Feb.)', 'Sold', 'KTC', 'Points, 3 seasons', 'Above replacement', 'Bought', 'KTC', 'Points, 3 seasons', 'Above replacement', 'Gain (points)', 'Gain (wins)']
+                               : ['Swap (Feb.)', 'Sold', 'KTC', 'Delivered', 'Bought', 'KTC', 'Delivered', 'Gain (wins)'];
+      parts.push(`<div class="card"><h3>The swaps, by name</h3><div class="k">Points: what each player scored over the three seasons after the swap, in this league's scoring. Above replacement and wins: see the words above. The best ${Math.min(8, named.length)} of ${sw0.pairs}; the worst are further down, because ${pctf(sw0.win_rate)} won means one in four went the other way.</div>` +
+        tbl(namedHead, namedRows) +
+        `<div class="k" style="margin-top:8px"><b>Consistent, not lucky:</b> ${byC.map(r => `February ${r.cohort + 1}: ${pctf(r.win_rate)} of ${r.pairs}${r.gain_pts_mean != null ? ` (${r.gain_pts_mean >= 0 ? '+' : ''}${Math.round(r.gain_pts_mean)} pts per swap)` : ''}`).join(' · ')}.${bestP ? ` Buying a ${bestP.buy_pos} won ${pctf(bestP.win_rate)} of the time${bestP.gain_pts_mean != null ? ` (${bestP.gain_pts_mean >= 0 ? '+' : ''}${Math.round(bestP.gain_pts_mean)} points, ${sg2(bestP.gain_mean)} wins per swap)` : ` (${sg2(bestP.gain_mean)} wins per swap)`}${bestP.buy_pos === 'RB' ? ', the market under-prices productive backs' : ''}.` : ''}</div></div>`);
+    }
+    parts.push(`<div class="card"><h3>The words</h3><ul class="usecase">
+      <li><b>Rank agreement.</b> Put the players in the order we projected them, and in the order they actually finished. 1.0 means the same order, 0 means no relation; 0.70 against a yardstick's 0.65 means our order was closer to what happened, and a few hundredths is inside the noise of three test years. (The statistic is Spearman's correlation.)</li>
+      <li><b>Points above replacement (PAR).</b> A player's points minus what a freely available player at his position would have scored in the same games. The part of his production you could not have had for nothing.</li>
+      <li><b>Wins above replacement (WAR).</b> The same thing turned into wins on this league's own scoring and lineup: how many extra wins those points buy a typical roster. The model is tested on this.</li>
+      <li><b>The market.</b> KeepTradeCut's dynasty values, the consensus price managers trade on. We measure against it and never feed it into any model. Two other market-adjacent inputs do enter the in-season model since October 2026: the providers' weekly projections and preseason draft position (ADP). The career model, the one the swap test and the three-year numbers validate, reads neither.</li>
+      <li><b>Fair value and mispricing.</b> Fair value is what the market would pay a player if it agreed with our order of players at his position; mispricing is how far his actual price sits above (rich) or below (cheap) that.</li>
+      <li><b>Walk-forward.</b> To score a past year, the model is rebuilt with only what was known then, its projection written down, and compared with what happened years later. No peeking.</li>
+      <li><b>The swap test.</b> Two players priced within 15% of each other that the model disagreed on by at least ten places: sell the one it called rich, buy the one it called cheap, then see who delivered more.</li>
+      <li><b>Band.</b> The 20th-to-80th-percentile range of a projection: the floor and ceiling of what the model thinks is likely.</li>
+    </ul></div>`);
+    parts.push(`<div class="card"><h3>What this does for the team</h3><ul class="usecase">
+      <li><b>Trades, today.</b> The Mispricing column on the Players tab is this signal, live. The trade finder on the Rosters tab turns it into packages that add wins now and later, priced the way KTC's calculator would so the other side sees a fair offer.</li>
+      <li><b>Wins, not points, for this league.</b> Every player and pick is valued in wins above replacement on this league's lineup and scoring, this season at full weight and later seasons discounted. The same player is worth different wins in different leagues.</li>
+      <li><b>Championships.</b> A simulation of the rest of the season gives each roster its odds of the playoffs, a bye and the title, and each player's share of them. A second lens does next season, picks included.</li>
+      <li><b>Picks on the same scale.</b> A pick is the expected wins of the player taken at that slot, so a pick-for-player trade is one comparison.</li>
+      <li><b>Weekly.</b> Refreshed after the Monday games, so the rest-of-season view moves with the season.</li>
+    </ul></div>`);
+    parts.push(`<p class="lead"><b>How we keep ourselves honest.</b> Every number here is walk-forward and KTC is the yardstick, never an input. A change to the model is kept only when it beats the same-day baseline on both ordering and wins error, past a statistical line, over eight test years with the test year as the unit of evidence; everything tried, kept or dropped, is in the journal, and an adversarial review of the whole thing (October 2026) is in the repository. The caveats, stated: the market test is three overlapping years and ${sw0 && sw0.pairs ? sw0.pairs : 'a few dozen'} swaps (${sw0 && sw0.pairs ? 'about half of them sharing no player' : 'not all independent'}), so it says "ahead", not "far ahead", and the three-year ordering is a statistical tie; the market orders under-25s, rookies and quarterbacks better than we do, our edge is ages 25-32 and running backs; the model under-prices young players and over-prices old ones (the realized-to-projected ratio runs from about 1.2 under 25 to 0.9 past 29), so part of its "sell young, buy old" is its own bias; across positions it leans toward quarterbacks, which is why mispricing is read within position; more than a quarter of the value at the default 10 % discount sits in seasons four to ten that the test never scores; and the rest-of-season and next-season spans, more than half of today's value, are validated against the providers' projections, not through the swap test.</p>`);
+    parts.push(`<h2 style="font-size:15px;margin:18px 0 8px">The details</h2>`);
+    if (ins && ins.ros && ins.next) {
+      parts.push(`<div class="card"><h3>1. Rest of this season, from a mid-season snapshot</h3>` + spec([
+        ['Predicts', 'each player\'s points per game over the remaining games, from his season so far plus last season'],
+        ['Scored on', `cohorts ${esc(ins.cohorts || '')}, players KTC priced that week, who played again`],
+        ['Measure', 'rank agreement (Spearman) between the projection and what he actually averaged; 1 = identical order'],
+        ['Baselines', 'KTC\'s ranking that week · this season\'s rate so far · last season\'s rate · a 50/50 blend of the two']]) +
+        tbl(['Snapshot', 'Model', 'KTC', 'This season so far', 'Last season', '50/50 blend'], ins.ros.map(r => [`Week ${r.W}`, f3(r['ros|model']), f3(r['ros|ktc']), f3(r['ros|to_date']), f3(r['ros|last_season']), f3(r['ros|blend'])]), [1, 2, 3, 4, 5]) + `</div>`);
+      parts.push(`<div class="card"><h3>2. Next season, from a mid-season snapshot</h3>` + spec([
+        ['Predicts', 'each player\'s total points next season'],
+        ['Scored on', `the same cohorts and players, next season\'s actual points`],
+        ['Measure', 'rank agreement; the in-season value column is the full multi-year value (what the table ranks by), the model column the next-season projection alone'],
+        ['Baselines', 'as above']]) +
+        tbl(['Snapshot', 'In-season value', 'Next-season projection', 'KTC', 'This season so far', 'Last season', '50/50 blend'], ins.next.map(r => [`Week ${r.W}`, f3(r['next|iv_inseason']), f3(r['next|model']), f3(r['next|ktc']), f3(r['next|to_date']), f3(r['next|last_season']), f3(r['next|blend'])]), [1, 2, 3, 4, 5, 6]) +
+        (ins.market_lag_note ? `<div class="k" style="margin-top:8px"><b>Does the market follow the model?</b> ${esc(ins.market_lag_note)}.</div>` : '') + `</div>`);
+    }
+    if (v && v.per_cohort) {
+      const m = v.mean || {}, b = v.bootstrap || {};
+      parts.push(`<div class="card"><h3>3. Multi-year value, from a season-end projection</h3>` + spec([
+        ['Predicts', `each player\'s points above replacement over the next ${v.horizon} seasons, from his season-end row`],
+        ['Scored on', 'every player with a row that season who was KTC priced the following February; one row per cohort season'],
+        ['Measure', 'rank agreement with the value he actually delivered over those seasons'],
+        ['Baselines', 'KTC that February · a 50/50 blend of the two rankings']]) +
+        tbl(['Cohort', 'Intrinsic value', 'KTC', '50/50 blend', 'Model vs KTC agreement'], v.per_cohort.map(r => [r.cohort_T, f3(r.spearman_iv_vs_realized), f3(r.spearman_ktc_vs_realized), f3(r.spearman_blend_vs_realized), f3(r.spearman_iv_vs_ktc)]).concat([['Mean', f3(m.spearman_iv_vs_realized), f3(m.spearman_ktc_vs_realized), f3(m.spearman_blend_vs_realized), f3(m.spearman_iv_vs_ktc)]]), [1, 2, 3]) +
+        `<div class="k" style="margin-top:8px"><b>Model minus market</b>, paired bootstrap over players: ${b.iv_minus_ktc == null ? '–' : (b.iv_minus_ktc >= 0 ? '+' : '') + f3(b.iv_minus_ktc)}, 90% interval ${f3(b.ci90_lo)} to ${f3(b.ci90_hi)} (straddling zero = a statistical tie).</div>` +
+        (v.terciles ? `<div class="k"><b>Is the mispricing actionable?</b> Players split into thirds by (market − fair) / fair at the time; "finished better by" is market rank minus realized rank, so positive means he did better than the market had him.</div>` + tbl(['Third', 'Players', 'Finished better by (ranks)'], v.terciles.map(r => [esc(r.tercile), r.n, (r.mean_beat_market_by >= 0 ? '+' : '') + f1(r.mean_beat_market_by)])) : '') + `</div>`);
+    }
+    const mk = P.market;
+    if (mk && mk.overall && mk.overall.length) {
+      const hmax = Math.max(...mk.overall.map(r => r.horizon)), M = mk.meta || {};
+      const pct = x => x == null ? '–' : Math.round(x * 100) + '%', sg = x => x == null ? '–' : (x >= 0 ? '+' : '') + Number(x).toFixed(2);
+      const find = (t, pred) => (mk[t] || []).find(pred) || {};
+      const lab = r => (mk.meta && mk.meta.variants && mk.meta.variants.length > 1 ? esc(r.variant) + ' · ' : '') + r.horizon + ' yr';
+      const ov = mk.overall.slice().sort((a, b) => a.variant.localeCompare(b.variant) || b.horizon - a.horizon).map(r => {
+        const s = find('swap_overall', x => x.variant === r.variant && x.horizon === r.horizon);
+        return [lab(r), r.n, f3(r.rho_model), f3(r.rho_ktc), f3(r.edge_corr), f3(r.cheap_wins_per_1k), f3(r.rich_wins_per_1k), s.pairs == null ? '–' : s.pairs, sg(s.gain_mean), pct(s.win_rate)]; });
+      const seg = (title, t, col, st, scol, order) => {
+        const rows = (mk[t] || []).filter(r => r.horizon === hmax).sort((a, b) => a.variant.localeCompare(b.variant) || order.indexOf(a[col]) - order.indexOf(b[col]));
+        if (!rows.length) return '';
+        return `<h4>${title}</h4>` + tbl(['Segment', 'Players', 'Model', 'KTC', 'Edge corr', 'Swaps', 'Gain / swap', 'Won'], rows.map(r => {
+          const s = find(st, x => x.variant === r.variant && x.horizon === hmax && x[scol] === r[col]);
+          return [(M.variants && M.variants.length > 1 ? esc(r.variant) + ' · ' : '') + esc(r[col]), r.n, f3(r.rho_model), f3(r.rho_ktc), f3(r.edge_corr), s.pairs == null ? '–' : s.pairs, sg(s.gain_mean), pct(s.win_rate)]; }), [2, 3]);
+      };
+      const coh = (mk.by_cohort || []).filter(r => r.horizon === hmax).sort((a, b) => a.variant.localeCompare(b.variant) || a.cohort - b.cohort).map(r => {
+        const s = find('swap_by_cohort', x => x.variant === r.variant && x.horizon === hmax && x.cohort === r.cohort);
+        return [(M.variants && M.variants.length > 1 ? esc(r.variant) + ' · ' : '') + r.cohort, r.n, f3(r.rho_model), f3(r.rho_ktc), f3(r.top_decile_model), f3(r.top_decile_ktc), f3(r.edge_corr), s.pairs == null ? '–' : s.pairs, sg(s.gain_mean), pct(s.win_rate)]; });
+      const ts = (mk.top_swaps || []).filter(r => r.gain != null);
+      parts.push(`<div class="card"><h3>3b. Against the market from 2020: are we winning, and where</h3>` + spec([
+        ['Set-up', `each cohort ${esc(M.cohorts || '')} is scored the way a manager would have used the model: trained on seasons up to T, its projection of the next years is set beside KTC the following February, and both are compared with the wins the players then delivered`],
+        ['Measure', 'rank agreement with realized WAR for the model and for KTC on the same priced players; edge corr = does our disagreement with the market predict the market\'s error; wins per 1,000 KTC of the third we called cheap vs the third we called rich'],
+        ['Swap test', `every February, each player the model calls rich is paired with the closest-priced player it calls cheap (KTC within ${Math.round((M.tol || 0.15) * 100)}%, at least ${M.min_gap || 10} ranks of disagreement on both sides); gain = realized WAR of the one bought minus the one sold, over the horizon`]]) +
+        tbl(['Variant, horizon', 'Players', 'Model', 'KTC', 'Edge corr', 'Cheap: wins / 1k KTC', 'Rich: wins / 1k KTC', 'Swaps', 'Gain / swap', 'Won'], ov, [2, 3]) +
+        `<h4>By cohort, ${hmax} years out</h4>` + tbl(['Cohort', 'Players', 'Model', 'KTC', 'Top decile, model', 'Top decile, KTC', 'Edge corr', 'Swaps', 'Gain / swap', 'Won'], coh, [2, 3]) +
+        seg('By market tier (swaps: the tier of the player sold)', 'by_tier', 'tier', 'swap_by_sell_tier', 'sell_tier', ['1-24', '25-60', '61-120', '121+']) +
+        seg('By position (swaps: the position bought)', 'by_position', 'position', 'swap_by_buy_pos', 'buy_pos', ['QB', 'RB', 'WR', 'TE']) +
+        seg('By age (swaps: the age of the player bought)', 'by_age', 'age_band', 'swap_by_buy_age', 'buy_age', ['<25', '25-28', '29-32', '33+']) +
+        seg('By experience (swaps: the experience of the player bought)', 'by_exp', 'exp_band', 'swap_by_buy_exp', 'buy_exp', ['rookie', 'yr2-3', 'vet4+']) +
+        (ts.length ? `<h4>Biggest swaps, ${hmax} years out</h4>` + tbl(['Cohort', 'Sold', 'KTC', 'Delivered', 'Bought', 'KTC', 'Delivered', 'Gain'],
+          ts.slice().sort((a, b) => b.gain - a.gain).map(r => [r.cohort, esc(r.sell) + ' (' + esc(r.sell_pos) + ')', r.sell_ktc, f3(r.sell_real), esc(r.buy) + ' (' + esc(r.buy_pos) + ')', r.buy_ktc, f3(r.buy_real), sg(r.gain)])) : '') +
+        `</div>`);
+    }
+    if (c && c.mae) {
+      parts.push(`<div class="card"><h3>4. Season-by-season projection error, by years ahead</h3>` + spec([
+        ['Predicts', 'a player\'s points in season T+k from his season-T row (the career model behind the multi-year value)'],
+        ['Scored on', `walk-forward from ${c.start_season}: train on seasons before the test season, score the test season; a player who did not play counts as 0`],
+        ['Measure', 'mean absolute error in season points (lower is better)'],
+        ['Baselines', 'carry-forward = repeat his last season · age decay = his last season scaled by the position\'s age / attrition curve']]) +
+        tbl(['Years ahead', 'Model', 'Carry-forward', 'Age decay', 'Model vs carry', 'Model vs decay', 'Player-seasons'], c.mae.map(r => [`+${r.horizon}`, f1(r.model), f1(r.carry_forward), f1(r.decay), '−' + Math.abs(r['model_%_vs_carry']).toFixed(1) + '%', '−' + Math.abs(r['model_%_vs_decay']).toFixed(1) + '%', r.n_total])) + `</div>`);
+    }
+    if (e && e.length) {
+      const hasWar = e.some(r => r.spearman_war_top != null);
+      parts.push(`<div class="card"><h3>5. Model variants on the same validation</h3>` + spec([
+        ['Predicts', 'the multi-year backtest of block 3, run with different inputs or settings: each modelling angle is a named feature group; "calibrated" adds a walk-forward recalibration of the projections, "quantile σ" a player-specific spread'],
+        ['Scored on', 'cohorts 2015–2022; primary metrics on the 150 players a manager would actually weigh (top 150 by projected WAR) and on everyone projected'],
+        ['Measure', 'rank agreement of projected WAR with realized WAR; mean error and bias in wins (+ bias = projections too low); top-12 bias = realized minus projected WAR for the prior season\'s top 12 per position'],
+        ['Context', 'the market\'s rank agreement on the priced players, and whether our disagreement with it predicted its error (edge corr)'],
+        ['Left out', 'the "no spread" variants (_s0): their 0.8 ordering is a yardstick artifact (46 % of the list zero-projected players who realized zero), not a better model']]) +
+        (hasWar
+          ? tbl(['Variant', 'Groups', 'Calibrated', 'Quantile σ', 'WAR agreement, top 150', 'WAR agreement, all', 'WAR error, top 150', 'WAR bias, top 150', 'WAR bias, prior top 12', 'Top-decile hits', 'KTC agreement (context)', 'Edge corr (context)'],
+                e.filter(r => r.spearman_war_top != null && !/_s0(_|$)/.test(String(r.name))).map(r => [esc(r.name), esc(r.groups), r.calibrate ? 'yes' : 'no', r.quantile_sigma ? 'yes' : 'no', f3(r.spearman_war_top), f3(r.spearman_war_all), f3(r.mae_war_top), (r.bias_war_top >= 0 ? '+' : '') + f3(r.bias_war_top), r.bias_war_top12 == null ? '–' : (r.bias_war_top12 >= 0 ? '+' : '') + f3(r.bias_war_top12), f3(r.top_decile_war_all), f3(r.spearman_ktc_vs_realized), f3(r.edge_corr)]), [4, 5])
+          : tbl(['Variant', 'Groups', 'Calibrated', 'Rank agreement (priced)', 'KTC', 'Top-decile hits', 'Top-12 bias (pts)'], e.map(r => [esc(r.name), esc(r.groups), r.calibrate ? 'yes' : 'no', f3(r.spearman_iv_vs_realized), f3(r.spearman_ktc_vs_realized), f3(r.top_decile_iv), r.bias_top12_h1 == null ? '–' : (r.bias_top12_h1 >= 0 ? '+' : '') + f1(r.bias_top12_h1)]), [3, 4])) + `</div>`);
+    }
+    parts.push(`<div class="card"><h3>6. One-off checks (2026-10-01)</h3><ul>
+      <li><b>Top of the market.</b> On 2020–22 cohorts the market's top 12 delivered 25–30% of realized 3-year value; intrinsic value credited them 27–30%, raw KTC 17–24%, convex scales (FantasyCalc-like) 31–35%.</li>
+      <li><b>Position shares.</b> Over the first three seasons the model gives QBs ~33% of league value and WRs ~29%; on 2017–22 cohorts QBs delivered ~26% and WRs ~38%, and the market's shares then matched realized. A position-level calibration is on the backlog.</li>
+      <li><b>Rookies.</b> Out of sample (2022–24) the market's rookies finished ~14 ranks worse than it ranked them and veterans ~9 better; the model's rookie ranks were off by ~2.</li>
+      <li><b>How much recent games matter.</b> Realized rest-of-season rate is best predicted by 0.39 × this season + 0.46 × last season at week 3 and 0.59 / 0.27 at week 9; the model's own weights are 0.49 / 0.37 and 0.62 / 0.23.</li>
+      <li><b>Situation changes</b> move the level, not the spread: a new team −1.0 ppg relative, a week-1 depth demotion −1.7, a promotion +0.9, a new starting QB 0; the spread of outcomes is ≈ 3.5 ppg in every group.</li>
+      <li><b>Replacement level.</b> An explicit lineup fill ties the fixed flex-share line (0.673 vs 0.671) and is configuration-driven. Production uses the weekly form of that fill: lineups are filled each week from the players who actually played, so injured and bye-week starters are backfilled and the marginal starter sits deeper (your league: QB 20 → 25, RB 28 → 32.5, WR 31 → 39, TE 12 → 16 effective starters). That is a definition of the yardstick, not a model change; held-out ordering is unchanged within positions and a wash across them.</li>
+    </ul></div>`);
+    parts.push(`<div class="card"><h3>7. Inside TabPFN: what a forward pass does</h3>
+      <p class="how" style="margin-top:0">TabPFN is a <b>prior-data fitted network</b>: a transformer trained once, by Prior Labs, on millions of synthetic tables drawn from random causal structures, to predict held-out cells from the rest of the table. It never trains on our data. The whole career matrix is the prompt: the 12,400 player-seasons with their outcomes and the players to project go in together, and the answer for each test row comes out of a single forward pass. <code>fit</code> only preprocesses and stores the table; every second of GPU time is <code>predict</code>.</p>
+      <figure class="arch"><svg viewBox="0 0 1000 360" role="img" aria-label="One TabPFN forward pass: the training rows with their outcomes and the players to project enter together as one table, eight preprocessed prompts of it are turned into a grid of tokens, twelve layers alternate attention across a row's features with attention down a column's rows (test rows look only at training rows), and a decoder turns each test row into a distribution over five thousand buckets whose mean is the projection." xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Sans, Segoe UI, system-ui, sans-serif" font-size="12">
+<defs><marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+<!-- 1. the table -->
+<text x="20" y="22" font-weight="600">1. One table, in one go</text>
+<rect x="20" y="34" width="150" height="150" rx="3" fill="none" stroke="currentColor"/>
+<rect x="20" y="34" width="120" height="112" fill="currentColor" opacity="0.08"/>
+<rect x="140" y="34" width="30" height="112" fill="currentColor" opacity="0.18"/>
+<line x1="20" y1="146" x2="170" y2="146" stroke="currentColor" stroke-dasharray="3 3"/>
+<text x="24" y="60" fill="currentColor" opacity="0.9">12,400 train rows</text>
+<text x="24" y="76" fill="currentColor" opacity="0.65" font-size="11">player-seasons 2015–22,</text>
+<text x="24" y="90" fill="currentColor" opacity="0.65" font-size="11">42 features each</text>
+<text x="155" y="94" text-anchor="middle" font-size="11" transform="rotate(-90 155 94)">outcome y</text>
+<text x="24" y="166" fill="currentColor" opacity="0.9">450 test rows</text>
+<text x="24" y="180" fill="currentColor" opacity="0.65" font-size="11">this season's players · y = ?</text>
+<text x="20" y="206" font-size="11" fill="currentColor" opacity="0.75">no weights change: "fit" stores</text>
+<text x="20" y="220" font-size="11" fill="currentColor" opacity="0.75">the table, "predict" runs it</text>
+<line x1="178" y1="110" x2="212" y2="110" stroke="currentColor" marker-end="url(#arch-arrow)"/>
+<!-- 2. prompts -->
+<text x="222" y="22" font-weight="600">2. Eight prompts</text>
+<rect x="246" y="58" width="100" height="100" rx="3" fill="var(--panel)" stroke="currentColor" opacity="0.5"/>
+<rect x="236" y="68" width="100" height="100" rx="3" fill="var(--panel)" stroke="currentColor" opacity="0.7"/>
+<rect x="226" y="78" width="100" height="100" rx="3" fill="var(--panel)" stroke="currentColor"/>
+<text x="276" y="106" text-anchor="middle" font-size="11">quantile or power</text>
+<text x="276" y="120" text-anchor="middle" font-size="11">transforms, column</text>
+<text x="276" y="134" text-anchor="middle" font-size="11">shuffles, outlier clips</text>
+<text x="276" y="160" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">each a separate pass</text>
+<text x="222" y="206" font-size="11" fill="currentColor" opacity="0.75">(TabPFN's own ensemble:</text>
+<text x="222" y="220" font-size="11" fill="currentColor" opacity="0.75">outputs averaged at the end)</text>
+<line x1="354" y1="110" x2="388" y2="110" stroke="currentColor" marker-end="url(#arch-arrow)"/>
+<!-- 3. token grid -->
+<text x="398" y="22" font-weight="600">3. Every cell becomes a token</text>
+<g stroke="currentColor" stroke-width="0.6" opacity="0.9">
+<rect x="398" y="40" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="414" y="40" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="430" y="40" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="446" y="40" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="462" y="40" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="484" y="40" width="14" height="14" fill="currentColor" opacity="0.5"/>
+<rect x="398" y="56" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="414" y="56" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="430" y="56" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="446" y="56" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="462" y="56" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="484" y="56" width="14" height="14" fill="currentColor" opacity="0.5"/>
+<rect x="398" y="72" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="414" y="72" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="430" y="72" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="446" y="72" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="462" y="72" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="484" y="72" width="14" height="14" fill="currentColor" opacity="0.5"/>
+<rect x="398" y="100" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="414" y="100" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="430" y="100" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="446" y="100" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="462" y="100" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="484" y="100" width="14" height="14" fill="none" stroke-dasharray="2 2"/>
+<rect x="398" y="116" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="414" y="116" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="430" y="116" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="446" y="116" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="462" y="116" width="14" height="14" fill="currentColor" opacity="0.25"/><rect x="484" y="116" width="14" height="14" fill="none" stroke-dasharray="2 2"/>
+</g>
+<text x="437" y="96" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">⋮</text>
+<text x="398" y="150" font-size="11">21 feature tokens (2 features each)</text>
+<text x="398" y="164" font-size="11">+ 1 outcome token per row</text>
+<text x="398" y="178" font-size="11">192 numbers per token;</text>
+<text x="398" y="192" font-size="11">test rows' outcome token is blank</text>
+<line x1="516" y1="110" x2="550" y2="110" stroke="currentColor" marker-end="url(#arch-arrow)"/>
+<!-- 4. two-way attention -->
+<text x="560" y="22" font-weight="600">4. Twelve layers of two-way attention</text>
+<rect x="560" y="34" width="250" height="196" rx="4" fill="none" stroke="currentColor"/>
+<g stroke="currentColor" stroke-width="0.6" opacity="0.9">
+<rect x="580" y="56" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="598" y="56" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="616" y="56" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="634" y="56" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="652" y="56" width="16" height="16" fill="currentColor" opacity="0.4"/>
+<rect x="580" y="74" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="598" y="74" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="616" y="74" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="634" y="74" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="652" y="74" width="16" height="16" fill="currentColor" opacity="0.4"/>
+<rect x="580" y="92" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="598" y="92" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="616" y="92" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="634" y="92" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="652" y="92" width="16" height="16" fill="currentColor" opacity="0.4"/>
+<rect x="580" y="110" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="598" y="110" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="616" y="110" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="634" y="110" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="652" y="110" width="16" height="16" fill="currentColor" opacity="0.4"/>
+<rect x="580" y="136" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="598" y="136" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="616" y="136" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="634" y="136" width="16" height="16" fill="currentColor" opacity="0.2"/><rect x="652" y="136" width="16" height="16" fill="none" stroke-dasharray="2 2"/>
+</g>
+<line x1="580" y1="130" x2="668" y2="130" stroke="currentColor" stroke-dasharray="3 3" opacity="0.7"/>
+<!-- across features (row-wise) -->
+<path d="M 582 48 H 666" stroke="currentColor" stroke-width="1.6" fill="none" marker-end="url(#arch-arrow)" marker-start="url(#arch-arrow)"/>
+<text x="690" y="52" font-size="11">a. across a row's features</text>
+<text x="690" y="65" font-size="10.5" fill="currentColor" opacity="0.7">22 tokens · cheap</text>
+<!-- down rows (column-wise) -->
+<path d="M 644 144 V 60" stroke="var(--accent)" stroke-width="2.2" fill="none" marker-end="url(#arch-arrow)" style="color: var(--accent)"/>
+<text x="690" y="98" font-size="11" fill="var(--accent)" font-weight="600">b. down a column's rows</text>
+<text x="690" y="111" font-size="10.5" fill="var(--accent)">a test row reads every</text>
+<text x="690" y="124" font-size="10.5" fill="var(--accent)">train row; train rows read</text>
+<text x="690" y="137" font-size="10.5" fill="var(--accent)">each other; test rows never</text>
+<text x="690" y="150" font-size="10.5" fill="var(--accent)">see other test rows</text>
+<text x="690" y="170" font-size="10.5" fill="currentColor" opacity="0.75">cost ∝ rows² × columns</text>
+<text x="690" y="183" font-size="10.5" fill="currentColor" opacity="0.75">= 12,850² × 22, ×12 layers,</text>
+<text x="690" y="196" font-size="10.5" fill="currentColor" opacity="0.75">×8 prompts — this is the GPU time</text>
+<text x="580" y="176" font-size="11">then a 2-layer MLP per token</text>
+<text x="580" y="190" font-size="11" fill="currentColor" opacity="0.75">6 heads × 32 dims = 192</text>
+<text x="580" y="218" font-size="11" fill="currentColor" opacity="0.75">× 12, weights fixed since pretraining</text>
+<line x1="818" y1="110" x2="852" y2="110" stroke="currentColor" marker-end="url(#arch-arrow)"/>
+<!-- 5. decoder -->
+<text x="862" y="22" font-weight="600">5. A distribution, not a number</text>
+<g fill="currentColor" opacity="0.35">
+<rect x="866" y="150" width="7" height="8"/><rect x="875" y="138" width="7" height="20"/><rect x="884" y="118" width="7" height="40"/><rect x="893" y="92" width="7" height="66"/><rect x="902" y="70" width="7" height="88"/><rect x="911" y="78" width="7" height="80"/><rect x="920" y="104" width="7" height="54"/><rect x="929" y="128" width="7" height="30"/><rect x="938" y="144" width="7" height="14"/><rect x="947" y="152" width="7" height="6"/><rect x="956" y="155" width="7" height="3"/>
+</g>
+<line x1="862" y1="158" x2="968" y2="158" stroke="currentColor"/>
+<line x1="906" y1="62" x2="906" y2="162" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 2"/>
+<text x="906" y="56" text-anchor="middle" font-size="10.5" fill="var(--accent)" font-weight="600">mean = h_k projection</text>
+<text x="862" y="178" font-size="11">5,000 buckets over the outcome</text>
+<text x="862" y="192" font-size="11">range, per test row, per prompt;</text>
+<text x="862" y="206" font-size="11">prompts averaged. We keep the mean;</text>
+<text x="862" y="220" font-size="11">the quantiles are free (item 26).</text>
+<!-- bottom band: what a refresh runs -->
+<rect x="20" y="258" width="948" height="82" rx="4" fill="currentColor" opacity="0.05"/>
+<text x="32" y="280" font-weight="600">What one refresh runs</text>
+<text x="32" y="298" font-size="11.5">10 horizon models (games and ppg at 1–5 years) × 2 fits each (the real one, and one as of 2022 to measure the spread) = 20 fits.</text>
+<text x="32" y="314" font-size="11.5">Each fit is steps 1–5 for 8 prompts; the 12,400 train rows are re-read on every predict unless the KV cache keeps step 4's train-side results (fit_with_cache).</text>
+<text x="32" y="330" font-size="11.5" fill="currentColor" opacity="0.75">The outcome for the same 2025 season does not change between refreshes: fitting once and storing the tail is the structural fix.</text>
+</svg><figcaption>One TabPFN forward pass on the career matrix. The expensive step is b: every token column attends down all 12,850 rows, twelve times, for each of the eight prompts. Nothing is trained on the fantasy data; the weights were fitted once by Prior Labs on millions of synthetic tables and the career table is the prompt.</figcaption></figure>
+      <div class="arch-grid"><span class="h">Spec</span><span class="h">v2 (in production)</span><span class="h">3.5 (bake-off on the new GPU)</span>
+        <b>Weights</b><span>11.1 M parameters, open licence</span><span>219 M parameters, licence-gated (token cached)</span>
+        <b>Token</b><span>2 features per token, 192 numbers wide</span><span>3 features per token, 128 wide at the embedders, 1,024 wide in the in-context stack</span>
+        <b>Column embedding</b><span>a linear map of the two values plus their missing flags; a random "subspace" tag says which column a token is</span><span>each column's whole distribution is first summarised by 3 cross-attention blocks against 128 learnt reference points, so a skewed or zero-heavy column is read as such before any row is compared</span>
+        <b>Row summary</b><span>none: a row stays 22 tokens</span><span>3 aggregator blocks compress a row's feature tokens into 8 summary tokens with rotary position encoding</span>
+        <b>In-context layers</b><span>12 layers, each attention across features then attention down rows, 6 heads</span><span>24 blocks of attention down rows over the row summaries, 16 heads; test rows share a single key/value head (the KV cache for a 12k-row context stays small)</span>
+        <b>Output</b><span>5,000-bucket distribution per test row</span><span>5,000-bucket distribution per test row (same decoder idea)</span>
+        <b>Trained for</b><span>up to 10 k rows; we pass 12.4 k with the limit overridden</span><span>much longer contexts; non-IID rows; a "fast" sibling model exists</span>
+        <b>Where we expect a gain</b><span>—</span><span>regression on skewed, zero-heavy targets (games, and the tail of ppg), which is exactly the games-table problem of BACKLOG 24</span>
+      </div>
+      <p class="note">Numbers read from the checkpoints in the local cache (v2: 12 × 2 × 6-head attention of width 192, decoder 192 → 768 → 5,000; 3.5: 24 in-context blocks of width 1,024 plus the distribution embedder, column aggregator and 5,000-bucket head). The attention down rows is masked so that a test row attends only to training rows: that is what makes the training side cacheable and keeps one player's projection independent of the other 449.</p>
+    </div>`);
+    box.className = 'perf';
+    box.innerHTML = parts.join('') || '<p class="note">No backtest summaries in this run.</p>';
+  }
+
+  fetch('projections.json').then(r => r.json()).then(d => {
+    data = d;
+    if (d.picks && d.picks.rows && d.leagues) {     // pick tiers as table rows: wins in the season the player arrives, nothing before
+      const now = d.picks.now, ordn = n => n + (['st', 'nd', 'rd'][n - 1] || 'th');
+      for (const [season, rnd, tier, n, base, ktc] of d.picks.rows) {
+        const k = season - now, w = (d.labels || []).map((_, i) => i === k ? base : 0), z = w.map(() => 0);
+        const L = {}; for (const l of d.leagues) L[l.id] = { w, v: z, s: 1 };
+        d.rows.push({ name: `${season} ${tier} ${ordn(rnd)}`, pos: 'PICK', team: '', age: null, ktc, fc: null, rd_sf: null, rd_1qb: null, pick: true, L, h: [], v: z, pg: [], g: [], fpts: null, games: null });
+      }
+    }
+    st.league = d.default_league || (d.leagues && d.leagues[0] && d.leagues[0].id) || null;
+    const lsel = document.getElementById('lg');
+    lsel.innerHTML = (d.leagues || []).map(l => `<option value="${l.id}" ${l.id === st.league ? 'selected' : ''}>${esc(l.name)}</option>`).join('') || '<option>no league data</option>';
+    document.getElementById('note').textContent = `${d.mode === 'inseason' ? 'In-season, rookies and players without a complete prior season are projected from their draft slot and games to date.' : 'Players with no row in the ' + d.as_of_season + ' season (rookies, full-year absences) are not projected.'} *The rank column is among players priced by the selected market so it is comparable to the market rank; # is the rank among all projected players. Replacement is an explicit fill of the league's lineup on the last five real seasons; the win curve comes from the league's own standings. Projections come from one model trained on Stuck in High School's scoring; other leagues are adjusted per player for their rule differences (see the league line).`;
+    update();
+    renderPerformance();
+    renderTrades();
+    renderSlots();
+    renderTeamValue();
+    renderMarket();
+    document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+    let tab = 'players'; try { tab = localStorage.getItem('dv_tab') || 'players'; } catch (e) { /* ignore */ }
+    showTab(['players', 'rosters', 'perf', 'teamvalue', 'market'].includes(tab) ? tab : 'players');
+    document.getElementById('q').addEventListener('input', render);
+    document.getElementById('body').addEventListener('click', e => { const b = e.target.closest('button.caret'); if (!b) return; const nm = b.dataset.name; if (open.has(nm)) open.delete(nm); else open.add(nm); render(); });
+    document.getElementById('priced').addEventListener('change', render);
+    document.getElementById('liquid').addEventListener('change', render);
+    document.getElementById('disc').addEventListener('input', e => { st.rate = parseInt(e.target.value, 10) / 100; const lbl = Math.round(100 * st.rate) + '%/yr'; document.getElementById('discv').textContent = lbl; e.target.setAttribute('aria-valuetext', lbl.replace('/yr', ' per year')); update(); });
+    document.getElementById('years').addEventListener('change', e => { st.years = parseInt(e.target.value, 10); update(); });
+    document.getElementById('mkt').addEventListener('change', e => { st.mkt = e.target.value; update(); });
+    document.getElementById('incpicks').addEventListener('change', e => { st.picks = e.target.checked; update(); });
+    // View: one switch for the horizon and its market. Career = multi-year value vs a dynasty market;
+    // ROS = this season's remaining value vs KTC's redraft values (the market that prices this season).
+    document.getElementById('view').addEventListener('change', e => {
+      const ros = e.target.value === 'ros';
+      st.unit = ros ? (st.unit.startsWith('par') ? 'par_ros' : 'war_ros') : (st.unit.startsWith('par') ? 'par' : 'war');
+      st.mkt = ros ? 'rd_sf' : 'ktc';
+      document.getElementById('unit').value = st.unit; document.getElementById('mkt').value = st.mkt;
+      if (sortKey === 'iv') sortKey = 'iv_rank_all';
+      update();
+    });
+    document.getElementById('fairm').addEventListener('change', e => { st.fair = e.target.value; update(); });
+    document.getElementById('unit').addEventListener('change', e => { st.unit = e.target.value; if (sortKey === 'iv') sortKey = 'iv_rank_all'; update(); });
+    lsel.addEventListener('change', e => { st.league = e.target.value; st.team = null; update(); });
+    document.getElementById('team').addEventListener('change', e => { st.team = e.target.value; renderRoster(); });
+    document.querySelectorAll('#pos .chip').forEach(b => b.addEventListener('click', () => {
+      posFilter = b.dataset.pos;
+      document.querySelectorAll('#pos .chip').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      render();
+    }));
+  }).catch(() => { document.getElementById('meta').textContent = 'Could not load projections.json'; });
+})();
+</script>

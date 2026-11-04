@@ -21,6 +21,7 @@ def seeded(monkeypatch, fake_gcs):
         "first_name": ["Patrick", "Justin"],
         "last_name": ["Mahomes", "Jefferson"],
         "position": ["QB", "WR"],
+        "fantasy_positions": [["QB"], ["WR", "DB"]],      # every position Sleeper lets him fill (a two-way player lists two)
         "team": ["KC", "MIN"],
         "age": [28, 24],
         "height": ["75", "73"],
@@ -74,6 +75,12 @@ class TestDimPlayerMaster:
         row = df.filter(pl.col("player_key") == "100").to_dicts()[0]
         assert row["college_name"] == "Texas Tech"
         assert row["nfl_draft_pick"] == 10
+
+    def test_fantasy_positions_carried_as_a_slash_joined_string(self, seeded):
+        """review 2026-10-13 (D6): a two-way player (Travis Hunter: position DB, fantasy positions DB and WR) had no
+        production rows because the week fact filtered on nflverse's CB; fact_player_week reads this column."""
+        by_key = {r["player_key"]: r for r in transform_dim_players_master().to_dicts()}
+        assert by_key["100"]["fantasy_positions"] == "QB" and by_key["200"]["fantasy_positions"] == "WR/DB"
 
     def test_bridge_gsis_wins_over_sleepers_sparse_gsis_column(self, seeded):
         # Sleeper's own feed carries a gsis_id column, mostly null; the bridge's must not be lost to a

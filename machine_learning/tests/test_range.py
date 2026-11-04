@@ -128,3 +128,38 @@ def test_inseason_value_band_sigma_prices_each_players_own_spread_on_the_career_
     assert a["vorp_ros"] == dict_way.row(0, named=True)["vorp_ros"] and a["vorp_next"] == dict_way.row(0, named=True)["vorp_next"]   # in-season spans keep the dict
     with pytest.raises(ValueError):
         inseason.inseason_value(snaps, tail, {"WR": 8.0}, sig, [1, 2, 3], 0.2, sigma_mode="refit")
+
+
+def test_joint_pricing_counts_the_healthy_big_season_and_respects_the_games_cap():
+    import career
+    G = career.QUANTILE_GRID
+    half = len(G) // 2
+    # a back whose bad half is short and weak, good half long and strong (the owner's example: 8 g x 9 ppg / 16 g x 15 ppg)
+    row = {"player_id": "a", "position": "RB", "ros_ppg_hat": 12.0, "ros_games_hat": 12.0}
+    for i, q in enumerate(G):
+        row[f"ros_ppg_{career.q_name(q)}"] = 9.0 if i < half else 15.0
+        row[f"ros_games_{career.q_name(q)}"] = 8.0 if i < half else 16.0
+    df = pl.DataFrame([row])
+    rep = {"RB": 9.0}
+    ind = inseason.joint_excess(df, "ros", rep, coupling=0.0)[0] * 12.0     # product of the averages: 3 x 12 = 36
+    dep = inseason.joint_excess(df, "ros", rep, coupling=1.0)[0] * 12.0     # the paired average: (0 + 96) / 2 = 48
+    assert abs(ind - 36.0) < 1e-9 and abs(dep - 48.0) < 1e-9
+    assert abs(inseason.joint_excess(df, "ros", rep)[0] * 12.0 - 42.0) < 1e-9     # halfway (JOINT_COUPLING)
+    capped = df.with_columns(pl.lit(6.0).alias("ros_games_hat"))                   # the age cap halves the expected games
+    assert abs(inseason.joint_excess(capped, "ros", rep, coupling=1.0)[0] * 6.0 - 24.0) < 1e-9   # the level follows the cap
+    assert inseason.joint_excess(df.drop("ros_games_q50"), "ros", rep) is None if "ros_games_q50" in df.columns else True
+    assert inseason.joint_excess(df, "next", rep) is None                          # no grid for that span
+
+
+def test_inseason_value_joint_mode_prices_every_span_with_a_grid():
+    import career
+    snaps = pl.DataFrame({"player_id": ["a"], "position": ["WR"], "age_at_season": [25.0], "is_rookie": [False], "prev_ppg": [12.0], "prev_games": [15],
+                          "ros_ppg_hat": [12.0], "ros_games_hat": [10.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+    for span, g in (("ros", 10.0), ("next", 15.0)):
+        for i, q in enumerate(career.QUANTILE_GRID):
+            snaps = snaps.with_columns(pl.lit(8.0 + 0.4 * i).alias(f"{span}_ppg_{career.q_name(q)}"), pl.lit(g * (0.6 + 0.04 * i)).alias(f"{span}_games_{career.q_name(q)}"))
+    tail = pl.DataFrame({"player_id": ["a"], "h3_ppg_hat": [11.0], "h3_games_hat": [14.0]})
+    plain = inseason.inseason_value(snaps, tail, {"WR": 8.0}, {1: {"__all__": 2.0}, 3: {"__all__": 3.0}}, [1, 2, 3], 0.2)
+    joint = inseason.inseason_value(snaps, tail, {"WR": 8.0}, {1: {"__all__": 2.0}, 3: {"__all__": 3.0}}, [1, 2, 3], 0.2, sigma_mode="joint")
+    assert "ros_ppg_excess" in joint.columns and "next_ppg_excess" in joint.columns and "h3_ppg_excess" not in joint.columns
+    assert joint["vorp_ros"][0] != plain["vorp_ros"][0] and joint["h3_vorp_hat"][0] == plain["h3_vorp_hat"][0]   # the tail without a grid is unchanged

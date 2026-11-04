@@ -108,7 +108,15 @@ def build_fact_player_week_status(stats: pl.DataFrame, rosters_weekly: pl.DataFr
     roster = roster_weeks(rosters_weekly)
     lines = _stat_lines(stats)
     games = games_by_team_week(schedules)
-    last_week = games.group_by("season").agg(pl.col("week").max().alias("last_week"))
+    # the grid ends at the latest week the sources have seen, not the schedule's last week: an in-progress season's
+    # unplayed weeks were stamped not_rostered for everyone (11,414 rows of 2026 on 2026-10-13, review D7), which the
+    # career weekly group reads as "cut for 13 weeks"
+    observed = (pl.concat([roster.select("season", "week"), lines.select("season", "week")])
+                  .group_by("season").agg(pl.col("week").max().alias("_observed")))
+    last_week = (games.group_by("season").agg(pl.col("week").max().alias("last_week"))
+                      .join(observed, on="season", how="left")
+                      .with_columns(pl.min_horizontal(pl.col("last_week"), pl.col("_observed").fill_null(pl.col("last_week"))).alias("last_week"))
+                      .drop("_observed"))
     snaps = snap_shares(snap_counts, roster) if snap_counts is not None else None
 
     # the universe: every skill-position player-season on a roster or in the stat lines, from MIN_SEASON

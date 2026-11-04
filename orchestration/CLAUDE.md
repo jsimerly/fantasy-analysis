@@ -17,7 +17,7 @@ job lists into other docs.
 - **Best-effort:** a single job failing is recorded but doesn't abort the run; all failures are
   collected and the workflow fails at the very end (so a bad run still shows red).
 - **Not in the daily DAG** (run by hand, on the owner's go): the `*-full` / `*-yearly` backfills
-  (`adp-yearly`, the FFToday scrape, the college backfill) and `sleeper-commissioner-adjustments`.
+  (`adp-yearly` -- its daily sibling `adp-daily` IS in the bronze tier --, the FFToday scrape, the college backfill) and `sleeper-commissioner-adjustments`.
   **In** the DAG despite living in `historical/`: `sleeper-drafts-overview` (the pick lifecycle keys
   off draft status).
 - **Yearly:** [college.yaml](college.yaml) refreshes the college data each February

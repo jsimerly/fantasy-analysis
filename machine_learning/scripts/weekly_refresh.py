@@ -36,7 +36,25 @@ STEPS = ["inseason", "war", "analysis", "export"]
 # the 20/50/80 band on. A local GPU run: the Cloud Run job (no torch in its image) keeps the defaults.
 PRESETS = {
     "production": dict(backend="tabpfn", groups="base,career,injury,trend,situation,rookie,college", stacked=True, range=True,
-                       inseason_backend="tabpfn", target="blend"),   # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
+                       inseason_backend="tabpfn", target="blend",
+                       # the five in-season groups (BACKLOG 39 stage 3, adopted 2026-10-12 by the owner: rest of season +0.017 to
+                       # +0.034 at every week, next season +0.001 to +0.009); this season's coverage matches past seasons
+                       inseason_groups="usage,role,opportunity,consensus,preseason",
+                       # careers see the current season (BACKLOG 51, adopted 2026-10-12 on the 3.5 test: seasons T+2 / T+3
+                       # ordering +0.066, t +6.9, 29 of 32 cohort-weeks; PAR error t +5.9); only while a season is in progress
+                       career_todate=True,    # blend adopted 2026-10-10 (BACKLOG 44): same ordering, wins error 0.502 vs 0.513
+                       market_run_date="2026-10-12",
+                       sigma="band",
+                       # the age-band level correction on the career spans (review 2026-10-13 C1; owner 2026-10-14: "let's get this done
+                       # tonight"): realized / priced by age band on the production run's own eight test seasons, under-25s x1.27,
+                       # 25-28 x1.03, 29+ x0.80; walk-forward in the harness it halves the gradient with ordering unchanged
+                       age_scale="tabpfn35_set_stacked_blend_w2",
+                       # four bands fitted to the recent test seasons and shrunk by each band's own season-to-season variance (owner,
+                       # 2026-10-14 afternoon): the 29-31 level drifted to ~1.0 since 2018 (the three-band 0.80 was too harsh for them),
+                       # the 32+ to ~0.5 (too mild); under 25 is stable at 1.15-1.26 and keeps the full correction
+                       age_scale_recent=True,
+                       age_scale_curve=True,   # ... as a smooth curve over each year of age, the correction at every age as large as its variance allows (no step edges)
+                       discount_rate=0.1),                           # the dynasty default the page opens on (owner, 2026-10-12); the harness keeps 0.2 for the ledger                                # each player's own band prices his upside (BACKLOG 45; owner, 2026-10-12)                # the Model performance tab's market backtest: the production (blend) model's own, with points; not the newest experiment
 }
 
 
@@ -85,20 +103,42 @@ def main() -> None:
     ap.add_argument("--inseason-groups", default="", help="in-season model groups: team, contract (inseason.EXTRA_GROUPS)")
     ap.add_argument("--inseason-backend", choices=["xgb", "tabpfn"], default="xgb", help="in-season model estimator (shares --tabpfn-params)")
     ap.add_argument("--draft-rows", action="store_true", help="drafted rookies projected from their pre-NFL row (draft_rows.py)")
-    ap.add_argument("--sigma", choices=["band"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
+    ap.add_argument("--market-run-date", default=None, help="the backtests/market run the page's Model performance tab shows (the production preset pins it)")
+    ap.add_argument("--discount-rate", type=float, default=None, help="yearly discount for the in-season value and the per-league WAR (default: the scripts' own, 0.2)")
+    ap.add_argument("--quantile-grid", action="store_true", help="the 20-point outcome grids in the run (backtest_inseason --quantile-grid; BACKLOG 47)")
+    ap.add_argument("--career-todate", action="store_true",
+                    help="the career seasons (T+2 on) projected from this season's to-date rows, not the last complete season (BACKLOG 51)")
+    ap.add_argument("--no-career-todate", action="store_true",
+                    help="override a preset's career_todate: the career seasons from the last complete season's tail (the fallback after a run whose "
+                         "to-date tail did not finish -- 2026-10-13/14 it computed for ten hours, four times its usual, after a GPU memory warning)")
+    ap.add_argument("--sigma", choices=["band", "joint"], default=None, help="career spans priced with each player's own band width (backtest_inseason --sigma band)")
+    ap.add_argument("--age-scale", default=None, metavar="RUN",
+                    help="the career spans' value scaled by age band with realized / priced from RUN's saved cohort frames (backtest_inseason --age-scale; review C1, owner 2026-10-14)")
+    ap.add_argument("--age-scale-by-position", action="store_true", help="with --age-scale: a cell per position and age band (backtest_inseason --age-scale-by-position)")
+    ap.add_argument("--age-scale-curve", action="store_true", help="with --age-scale: the level as a smooth curve over each year of age (backtest_inseason --age-scale-curve)")
+    ap.add_argument("--age-scale-recent", action="store_true",
+                    help="with --age-scale: four bands fitted to the recent test seasons, shrunk by each band's variance (backtest_inseason --age-scale-recent)")
     ap.add_argument("--preset", choices=sorted(PRESETS), help="a named configuration: 'production' = the adopted local GPU refresh (BACKLOG 22, 2026-10-09)")
     args = apply_preset(ap.parse_args())
+    if args.no_career_todate:
+        args.career_todate = False
     power.keep_awake()                      # hours of GPU work: do not let the machine sleep under it
     py = sys.executable
     season, week = current_season_week()
     print(f"season {season} through week {week}; run date {args.run_date}", flush=True)
+    # the exports refuse a run whose models are not the production ones (review 2026-10-13: a trees payload landed in the
+    # production store twice); a refresh that is explicitly not production (the trees, a smoke, the cloud job) says so
+    production = args.backend == "tabpfn" and args.inseason_backend == "tabpfn"
+    require = [] if production else ["--require-backend", "any"]
+    if not production:
+        print(f"not a production run (backend {args.backend}, in-season {args.inseason_backend}): the exports take any backend", flush=True)
 
     if "inseason" not in args.skip:
-        run([py, "scripts/backtest_inseason.py", "--current", "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
-            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
+        run([py, "scripts/backtest_inseason.py", "--current", "--run-date", args.run_date, "--device", args.device, "--backend", args.backend, "--cap", args.cap, "--groups", args.groups, "--target", args.target]
+            + (["--stacked"] if args.stacked else []) + (["--range"] if args.range else []) + (["--inseason-groups", args.inseason_groups] if args.inseason_groups else []) + ["--inseason-backend", args.inseason_backend] + (["--age-scale", args.age_scale] if args.age_scale else []) + (["--age-scale-by-position"] if args.age_scale and getattr(args, "age_scale_by_position", False) else []) + (["--age-scale-curve"] if args.age_scale and getattr(args, "age_scale_curve", False) else []) + (["--age-scale-recent"] if args.age_scale and getattr(args, "age_scale_recent", False) else []) + (["--draft-rows"] if args.draft_rows else []) + (["--sigma", args.sigma] if args.sigma else []) + (["--quantile-grid"] if getattr(args, "quantile_grid", False) else []) + (["--career-todate"] if getattr(args, "career_todate", False) else []) + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + (["--tabpfn-params", *args.tabpfn_params] if args.tabpfn_params else []), args.dry_run)
     if "war" not in args.skip:
         run([py, "scripts/build_war.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--all-leagues", "--teams"], args.dry_run)
+             "--run-date", args.run_date, "--all-leagues", "--teams"] + (["--discount-rate", str(args.discount_rate)] if args.discount_rate is not None else []) + require, args.dry_run)
     if "analysis" not in args.skip:
         # the page's Draft slots and Trades tabs come from these summaries (latest run in the ML bucket);
         # rebuilt here so they carry the lake's newest standings and transactions. Best-effort: a failure
@@ -109,14 +149,19 @@ def main() -> None:
                     ["analysis/pick_slots_report.py", "--out", "analysis/_cache/pick_slots", "--publish"],
                     ["analysis/trade_report.py", "--rebuild", "--out", "analysis/_cache/trades", "--min-seasons", "1", "--publish"]):
             run([apy, *cmd], args.dry_run, cwd=root, best_effort=True)
+        # title odds from the roster views just written and Sleeper's live records (the Rosters tab's lens); this
+        # interpreter, since the script imports the model's modules. Best-effort like the reports above.
+        run([py, "analysis/title_odds.py", "--out", "analysis/_cache/title_odds", "--publish"], args.dry_run, cwd=root, best_effort=True)
     if "export" not in args.skip:
         out = ROOT / "projections.json"
         run([py, "scripts/export_projections.py", "--source", "inseason", "--season", str(season), "--week", str(week),
-             "--run-date", args.run_date, "--out", str(out)], args.dry_run)
+             "--run-date", args.run_date, "--out", str(out)] + (["--market-run-date", args.market_run_date] if args.market_run_date else []) + require, args.dry_run)
         if not args.dry_run:
             p = gcs_io.write_ml_json(__import__("json").loads(out.read_text(encoding="utf-8")),
                                      "pages", f"season={season}", f"week={week}", f"run_date={args.run_date}", "projections.json")
             print("wrote", p, flush=True)
+        # the living scorecard (docs/model_scorecard.{json,md} + scorecard.json beside the payload): the site's table
+        run([py, "scripts/export_scorecard.py", "--payload", str(out), "--out-dir", str(ROOT.parent / "docs"), "--publish"], args.dry_run, best_effort=True)
     print("weekly refresh done", flush=True)
 
 
