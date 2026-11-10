@@ -181,6 +181,11 @@ def attach_bio(df: pl.DataFrame, bio_df: pl.DataFrame) -> pl.DataFrame:
 
     Age is computed from ``birth_date`` against Sept 1 of the season (constant within a
     season, so it's valid at the week grain too).
+
+    ``rookie_season`` is nflverse's, but never later than the player's first season with a row here: nobody plays
+    before his rookie season. On 2026-11-10 nflverse's players table moved the 2012 class to rookie_season 2013
+    (467 players); experience went to -1 on their 2012 rows, their 2013 rows were flagged rookie years, and the
+    model's pick / (1 + exp) feature became infinite and stopped the weekly refresh.
     """
     b = bio_df.select(
         pl.col("gsis_id"),
@@ -191,7 +196,11 @@ def attach_bio(df: pl.DataFrame, bio_df: pl.DataFrame) -> pl.DataFrame:
         pl.col("college_name"),
     ).unique(subset=["gsis_id"], keep="first")
     season_ref = pl.date(pl.col("season").cast(pl.Int32), 9, 1)
+    first_season = pl.col("season").min().over("player_id")
+    rookie = pl.col("rookie_season")
     return df.join(b, left_on="player_id", right_on="gsis_id", how="left").with_columns(
+        pl.when(rookie.is_not_null() & (rookie > first_season)).then(first_season).otherwise(rookie).cast(pl.Int64).alias("rookie_season"),
+    ).with_columns(
         ((season_ref - pl.col("birth_date")).dt.total_days() / 365.25).alias("age_at_season"),
         (pl.col("season") - pl.col("rookie_season")).alias("exp_at_season"),
         (pl.col("season") == pl.col("rookie_season")).alias("is_rookie"),
