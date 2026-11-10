@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import io
 import os
+
+import lake_repair
 from functools import lru_cache
 
 import polars as pl
@@ -39,9 +41,10 @@ def lake_updated(path: str) -> str:
 
 
 def read_lake(path: str) -> pl.DataFrame:
-    """Read a parquet blob from the shared lake bucket."""
+    """Read a parquet blob from the shared lake bucket, with the model's repairs applied (lake_repair: a rookie
+    season later than a player's first season, the 2026-11-10 failure)."""
     data = _client().bucket(LAKE_BUCKET).blob(path).download_as_bytes()
-    return pl.read_parquet(io.BytesIO(data))
+    return lake_repair.repair(pl.read_parquet(io.BytesIO(data)))
 
 
 def ml_path(*parts: str) -> str:

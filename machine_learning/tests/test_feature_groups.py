@@ -320,3 +320,12 @@ def test_week_aware_groups_take_each_rows_own_week(monkeypatch):
     assert sorted(seen) == [5, 18]                       # a draft row (week 0) asks for nothing
     assert got[("a", 18)] == 18.0 and got[("a", 5)] == 5.0 and got[("b", 0)] is None
     assert set(inseason.OPP_COLS) <= set(out.columns)
+
+
+def test_negative_experience_never_makes_an_infinite_rookie_feature():
+    """2026-11-10: exp_at_season -1 (nflverse's rookie_season one year late) made pick / (1 + exp) infinite."""
+    m = _matrix([dict(exp_at_season=-1, draft_pick=75, draft_round=3), dict(player_id="p2", exp_at_season=-1, draft_pick=None, draft_round=None)])
+    out = fg.build_rookie(m, fg.Context())
+    assert out["pick_over_exp"].to_list() == [75.0, 260.0]
+    assert out["pick_x_rookie"].to_list() == [75.0, 260.0]
+    assert not any(out[c].is_infinite().any() for c in fg.ROOKIE_COLS)

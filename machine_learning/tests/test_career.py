@@ -435,3 +435,15 @@ class TestOnePassBands:
         out = m.predict(df)
         assert {"h1_ppg_hat", "h1_games_hat", "h1_ppg_q20", "h1_ppg_q50", "h1_ppg_q80", "h1_games_q50"} <= set(out.columns)
         assert self._Fake.calls == ["main", "main"]                             # ppg + games, one pass each (was four)
+
+
+def test_infinite_features_reach_tabpfn_as_missing(capsys):
+    """2026-11-10: one infinite cell made TabPFN refuse the whole training matrix."""
+    import numpy as np
+    import career
+    X = career._finite32(np.array([[1.0, np.inf], [-np.inf, 2.0], [np.nan, 1e300]]))
+    assert X.dtype == np.float32 and not np.isinf(X).any()
+    assert np.isnan(X).sum() == 4 and X[0, 0] == 1.0 and X[1, 1] == 2.0
+    assert "3 infinite feature values" in capsys.readouterr().out
+    clean = career._finite32(np.array([[1.0, 2.0]]))
+    assert clean.tolist() == [[1.0, 2.0]] and capsys.readouterr().out == ""

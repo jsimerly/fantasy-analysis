@@ -127,6 +127,21 @@ def attach_horizon_targets(df: pl.DataFrame, horizons: Iterable[int]) -> pl.Data
 BACKENDS = ("xgb", "tabpfn", "blend")
 
 
+def _finite32(X) -> np.ndarray:
+    """The float32 matrix TabPFN gets, with every infinity (and anything float32 cannot hold) as NaN, the model's
+    missing value. TabPFN refuses a matrix with one infinite cell, and on 2026-11-10 one divide-by-zero feature on 94
+    old rows stopped the weekly refresh; a bad cell now costs that cell, loudly, not the run."""
+    with np.errstate(over="ignore", invalid="ignore"):
+        X = np.asarray(X, dtype=np.float64).astype(np.float32)
+    bad = np.isinf(X)
+    if bad.any():
+        cols = np.unique(np.where(bad)[1]) if X.ndim == 2 else []
+        print(f"WARNING: {int(bad.sum())} infinite feature values set to missing before TabPFN (matrix columns {[int(c) for c in cols]}); "
+              f"find the feature that divides by zero", flush=True)
+        X = np.where(bad, np.float32(np.nan), X)
+    return X
+
+
 class _TabPFN:
     """TabPFN regressor behind the xgboost-shaped ``fit(X, y, sample_weight) / predict(X)`` the
     horizon models use. A pretrained tabular foundation model: ``fit`` stores the training set and
@@ -161,18 +176,18 @@ class _TabPFN:
         params.setdefault("ignore_pretraining_limits", True)
         params.setdefault("fit_mode", "fit_preprocessors")
         self.model = TabPFNRegressor(device=self.device, random_state=self.seed, **params)
-        self.model.fit(np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32))
+        self.model.fit(_finite32(X), np.asarray(y, dtype=np.float32))
         return self
 
     def predict(self, X):
-        X = np.asarray(X, dtype=np.float32)
+        X = _finite32(X)
         if self.want_quantiles:
             return self._point_and_bands(X)[0]
         return np.asarray(self.model.predict(X), dtype=float)
 
     def predict_quantiles(self, X, qs) -> np.ndarray:
         """(n, len(qs)) quantiles of the predictive distribution (TabPFN returns one per row for free)."""
-        X, qs = np.asarray(X, dtype=np.float32), tuple(float(q) for q in qs)
+        X, qs = _finite32(X), tuple(float(q) for q in qs)
         if self.want_quantiles and qs == self.want_quantiles:
             return self._point_and_bands(X)[1]
         out = self.model.predict(X, output_type="quantiles", quantiles=list(qs))

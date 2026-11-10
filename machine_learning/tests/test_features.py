@@ -60,3 +60,29 @@ def test_incomplete_next_season_is_never_a_target():
 
 def test_frames_without_the_flag_still_work():
     assert features.attach_lags_and_target(_toy()).height == 3
+
+
+class TestRookieSeasonRepair:
+    """2026-11-10: nflverse moved the 2012 rookie class to rookie_season 2013; silver's exp_at_season went to -1 on
+    their 2012 rows and the refresh died on pick / (1 + exp). The model repairs what it reads."""
+
+    def _frame(self):
+        import polars as pl
+        return pl.DataFrame({"player_id": ["rw", "rw", "ok", "ok", "nul"], "season": [2012, 2013, 2012, 2013, 2012],
+                             "rookie_season": [2013, 2013, 2011, 2011, None], "exp_at_season": [-1, 0, 1, 2, None],
+                             "is_rookie": [False, True, False, False, None]},
+                            schema_overrides={"rookie_season": pl.Int64, "exp_at_season": pl.Int64})
+
+    def test_a_rookie_season_after_the_first_season_played_is_pulled_back(self):
+        import lake_repair
+        out = lake_repair.repair(self._frame())
+        assert out["rookie_season"].to_list() == [2012, 2012, 2011, 2011, None]
+        assert out["exp_at_season"].to_list() == [0, 1, 1, 2, None]
+        assert out["is_rookie"].to_list() == [True, False, False, False, None]
+        assert out.schema == self._frame().schema
+
+    def test_a_frame_without_the_columns_is_untouched(self):
+        import polars as pl
+        import lake_repair
+        df = pl.DataFrame({"player_id": ["a"], "season": [2020]})
+        assert lake_repair.repair(df).equals(df)

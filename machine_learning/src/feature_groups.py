@@ -330,7 +330,7 @@ def build_rookie(matrix: pl.DataFrame, ctx: Context) -> pl.DataFrame:
     """Draft capital weighted by how new the player is: its pull on next-season points fades from
     -0.52 (rookie year) to -0.27 (year 11+), so give the trees the interaction explicitly.
     Undrafted players sit past the last pick (260) / round 8."""
-    exp = pl.col("exp_at_season").cast(pl.Float64).fill_null(0.0)
+    exp = pl.col("exp_at_season").cast(pl.Float64).fill_null(0.0).clip(lower_bound=0.0)   # never negative: pick / (1 + -1) was the infinity of 2026-11-10
     pick = pl.col("draft_pick").cast(pl.Float64).fill_null(260.0)
     rnd = pl.col("draft_round").cast(pl.Float64).fill_null(8.0)
     return matrix.with_columns(
