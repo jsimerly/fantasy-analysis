@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -27,14 +28,37 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import polars as pl  # noqa: E402
 
+import career  # noqa: E402
 import gcs_io  # noqa: E402
 import market  # noqa: E402
 import picks  # noqa: E402
+import runs  # noqa: E402
 import value  # noqa: E402
 
 
+def newest_summary(paths: list[str], name: str) -> str | None:
+    """The newest ``backtests/<name>/run_date=<d>/summary.json`` among ``paths``, matching ``name`` exactly:
+    a prefix listing of ``market`` also returns ``market_trends``, which sorts after it and was served as
+    the market backtest on the 2026-10-11 refresh."""
+    hits = sorted(x for x in paths if x.endswith("summary.json") and x.split("/")[-3] == name)
+    return hits[-1] if hits else None
+
+
 def _r(x, d=1):
-    return None if x is None else round(x, d)
+    if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
+        return None                                  # a NaN would serialize as the bare token NaN, which the page's JSON.parse rejects
+    return round(x, d)
+
+
+def _finite(obj):
+    """The payload with every NaN / inf float replaced by null, recursively (the page parses strict JSON)."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite(v) for v in obj]
+    return obj
 
 
 def fantasycalc_values() -> pl.DataFrame:
@@ -107,7 +131,13 @@ def rows_inseason(proj: pl.DataFrame, tail: list[int]) -> list[dict]:
         if any(r.get(f"h{k}_ppg_q20") is not None for k in tail):      # the range of outcomes: 20th / 80th percentile ppg per tail span
             band = {"lo": [None, None] + [_r(r.get(f"h{k}_ppg_q20"), 1) for k in tail], "hi": [None, None] + [_r(r.get(f"h{k}_ppg_q80"), 1) for k in tail],
                     "md": [None, None] + [_r(r.get(f"h{k}_ppg_q50"), 1) for k in tail]}    # the median: the point is the mean, and the distribution is skewed
+        dist = {}
+        for span in ("ros", "next"):                               # the outcome grid of a span, when the run kept it (BACKLOG 47)
+            vals = [r.get(f"{span}_ppg_{career.q_name(q)}") for q in career.QUANTILE_GRID]
+            if all(x is not None for x in vals):
+                dist[span] = [_r(x, 1) for x in vals]
         out.append({**_common(r),
+                    **({"dist": dist} if dist else {}),
                     "fpts": _r(r.get("prev_fpts"), 0), "games": r.get("prev_games"),
                     "td_games": r.get("td_games"), "td_ppg": _r(r.get("td_ppg")), "td_touches": _r(r.get("td_touches_pg")),
                     "iv": _r(r["iv_inseason"]), "iv_pre": _r(r.get("iv_preseason")), "iv_rank_all": int(r["iv_rank_all"]),
@@ -125,6 +155,8 @@ def main() -> None:
     ap.add_argument("--as-of-season", type=int, default=2025, help="career run (replacement level; the data for --source career)")
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--require-backend", default=runs.PRODUCTION_BACKEND,
+                    help="refuse a run whose stamped models do not start with this (default: the production one); 'any' for a smoke or an explicitly non-production run")
     ap.add_argument("--market-run-date", default=None, help="which backtests/market/run_date=<d> summary the performance tab shows (default: the newest)")
     args = ap.parse_args()
 
@@ -141,6 +173,7 @@ def main() -> None:
         if career_run != args.run_date:
             print(f"career build for run_date {args.run_date} not found; using {career_run}", flush=True)
         meta = gcs_io.read_ml_json(*career_base, "metrics.json")
+    runs.check_backend(meta, args.require_backend, "export_projections")    # a trees run under a production run date is refused (review 2026-10-13)
     rate = meta.get("discount_rate", round(1 - meta.get("discount", 0.8), 2))
     fc = fantasycalc_values()
     rd = redraft_values()
@@ -228,8 +261,8 @@ def main() -> None:
             teams[lid] = tl
     # ---- model performance: latest persisted backtest summaries + the experiment leaderboard
     def latest_summary(name: str):
-        paths = sorted(p for p in gcs_io.list_ml("backtests", name) if p.endswith("summary.json"))
-        return gcs_io.read_ml_json(*paths[-1].split("/")) if paths else None
+        path = newest_summary(gcs_io.list_ml("backtests", name), name)
+        return gcs_io.read_ml_json(*path.split("/")) if path else None
     performance = {k: latest_summary(k) for k in ("career_eval", "value", "inseason", "market")}
     if args.market_run_date:                      # the production model's own backtest, not whichever experiment ran last
         performance["market"] = gcs_io.read_ml_json("backtests", "market", f"run_date={args.market_run_date}", "summary.json")
@@ -299,11 +332,15 @@ def main() -> None:
         "mode": args.source, "as_of": as_of, "season": args.season, "week": args.week, "as_of_season": args.as_of_season,
         "leagues": leagues, "default_league": default_league, "teams": teams, "performance": performance,
         "run_date": args.run_date, "labels": labels, "prev_label": f"Pts ’{args.as_of_season % 100:02d}", "discount_rate": rate,
-        "replacement_ppg": meta["replacement_ppg"], "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
+        "replacement_ppg": meta["replacement_ppg"],
+        # review 2026-10-13 (D8): the model's internal share line, behind iv / v only; every league's own weekly line is in
+        # leagues[].replacement and prices the WAR columns, the roster views and the outcome curves
+        "replacement_note": "the model's internal line (share fill); each league's weekly line is leagues[].replacement",
+        "n": len(rows), "n_priced": sum(1 for x in rows if x["ktc"] is not None),
         "spearman": spearman, "rows": rows,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
+    args.out.write_text(json.dumps(_finite(out), separators=(",", ":"), allow_nan=False), encoding="utf-8")
     print(f"wrote {args.out} ({args.out.stat().st_size // 1024} KB, {len(rows)} players, {out['n_priced']} priced; {as_of})")
 
 

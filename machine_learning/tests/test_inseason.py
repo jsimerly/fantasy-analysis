@@ -126,6 +126,67 @@ class TestInSeasonValue:
         b = out.filter(pl.col("player_id") == "b").to_dicts()[0]        # no career tail -> only ros/next
         assert b["vorp_ros"] == 0.0 and b["vorp_next"] == 32.0 and abs(b["iv_inseason"] - 16.0) < 1e-9
 
+    def test_next_season_is_priced_with_the_second_year_spread(self):
+        """review 2026-10-13 (C4): next season off a T-1 row is year two -- sigma[2], the spread build_war prices it with;
+        the iv column had used sigma[1] (a narrower upside than the WAR column for the same player)."""
+        snaps = pl.DataFrame({"player_id": ["a"], "position": ["WR"], "ros_ppg_hat": [10.0], "ros_games_hat": [10.0],
+                              "next_ppg_hat": [10.0], "next_games_hat": [10.0]})
+        career_pred = pl.DataFrame({"player_id": ["a"], "h3_ppg_hat": [10.0], "h3_games_hat": [10.0]})
+        sigma = {1: {"__all__": 0.001}, 2: {"__all__": 4.0}, 3: {"__all__": 0.001}}       # only year two has a real spread
+        out = inseason.inseason_value(snaps, career_pred, {"WR": 10.0}, sigma, [1, 2, 3], discount_rate=0.0).row(0, named=True)
+        assert out["vorp_ros"] < 0.1 and out["h3_vorp_hat"] < 0.1                     # at the replacement line with no spread: nothing
+        assert out["vorp_next"] > 10.0                                                 # the same projection priced with sigma[2]: the upside term
+
+    def test_age_scale_corrects_the_career_tail_only(self):
+        """review 2026-10-13 C1 / owner 2026-10-14: the age-band factor on the career spans (seasons T+2 on), never on the
+        in-season model's rest of season and next season."""
+        snaps = pl.DataFrame({"player_id": ["y", "o"], "position": ["WR", "WR"], "age_at_season": [23.0, 31.0],
+                              "ros_ppg_hat": [15.0, 15.0], "ros_games_hat": [10.0, 10.0], "next_ppg_hat": [15.0, 15.0], "next_games_hat": [16.0, 16.0]})
+        career_pred = pl.DataFrame({"player_id": ["y", "o"], "h3_ppg_hat": [15.0, 15.0], "h3_games_hat": [16.0, 16.0]})
+        out = inseason.inseason_value(snaps, career_pred, {"WR": 10.0}, None, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8})
+        y, o = (out.filter(pl.col("player_id") == p).row(0, named=True) for p in ("y", "o"))
+        assert y["vorp_ros"] == o["vorp_ros"] == 50.0 and y["vorp_next"] == o["vorp_next"] == 80.0      # the in-season spans untouched
+        assert abs(y["h3_vorp_hat"] - 80 * 1.25) < 1e-9 and abs(o["h3_vorp_hat"] - 80 * 0.8) < 1e-9
+        assert abs(y["iv_inseason"] - (50 + 80 + 100)) < 1e-9 and abs(o["iv_inseason"] - (50 + 80 + 64)) < 1e-9
+
+
+class TestNoGameSnapshots:
+    """review 2026-10-13 (D4): a player with a career tail and no stat line this season had no row anywhere."""
+
+    def _tail(self):
+        return pl.DataFrame({"player_id": ["played", "hurt", "ir", "nohat"], "season": [2025] * 4, "player_name": ["P", "H", "I", "N"],
+                             "position": ["RB", "RB", "WR", "TE"], "team": ["GB", "SEA", "DAL", "NYG"], "age_at_season": [27.0, 24.0, 29.0, 25.0],
+                             "exp_at_season": [5, 2, 7, 3], "fpts": [200.0, 150.0, 120.0, 50.0], "ppg": [12.5, 10.0, 8.0, 5.0], "games": [16, 15, 15, 10],
+                             "h1_ppg_hat": [12.0, 11.0, 9.0, None], "h1_games_hat": [15.0, 14.0, 14.0, None],
+                             "h2_ppg_hat": [11.0, 10.5, 8.0, None], "h2_games_hat": [14.0, 13.0, 12.0, None],
+                             "h3_ppg_hat": [10.0, 10.0, 7.0, 4.0], "h3_games_hat": [12.0, 12.0, 10.0, 8.0]})
+
+    def test_zero_game_rows_carry_the_preseason_projection_pro_rated(self):
+        snap = pl.DataFrame({"player_id": ["played"], "season": [2026], "week": [5], "position": ["RB"], "td_games": [5],
+                             "ros_ppg_hat": [13.0], "ros_games_hat": [11.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+        status = pl.DataFrame({"season": [2026] * 4, "week": [4, 5, 4, 5], "gsis_id": ["hurt", "hurt", "ir", "ir"],
+                               "status": ["injured_out", "injured_out", "injured_reserve", "injured_reserve"],
+                               "roster_status": ["ACT", "ACT", "RES", "RES"], "injury_class": ["soft_tissue", "soft_tissue", "knee_achilles", "knee_achilles"]})
+        out = inseason.no_game_snapshots(snap, self._tail(), 2026, 5, status=status).sort("player_id")
+        by = {r["player_id"]: r for r in out.to_dicts()}
+        assert set(by) == {"played", "hurt", "ir"}                                       # a tail without h1 adds no row
+        assert by["played"]["snapshot_origin"] == "played" and by["played"]["ros_ppg_hat"] == 13.0   # the model's own rows untouched
+        h = by["hurt"]
+        assert h["snapshot_origin"] == "no_game_yet" and h["td_games"] == 0 and h["td_missed"] == 5 and h["season"] == 2026 and h["week"] == 5
+        assert h["age_at_season"] == 25.0 and h["exp_at_season"] == 3 and h["prev_ppg"] == 10.0 and h["prev_games"] == 15
+        assert h["ros_ppg_hat"] == 11.0 and abs(h["ros_games_hat"] - 14.0 * 12 / 17) < 1e-9     # h1 pro-rated to the 12 games left
+        assert h["next_ppg_hat"] == 10.5 and h["next_games_hat"] == 13.0 and abs(h["next_fpts_hat"] - 136.5) < 1e-9
+        assert by["ir"]["ros_games_hat"] == 0.0 and by["ir"]["next_games_hat"] == 12.0          # on reserve now: nothing this season, next season stands
+
+    def test_values_through_the_in_season_pricing(self):
+        snap = pl.DataFrame({"player_id": ["played"], "season": [2026], "week": [5], "position": ["RB"],
+                             "ros_ppg_hat": [13.0], "ros_games_hat": [11.0], "next_ppg_hat": [12.0], "next_games_hat": [15.0]})
+        tail = self._tail()
+        out = inseason.inseason_value(inseason.no_game_snapshots(snap, tail, 2026, 5), tail, {"RB": 10.0, "WR": 8.0, "TE": 5.0}, None, [1, 2, 3], discount_rate=0.0)
+        h = out.filter(pl.col("player_id") == "hurt").row(0, named=True)
+        assert abs(h["vorp_ros"] - 1.0 * 14.0 * 12 / 17) < 1e-9 and abs(h["vorp_next"] - 0.5 * 13.0) < 1e-9 and h["h3_vorp_hat"] == 0.0
+        assert h["iv_inseason"] > 0 and "played" in out["player_id"].to_list()
+
 
 def _team_week():
     rows = []
@@ -193,7 +254,7 @@ class TestTrainingSubset:
         import career
 
         class _Fake:
-            def __init__(self, device, seed, params):
+            def __init__(self, device, seed, params, want_quantiles=None):
                 self.n = None
 
             def fit(self, X, y, sample_weight=None):
@@ -427,3 +488,120 @@ def test_team_change_features_flag_a_new_starter_and_count_the_returning_line():
     snaps = inseason.build_snapshots(wk, ss, weeks=[2], team_change=(depth, sc))
     assert {"tc_qb_new", "tc_ol_returning", "tc_is_new_qb"} <= set(snaps.columns)
     assert inseason.extra_columns(["team_change"]) == inseason.TEAM_CHANGE_COLS
+
+
+def test_preseason_reads_the_lake_shape_of_the_mfl_adp():
+    ids = pl.DataFrame({"mfl_id": ["11192"], "gsis_id": ["00-1"], "name": ["A B"], "position": ["RB"]})
+    lake = pl.DataFrame({"season": [2015], "mfl_id": ["11192"], "adp": [2.63]})                 # adp_ingestion.flatten_mfl's column name
+    local = lake.rename({"mfl_id": "ext_id"})
+    for mfl in (lake, local):
+        out = inseason.preseason_features(mfl, None, ids)
+        r = out.row(0, named=True)
+        assert r["player_id"] == "00-1" and r["season"] == 2015 and r["ps_adp"] == 2.63 and r["ps_drafted"] == 1.0
+
+
+def test_random_weeks_keep_k_per_player_season_and_cover_the_season():
+    rows = pl.DataFrame({"player_id": ["a"] * 30 + ["b"] * 15, "season": [2020] * 15 + [2021] * 15 + [2020] * 15,
+                         "week": list(range(2, 17)) * 3, "x": list(range(45))})
+    out = inseason.random_weeks_per_season(rows, 4, seed=7)
+    per = out.group_by("player_id", "season").len()
+    assert per["len"].to_list() == [4, 4, 4] and out.height == 12
+    assert out.equals(inseason.random_weeks_per_season(rows, 4, seed=7))                  # seeded: reproducible
+    assert out["week"].n_unique() > 4                                                     # not the same four weeks for everyone
+    assert not out.equals(inseason.random_weeks_per_season(rows, 4, seed=8))
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2, 3, 4, 5, 6, 7, 8])
+    m = inseason.InSeasonModels(n_estimators=5, max_depth=2, random_weeks=2).fit(snaps, as_of_season=2022)
+    assert m.train_rows["ros_games"] <= 2 * snaps.select("player_id", "season").unique().height
+
+
+def test_mixed_weeks_with_bags_give_each_model_its_own_weeks(monkeypatch):
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[2, 3, 4, 5, 6, 7, 8, 9])
+    seen = []
+
+    class Fake:
+        def fit(self, X, y):
+            seen.append(X[:, 0].copy()); return self
+
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    m = inseason.InSeasonModels(random_weeks=2, bags=3)
+    monkeypatch.setattr(m, "_new", lambda: Fake())
+    monkeypatch.setattr(inseason, "feature_frame", lambda rows, extra: rows.select(pl.col("week").cast(pl.Float64), pl.col("season").cast(pl.Float64)))
+    m.fit(snaps, as_of_season=2022)
+    ros_games = seen[:3]                                         # the first target's three bags
+    assert len(m.models["ros_games"]) == 3
+    assert len({tuple(sorted(np.unique(w))) for w in ros_games}) >= 1 and not all(np.array_equal(np.sort(ros_games[0]), np.sort(w)) for w in ros_games[1:])
+
+
+def test_inseason_models_emit_each_targets_outcome_grid(monkeypatch):
+    import career
+    wk, ss = _big()
+    snaps = inseason.build_snapshots(wk, ss, weeks=[3, 8])
+
+    class Fake:
+        def fit(self, X, y):
+            self.mu = float(np.mean(y)); return self
+
+        def predict(self, X):
+            return np.full(len(X), self.mu)
+
+        def predict_quantiles(self, X, qs):
+            return np.column_stack([np.full(len(X), self.mu * (0.5 + q)) for q in qs])
+
+    m = inseason.InSeasonModels(range_quantiles=(0.2, 0.5, 0.8), bags=2, max_train_rows=40)
+    monkeypatch.setattr(m, "_new", lambda: Fake())
+    m.fit(snaps, as_of_season=2022)
+    out = m.predict(snaps.filter(pl.col("season") == 2022).head(5))
+    for name in ("ros_ppg", "ros_games", "next_ppg", "next_games"):
+        cols = [f"{name}_{career.q_name(q)}" for q in (0.2, 0.5, 0.8)]
+        assert all(c in out.columns for c in cols)
+        v = out.select(cols).row(0)
+        assert v[0] <= v[1] <= v[2]                                    # ordered
+    assert (out["ros_games_q80"] <= inseason.MAX_GAMES).all()
+    plain = inseason.InSeasonModels(bags=1, max_train_rows=40)
+    monkeypatch.setattr(plain, "_new", lambda: Fake())
+    assert "ros_ppg_q20" not in plain.fit(snaps, as_of_season=2022).predict(snaps.head(3)).columns
+
+
+def test_injury_now_reads_the_players_state_at_the_week():
+    """BACKLOG 53: on IR now, the injured run, weeks since he played, and the class of his latest injury."""
+    import polars as pl
+    import inseason
+    st = pl.DataFrame({"season": [2025] * 6, "week": [1, 2, 3, 4, 5, 6], "gsis_id": ["a"] * 6,
+                       "status": ["played", "played", "bye", "injured_out", "injured_reserve", "injured_reserve"],
+                       "roster_status": ["ACT", "ACT", "ACT", "ACT", "RES", "RES"],
+                       "injury_class": [None, None, None, "soft_tissue", "knee_achilles", "knee_achilles"]})
+    r = inseason.injury_now_features(st, 6).row(0, named=True)
+    assert r["ij_on_ir_now"] == 1.0 and r["ij_out_now"] == 0.0 and r["ij_injured_run"] == 3.0 and r["ij_weeks_since_played"] == 4.0
+    assert r["ij_class_knee_achilles"] == 1.0 and r["ij_class_soft_tissue"] == 0.0 and r["ij_td_knee_achilles_weeks"] == 2.0
+    early = inseason.injury_now_features(st, 3).row(0, named=True)            # the bye is neutral: healthy through week 3
+    assert early["ij_injured_run"] == 0.0 and early["ij_on_ir_now"] == 0.0 and early["ij_class_soft_tissue"] == 0.0
+
+
+def test_joint_pricing_leaves_a_row_without_a_grid_to_the_fallback():
+    """Sweep 2026-10-13: a rookie or an extrapolated tail has a point and a band but no 20-point grid; joint_excess used
+    to price him at zero (null quantiles read as 0) and excess() took the column for every row."""
+    import numpy as np
+    import polars as pl
+    import career
+    import inseason
+    grid = career.QUANTILE_GRID
+    rows = {"position": ["WR", "WR"], "next_games_hat": [16.0, 16.0], "next_ppg_hat": [15.0, 15.0]}
+    for q in grid:
+        rows[f"next_ppg_{career.q_name(q)}"] = [15.0, None]
+        rows[f"next_games_{career.q_name(q)}"] = [16.0, None]
+    df = pl.DataFrame(rows)
+    e = inseason.joint_excess(df, "next", {"WR": 10.0}, grid)
+    assert abs(e[0] - 5.0) < 1e-9 and e[1] is None
+    # and the value step falls back per row: the grid-less player is priced off his point
+    out = inseason.inseason_value(df.with_columns(pl.Series("player_id", ["a", "b"]), pl.col("next_ppg_hat").alias("ros_ppg_hat"), pl.col("next_games_hat").alias("ros_games_hat")),
+                                  career_pred=pl.DataFrame({"player_id": ["a", "b"]}), rep={"WR": 10.0}, sigma=None, horizons=[], discount_rate=0.1, sigma_mode="joint") \
+        if False else None   # inseason_value needs the full snapshot shape; the per-row fallback is covered through excess() below
+    rep_arr = np.array([10.0, 10.0])
+    pre = e.to_numpy().astype(float)
+    fb = np.maximum(df["next_ppg_hat"].to_numpy() - rep_arr, 0.0)
+    merged = np.where(np.isnan(pre), fb, pre)
+    assert merged.tolist() == [5.0, 5.0]

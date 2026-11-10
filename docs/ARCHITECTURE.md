@@ -149,7 +149,7 @@ sigma modes) without the GPU.
 
 ## The page
 
-One HTML file (published as a private artifact) reading `projections.json`:
+One HTML file ([machine_learning/page/intrinsic_value.html](../machine_learning/page/intrinsic_value.html), published as a private artifact with `projections.json` beside it; headless checks in `page/checks/`) reading `projections.json`:
 **Players** (WAR, PAR, bands, fair value, mispricing, season wind) · **Rosters** (each league's lineups,
 marginal wins, title odds this season and next, trade targets, the trade finder) · **Model
 performance** (backtests, the ledger) · **Trades** (the leagues' trading history, scored) · **Draft

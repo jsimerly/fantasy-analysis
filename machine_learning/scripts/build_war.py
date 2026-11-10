@@ -36,7 +36,9 @@ import features  # noqa: E402
 import gcs_io  # noqa: E402
 import league as lg  # noqa: E402
 import lineup  # noqa: E402
+import market  # noqa: E402
 import replacement as _rep  # noqa: E402
+import runs  # noqa: E402
 import scoring  # noqa: E402
 import value  # noqa: E402
 import war  # noqa: E402
@@ -48,6 +50,7 @@ LEAGUES_META_PATH = "silver/fantasy/dim_leagues_meta/data.parquet"
 FRANCHISES_PATH = "silver/fantasy/dim_franchises_meta/data.parquet"
 ROSTERS_PREFIX = "bronze/sleeper/rosters/roster_players/daily/"
 IDS_PREFIX = "bronze/nflverse/fantasy_player_ids/"
+PLAYERS_MASTER_PATH = "silver/fantasy/dim_players_master/data.parquet"
 POSITIONS = ["QB", "RB", "WR", "TE"]
 MIN_TEAM_WEEKS_FOR_FIT = 300
 
@@ -110,8 +113,58 @@ def current_rosters(league_id: str) -> pl.DataFrame:
     xw = (gcs_io.read_lake(_latest(IDS_PREFIX)).select(pl.col("sleeper_id").cast(pl.Utf8), "gsis_id")
             .filter(pl.col("sleeper_id").is_not_null() & pl.col("gsis_id").is_not_null()).unique("sleeper_id"))
     fr = gcs_io.read_lake(FRANCHISES_PATH).filter(pl.col("league_id") == league_id).select("roster_id", "current_team_name", "owner_id")
+    # Sleeper's own name and fantasy position for every rostered player, so a player with no nflverse id (a devy pick, a
+    # rookie without an NFL row) keeps a row on his roster instead of vanishing (review 2026-10-13, D4)
+    names = sleeper_names(gcs_io.read_lake(PLAYERS_MASTER_PATH))
     return (rp.join(xw, left_on="player_id", right_on="sleeper_id", how="left").join(fr, on="roster_id", how="left")
-              .select("roster_id", pl.col("current_team_name").alias("team_name"), "owner_id", pl.col("gsis_id").alias("player_id"), "is_taxi", "is_reserve"))
+              .with_columns(pl.col("player_id").cast(pl.Utf8).alias("_sid")).join(names, on="_sid", how="left")
+              .select("roster_id", pl.col("current_team_name").alias("team_name"), "owner_id",
+                      pl.coalesce([pl.col("gsis_id"), pl.lit("sleeper:") + pl.col("_sid")]).alias("player_id"),
+                      "is_taxi", "is_reserve", pl.col("sleeper_name").alias("player_name"), pl.col("sleeper_position").alias("position")))
+
+
+def sleeper_names(dim: pl.DataFrame) -> pl.DataFrame:
+    """(_sid, sleeper_name, sleeper_position) from dim_players_master: the fantasy position is Sleeper's primary position
+    when it is a skill position, else the first skill position among the positions Sleeper lets him fill ("DB/WR")."""
+    terms = [pl.when(pl.col("position").cast(pl.Utf8).is_in(POSITIONS)).then(pl.col("position").cast(pl.Utf8))]
+    if "fantasy_positions" in dim.columns:
+        multi = pl.col("fantasy_positions").cast(pl.Utf8).str.split("/")
+        terms += [pl.when(multi.list.contains(p)).then(pl.lit(p)) for p in POSITIONS]
+    return (dim.select(pl.col("player_key").cast(pl.Utf8).alias("_sid"), pl.col("display_name").alias("sleeper_name"), pl.coalesce(terms).alias("sleeper_position"))
+               .filter(pl.col("_sid").is_not_null()).unique("_sid"))
+
+
+def placeholder_rows(rosters: pl.DataFrame, projected_ids: list[str], market_hist: tuple | None = None) -> pl.DataFrame:
+    """Rostered skill players with no projection at all (review 2026-10-13, D4: devy players and rookies without an NFL
+    row vanished from the roster view): (player_id, player_name, position, owned_by, status, ktc_value), the KTC value
+    by name when ``market_hist`` = (history, crosswalk, as_of) is given."""
+    empty = pl.DataFrame(schema={"player_id": pl.Utf8, "player_name": pl.Utf8, "position": pl.Utf8, "owned_by": pl.Utf8, "status": pl.Utf8, "ktc_value": pl.Float64})
+    if not {"player_name", "position", "status"} <= set(rosters.columns):
+        return empty
+    miss = (rosters.filter(~pl.col("player_id").is_in(projected_ids) & pl.col("position").is_in(POSITIONS) & pl.col("player_name").is_not_null())
+                   .select("player_id", "player_name", "position", pl.col("team_name").alias("owned_by"), "status").unique("player_id", keep="first", maintain_order=True))
+    if miss.height == 0:
+        return empty
+    if market_hist is not None:
+        hist, xw, as_of = market_hist
+        miss = market.attach_market(miss, as_of, hist, xw)
+    if "ktc_value" not in miss.columns:
+        miss = miss.with_columns(pl.lit(None, pl.Float64).alias("ktc_value"))
+    return miss.select("player_id", "player_name", "position", "owned_by", "status", pl.col("ktc_value").cast(pl.Float64))
+
+
+def pick_leagues(meta: pl.DataFrame, all_leagues: bool) -> tuple[pl.DataFrame, str]:
+    """The leagues to build and the primary league's id: the in-season leagues when a season is on, else each
+    lineage's latest season (review 2026-10-13, D11: the offseason has no in-season league and the old ``[0]`` raised
+    IndexError). A missing primary lineage is a clear stop, not an index error."""
+    cur = meta.filter(pl.col("status") == "in_season")
+    if cur.height == 0:                                          # offseason: the newest league of every lineage
+        cur = (meta.with_columns(pl.col("season").cast(pl.Int64, strict=False).alias("_s")).sort("_s", descending=True)
+                   .unique(subset=["league_lineage_id"], keep="first", maintain_order=True).drop("_s"))
+    primary = cur.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
+    if primary.height == 0:
+        raise SystemExit(f"no league of the primary lineage {_rep.PRIMARY_LINEAGE} in dim_leagues_meta (statuses {sorted(meta['status'].unique().to_list())})")
+    return (cur if all_leagues else primary), str(primary["league_id"][0])
 
 
 def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
@@ -124,7 +177,8 @@ def owner_in_every_league(leagues: pl.DataFrame) -> str | None:
 def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, comps: list[war.Component], sigma: dict,
                  season_fact: pl.DataFrame, rate: float, rosters: pl.DataFrame | None, owner_id: str | None, span: str,
                  note: str = "", scale: pl.DataFrame | None = None, weeks: pl.DataFrame | None = None,
-                 replacement: str = "weekly") -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
+                 replacement: str = "weekly", market_hist: tuple | None = None,
+                 age_scale: dict | None = None) -> tuple[pl.DataFrame, pl.DataFrame | None, dict]:
     """``replacement``: "weekly" fills the league's lineups each week from the players who actually played
     (injuries and byes push the marginal starter deeper; lineup.replacement_weekly, needs ``weeks``),
     "fill" is the full-season fill (every starter assumed to play every week)."""
@@ -146,8 +200,9 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
     print(f"  starters by position (explicit fill, {last}): {starters}; replacement ({replacement}, {hist[0]}-{hist[-1]}): " + ", ".join(f"{p} {v:.1f}" for p, v in rep.items())
           + ("" if replacement != "weekly" else "; full-season fill would be " + ", ".join(f"{p} {v:.1f}" for p, v in rep_full.items())))
     print(f"  win curve: mean {curve.mean_points:.1f} sd {curve.sd_points:.1f} n={curve.n}; +10 ppg for an average team = +{10 * curve.slope_at_mean:.3f} win/week")
-    out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma)
-    out = war.wins_range(out, rep, curve, comps, rate)          # floor / ceiling wins where the projection carries a band
+    min_k = 1 if span == "career" else 3                       # the career spans only; the in-season model's level is not measured
+    out = war.wins_above_replacement(proj, rep, curve, comps, rate, sigma=sigma, age_scale=age_scale, age_scale_min_k=min_k)
+    out = war.wins_range(out, rep, curve, comps, rate, age_scale=age_scale, age_scale_min_k=min_k)   # floor / ceiling wins where the projection carries a band
     out = out.with_columns(pl.col("war").rank(method="ordinal", descending=True).cast(pl.Int64).alias("war_rank_all"))
     cmp_cols = ["player_id", "fair_value", "mispricing", "mispricing_pct", "iv_rank", "market_rank", "rank_gap"]
     summary = {"n": 0, "spearman": None}
@@ -170,6 +225,11 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
         # ownership counts every roster spot (taxi and IR players are owned and tradeable); only active players can start
         owner_of = rosters.select("player_id", pl.col("team_name").alias("owned_by"), "status").unique("player_id")
         pool = out.join(owner_of, on="player_id", how="left")
+        # rostered skill players with no projection at all (review 2026-10-13, D4): a row on their roster with no wins and the
+        # KTC value by name, so the roster view is complete and the trade builder can see them
+        missing = placeholder_rows(rosters, out["player_id"].to_list(), market_hist)
+        if missing.height:
+            print(f"  rostered skill players with no projection (no NFL row yet): {missing.height}, {missing['ktc_value'].is_not_null().sum()} priced by KTC")
         teams_list = rosters.select("roster_id", "team_name", "owner_id").unique().sort("roster_id").rows()
         per_team = {}
         for roster_id, name, oid in teams_list:
@@ -196,6 +256,16 @@ def build_league(spec: lg.LeagueSpec, curve: lg.WinCurve, proj: pl.DataFrame, co
                    .with_columns(pl.lit(roster_id).alias("roster_id"), pl.lit(name).alias("team_name"), pl.lit(total).alias("lineup_ppg_now"),
                                  pl.lit(float(curve.win_prob(total + offset))).alias("win_prob_now"), pl.lit(offset).alias("lineup_offset"),
                                  pl.lit(bool(owner_id and oid == owner_id)).alias("is_owner")))
+            ph = missing.filter(pl.col("player_id").is_in(mine))
+            if ph.height:                       # no wins (null, not zero: unknown), status "no projection", KTC by name
+                t = (pl.concat([t, ph.select("player_id", "player_name", "position", pl.lit(True).alias("rostered"),
+                                             pl.col("ktc_value").alias("_ph_ktc"), pl.lit("no projection").alias("_ph_status"),
+                                             pl.lit(roster_id).alias("roster_id"), pl.lit(name).alias("team_name"), pl.lit(total).alias("lineup_ppg_now"),
+                                             pl.lit(float(curve.win_prob(total + offset))).alias("win_prob_now"), pl.lit(offset).alias("lineup_offset"),
+                                             pl.lit(bool(owner_id and oid == owner_id)).alias("is_owner"))], how="diagonal_relaxed")
+                       .with_columns(pl.coalesce([pl.col("_ph_status"), pl.col("status")]).alias("status"),
+                                     pl.coalesce([pl.col("ktc_value"), pl.col("_ph_ktc")]).alias("ktc_value"))
+                       .drop("_ph_status", "_ph_ktc"))
             rows.append(t)
         teams_df = pl.concat(rows, how="diagonal_relaxed")
         print(f"  mean win probability across rosters: {teams_df.group_by('roster_id').agg(pl.col('win_prob_now').first())['win_prob_now'].mean():.3f}")
@@ -223,12 +293,19 @@ def main() -> None:
     ap.add_argument("--replacement", choices=["weekly", "fill"], default="weekly",
                     help="replacement line: weekly = the marginal starter among players who actually played each week (injuries, byes); fill = full-season fill")
     ap.add_argument("--dump", help="also write each league's projections / teams parquet to this local directory (for comparisons)")
+    ap.add_argument("--require-backend", default=runs.PRODUCTION_BACKEND,
+                    help="refuse a run whose stamped models do not start with this (default: the production one); 'any' for a smoke or an explicitly non-production run")
     args = ap.parse_args()
 
     if args.source == "inseason" and (args.season is None or args.week is None):
         ap.error("--season/--week required for --source inseason")
     career_meta, career_run = run_meta(args)
+    runs.check_backend(career_meta, args.require_backend, "build_war")       # a trees run under a production run date is refused (review 2026-10-13)
     sigma = sigma_from_career_meta(career_meta)
+    age_scale = career_meta.get("age_scale") or None          # the run's age-band level correction (review C1): the same table here
+    if age_scale:
+        print("age level correction on the career spans: " + ", ".join(f"{b} x{float(v):.2f}" for b, v in sorted(age_scale.items())
+                                                                            if not (b.endswith("_mean") or b.endswith("_se"))))
     if args.source == "career":
         proj = gcs_io.read_ml_parquet("intrinsic_value", f"as_of_season={args.as_of_season}", f"run_date={career_run}", "projections.parquet")
         H = sorted(int(c[1:].split("_")[0]) for c in proj.columns if c.startswith("h") and c.endswith("_ppg_hat"))
@@ -249,9 +326,7 @@ def main() -> None:
         spec = lg.LeagueSpec.from_json(args.league)
         targets.append((spec, win_curve_for(None), None, None, "custom league: no standings or rosters; win curve from all leagues in the lake; primary league's scoring", None))
     else:
-        all_leagues = gcs_io.read_lake(LEAGUES_META_PATH).filter(pl.col("status") == "in_season")
-        leagues = all_leagues if args.all_leagues else all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)
-        primary_id = all_leagues.filter(pl.col("league_lineage_id") == _rep.PRIMARY_LINEAGE)["league_id"][0]
+        leagues, primary_id = pick_leagues(gcs_io.read_lake(LEAGUES_META_PATH), args.all_leagues)
         primary_sc = scoring.league_scoring(settings, primary_id)
         last_season = int(weeks["season"].max())
         for lid, name, lineage in leagues.select("league_id", "league_name", "league_lineage_id").iter_rows():
@@ -266,12 +341,18 @@ def main() -> None:
                         "scoring adjusted per player from the primary league's rules: " + ", ".join(f"{k} {a:g} -> {b:g}" for k, (a, b) in sorted(diff.items())))
             targets.append((spec, win_curve_for(lineage), lineage, lid, note, scale))
         owner_id = owner_in_every_league(leagues) if args.teams else None
+    market_hist = None
+    if args.teams and not args.league:          # the KTC value by name for rostered players without a projection (the placeholders)
+        try:
+            market_hist = (market.load_ktc_history(), market.load_crosswalk(), datetime.now(timezone.utc).date())
+        except Exception as e:  # noqa: BLE001
+            print("KTC history unavailable for the roster placeholders:", str(e)[:80])
     for spec, curve, lineage, lid, note, scale in targets:
         rosters = current_rosters(lid) if (args.teams and lid) else None
         display = next((n for i, n, _ in gcs_io.read_lake(LEAGUES_META_PATH).select("league_id", "league_name", "league_lineage_id").iter_rows() if i == lid), spec.name) if lid else spec.name
         out, teams_df, meta = build_league(spec, curve, proj, comps, sigma, season_fact, args.discount_rate, rosters,
                                            owner_id if args.teams and not args.league else None, span, note, scale=scale,
-                                           weeks=weeks, replacement=args.replacement)
+                                           weeks=weeks, replacement=args.replacement, market_hist=market_hist, age_scale=age_scale)
         meta.update({"display_name": display, "lineage_id": lineage, "league_id": lid, "replacement": args.replacement})
         if args.dump:
             Path(args.dump).mkdir(parents=True, exist_ok=True)

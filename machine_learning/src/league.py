@@ -149,10 +149,13 @@ def team_weeks_from_standings(team_state: pl.DataFrame, lo: float = 20.0, hi: fl
 OWNER_CURVE_FALLBACK = (134.2, 41.2)        # Stuck in High School, 2025-26 team-weeks: weekly mean, margin spread
 
 
-def curve_for_lineage(lineage_id: str | None, min_fit: int = 300) -> "WinCurve":
+def curve_for_lineage(lineage_id: str | None, min_fit: int = 300, through_load_date: str | None = None) -> "WinCurve":
     """A league's win curve from its own standings in the lake: a logistic fit with ``min_fit``
     team-weeks, otherwise a normal-margin curve from its weekly mean / spread; the owner's
-    league's known values when the lake cannot be read."""
+    league's known values when the lake cannot be read. ``through_load_date`` keeps only the
+    standings snapshots loaded up to that date: the harness fits the curve through the last
+    complete season, so its wins unit does not move with every week of the season in progress
+    (2026-10-25: two more weeks of standings shifted every realized WAR by up to 0.08 wins)."""
     try:
         ts = load_team_state()
         if lineage_id:
@@ -160,6 +163,8 @@ def curve_for_lineage(lineage_id: str | None, min_fit: int = 300) -> "WinCurve":
             ids = gcs_io.read_lake("silver/fantasy/dim_leagues_meta/data.parquet").filter(pl.col("league_lineage_id") == lineage_id)["league_id"].to_list()
             ts = ts.filter(pl.col("league_id").is_in(ids))
         tw = team_weeks_from_standings(ts)
+        if through_load_date:
+            tw = tw.filter(pl.col("load_date").cast(pl.Utf8) <= through_load_date)
         if tw.height >= min_fit:
             return WinCurve.fit(tw)
         c = WinCurve.normal(float(tw["week_pts"].mean()), float(tw["week_pts"].std()) * 2 ** 0.5)

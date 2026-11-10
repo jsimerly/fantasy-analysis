@@ -110,6 +110,50 @@ class TestIntrinsicValue:
         assert c["realized_iv"] == 0.0                                 # never played
 
 
+class TestAgeScale:
+    """review 2026-10-13 C1 / owner 2026-10-14: the age-band level correction on the career spans."""
+
+    def _proj(self):
+        return pl.DataFrame({"player_id": ["young", "mid", "old", "noage"], "position": ["WR"] * 4, "age_at_season": [23.5, 26.0, 31.0, None],
+                             "h1_ppg_hat": [15.0] * 4, "h1_games_hat": [16.0] * 4, "h2_ppg_hat": [15.0] * 4, "h2_games_hat": [16.0] * 4,
+                             "h3_ppg_hat": [15.0] * 4, "h3_games_hat": [16.0] * 4})
+
+    def test_bands_cut_at_25_and_29_and_a_missing_age_is_unbanded(self):
+        bands = self._proj().select(value.age_band_expr()).to_series().to_list()
+        assert bands == ["<=24", "25-28", "29+", None]
+        assert pl.DataFrame({"age_at_season": [24.995, 28.999, 29.0]}).select(value.age_band_expr()).to_series().to_list() == ["<=24", "25-28", "29+"]
+        f = value.age_scale_factors(self._proj(), {"<=24": 1.27, "29+": 0.8})
+        assert f.tolist() == [1.27, 1.0, 0.8, 1.0]                                # an unlisted band and a missing age are 1
+        assert value.age_scale_factors(self._proj(), None).tolist() == [1.0] * 4
+
+    def test_intrinsic_value_scales_the_points_above_replacement_by_band_from_min_k(self):
+        rep = {"WR": 10.0}
+        base = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0)
+        out = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25, "29+": 0.8})
+        y, o, m = (out.filter(pl.col("player_id") == p).row(0, named=True) for p in ("young", "old", "mid"))
+        assert y["h1_vorp_hat"] == 5 * 16 * 1.25 and o["h3_vorp_hat"] == 5 * 16 * 0.8 and m["h2_vorp_hat"] == 5 * 16
+        assert abs(y["iv"] - 3 * 80 * 1.25) < 1e-9 and abs(base.filter(pl.col("player_id") == "young")["iv"][0] - 240) < 1e-9
+        tail_only = value.intrinsic_value(self._proj(), rep, [1, 2, 3], discount_rate=0.0, age_scale={"<=24": 1.25}, age_scale_min_k=3)
+        y3 = tail_only.filter(pl.col("player_id") == "young").row(0, named=True)
+        assert y3["h1_vorp_hat"] == 80 and y3["h2_vorp_hat"] == 80 and y3["h3_vorp_hat"] == 100     # the in-season spans untouched
+
+    def test_a_position_cell_wins_over_its_band_and_the_band_is_the_fallback(self):
+        """owner, 2026-10-14: a curve by position -- 29+ running backs realize a third of their price, quarterbacks 0.84."""
+        df = pl.DataFrame({"position": ["RB", "QB", "WR", "RB"], "age_at_season": [30.0, 31.0, 32.0, 23.0]})
+        table = {"29+": 0.8, "RB|29+": 0.45, "QB|29+": 0.85, "<=24": 1.27}
+        assert value.age_scale_factors(df, table).tolist() == [0.45, 0.85, 0.8, 1.27]        # the cell, the cell, the band, the band
+        assert value.age_scale_factors(df.drop("position"), table).tolist() == [0.8, 0.8, 0.8, 1.27]   # no position column: bands only
+
+    def test_the_curve_by_year_of_age_wins_over_the_band_and_clips_to_its_ends(self):
+        """owner, 2026-10-14: a curve fitted to how far off we are, not three steps -- "age:NN" keys, a row's floor(age)."""
+        df = pl.DataFrame({"position": ["WR"] * 5, "age_at_season": [19.5, 22.4, 28.9, 33.0, 41.0]})
+        curve = {f"age:{a}": round(1.3 - 0.05 * (a - 21), 3) for a in range(21, 37)}            # 1.30 at 21 ... 0.55 at 36
+        table = {"<=24": 1.27, "25-28": 1.03, "29+": 0.80, **curve}
+        got = value.age_scale_factors(df, table).tolist()
+        assert got == [curve["age:21"], curve["age:22"], curve["age:28"], curve["age:33"], curve["age:36"]]   # the ends clip, 28.9 -> 28
+        assert value.age_scale_factors(df.with_columns(pl.lit(None, pl.Float64).alias("age_at_season")), table).tolist() == [1.0] * 5
+
+
 class TestMarketComparison:
     def test_spearman(self):
         assert abs(value.spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-9

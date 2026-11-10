@@ -135,6 +135,26 @@ class TestAgeSurvival:
         pred = pl.DataFrame({"position": ["K"], "age_at_season": [45.0], "h1_games_hat": [16.0]})
         assert s.cap_games(pred, [1])["h1_games_hat"][0] == 16.0
 
+    def test_quadratic_logit_bends_where_the_linear_one_cannot(self):
+        """review 2026-10-13 C1 / C10: a hazard flat to 30 and steep after it. The linear logit splits the difference
+        (too steep young, too flat old); the quadratic follows the bend. Spec suffix "q" (e.g. 30+tq)."""
+        rng = np.random.default_rng(7)
+        ages = rng.uniform(22, 40, 3000)
+        p = np.where(ages < 30, 0.92, 1 / (1 + np.exp(-(9.0 - 0.3 * ages))))          # 0.92 flat, then 0.5 at 30 -> 0.14 at 36
+        t = pl.DataFrame({"position": ["RB"] * 3000, "age_at_season": ages, "games": [14] * 3000, "ppg": [15.0] * 3000,
+                          "h1_observable": [True] * 3000, "h1_played": rng.random(3000) < p})
+        lin, quad = career.AgeSurvival().fit(t), career.AgeSurvival(quadratic=True).fit(t)
+        assert len(quad.coef["RB"]) == 3 and len(lin.coef["RB"]) == 2
+        old, young = np.array([36.0]), np.array([25.0])
+        assert abs(quad.p_next("RB", old)[0] - 0.14) < abs(lin.p_next("RB", old)[0] - 0.14)        # closer to the true steep tail
+        assert abs(quad.p_next("RB", young)[0] - 0.92) < abs(lin.p_next("RB", young)[0] - 0.92)    # and to the flat start
+        s = career.fit_survival(t, "30+tq")
+        assert s.quadratic is True and s.tiered is True
+        pred = pl.DataFrame({"position": ["RB", "RB"], "age_at_season": [25.0, 36.0], "ppg": [15.0, 15.0], "games": [14, 14],
+                             "h1_games_hat": [16.0, 16.0], "h3_games_hat": [14.0, 14.0]})
+        out = career.apply_cap(s, pred, [1, 3], "30+tq")
+        assert out["h3_games_hat"][0] == 14.0 and out["h3_games_hat"][1] < 4.0                      # the spec parses; the old are capped hard
+
     def _tiered_table(self):
         # starters (ppg 15, 14 games) keep playing to 36; fringe players (ppg 5, 6 games) stop by 31
         rng = np.random.default_rng(5)
@@ -415,3 +435,15 @@ class TestOnePassBands:
         out = m.predict(df)
         assert {"h1_ppg_hat", "h1_games_hat", "h1_ppg_q20", "h1_ppg_q50", "h1_ppg_q80", "h1_games_q50"} <= set(out.columns)
         assert self._Fake.calls == ["main", "main"]                             # ppg + games, one pass each (was four)
+
+
+def test_infinite_features_reach_tabpfn_as_missing(capsys):
+    """2026-11-10: one infinite cell made TabPFN refuse the whole training matrix."""
+    import numpy as np
+    import career
+    X = career._finite32(np.array([[1.0, np.inf], [-np.inf, 2.0], [np.nan, 1e300]]))
+    assert X.dtype == np.float32 and not np.isinf(X).any()
+    assert np.isnan(X).sum() == 4 and X[0, 0] == 1.0 and X[1, 1] == 2.0
+    assert "3 infinite feature values" in capsys.readouterr().out
+    clean = career._finite32(np.array([[1.0, 2.0]]))
+    assert clean.tolist() == [[1.0, 2.0]] and capsys.readouterr().out == ""

@@ -49,7 +49,7 @@ import value  # noqa: E402
 from run_experiment import build_context  # noqa: E402
 
 KEEP = ["variant", "horizon", "cohort", "player_id", "player_name", "position", "age_at_season", "exp_at_season",
-        "draft_pick", "is_rookie", "games", "ppg", "war", "iv", "ktc_value", "realized_war", "realized_iv"]
+        "draft_pick", "is_rookie", "games", "ppg", "war", "iv", "ktc_value", "realized_war", "realized_iv", "realized_pts", "realized_par"]
 BY = ["variant", "horizon", "cohort"]
 
 
@@ -67,8 +67,24 @@ def tier(rank: pl.Expr) -> pl.Expr:
             .when(rank <= 120).then(pl.lit("61-120")).otherwise(pl.lit("121+")))
 
 
+def with_realized_points(f: pl.DataFrame) -> pl.DataFrame:
+    """``realized_pts`` (fantasy points over the horizon's seasons) and ``realized_par`` (points above
+    replacement over them, undiscounted) from the cohort frame's ``h{k}_fpts`` / ``h{k}_vorp`` -- the
+    numbers a non-modeller reads; wins stay the scored quantity. A frame without them (a reloaded
+    players.parquet) keeps whatever it has."""
+    ks = sorted(int(c[1:-5]) for c in f.columns if c.startswith("h") and c.endswith("_fpts") and c[1:-5].isdigit())
+    cols = []
+    if ks and "realized_pts" not in f.columns:
+        cols.append(pl.sum_horizontal([pl.col(f"h{k}_fpts").cast(pl.Float64).fill_null(0.0) for k in ks]).alias("realized_pts"))
+    vk = [k for k in ks if f"h{k}_vorp" in f.columns]
+    if vk and "realized_par" not in f.columns:
+        cols.append(pl.sum_horizontal([pl.col(f"h{k}_vorp").cast(pl.Float64).fill_null(0.0) for k in vk]).alias("realized_par"))
+    return f.with_columns(cols) if cols else f
+
+
 def priced_frame(frames: list[pl.DataFrame]) -> pl.DataFrame:
     """Priced, observable players with within-cohort ranks (1 = best) and percentile ranks."""
+    frames = [with_realized_points(f) for f in frames]
     df = pl.concat([f.select([c for c in KEEP if c in f.columns]) for f in frames], how="diagonal")
     df = df.filter(pl.col("ktc_value").is_not_null() & pl.col("realized_war").is_not_null())
     n = pl.len().over(BY)
@@ -87,6 +103,14 @@ def priced_frame(frames: list[pl.DataFrame]) -> pl.DataFrame:
         exp_band(pl.col("exp_at_season").fill_null(0)).alias("exp_band"),
         tier(pl.col("ktc_rank")).alias("tier"),
     )
+    # net of regression to the mean (review 2026-10-13): "cheap" is selected on ktc_rank - model_rank, so the raw gap_real is
+    # positive for ANY model that disagrees with the market (a pure-noise model scores about +10 on 90-160 players). net_real
+    # is the finish against the within-cohort line E[real_rank | ktc_rank] (+ = better than regression to the mean alone
+    # predicts; zero under no skill); closer is how many ranks nearer the outcome the model's rank sat than KTC's
+    k, r = pl.col("ktc_rank"), pl.col("real_rank")
+    slope = ((k * r).mean().over(BY) - k.mean().over(BY) * r.mean().over(BY)) / (k.var(ddof=0).over(BY) + 1e-9)
+    line = r.mean().over(BY) + slope * (k - k.mean().over(BY))
+    df = df.with_columns((line - r).alias("net_real"), ((r - k).abs() - (r - pl.col("model_rank")).abs()).alias("closer"))
     third = (pl.col("n_cohort") // 3).cast(pl.Int64)
     gap_rank = pl.col("gap_model").rank(descending=True, method="ordinal").over(BY)
     return df.with_columns(
@@ -114,6 +138,9 @@ def score(df: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
             "edge_corr": _sp(g["gap_model"], g["gap_real"]),
             "cheap_n": cheap.height, "cheap_gap_real": float(cheap["gap_real"].mean()) if cheap.height else None,
             "rich_n": rich.height, "rich_gap_real": float(rich["gap_real"].mean()) if rich.height else None,
+            # the honest versions of the two above (zero under no skill; see priced_frame)
+            "cheap_net": float(cheap["net_real"].mean()) if cheap.height else None, "rich_net": float(rich["net_real"].mean()) if rich.height else None,
+            "cheap_closer": float(cheap["closer"].mean()) if cheap.height else None, "rich_closer": float(rich["closer"].mean()) if rich.height else None,
             "cheap_wins_per_1k": per_k(cheap), "rich_wins_per_1k": per_k(rich), "all_wins_per_1k": per_k(g),
             "model_mae": float((g["realized_war"] - g["war"]).abs().mean()), "model_bias": float((g["realized_war"] - g["war"]).mean()),
         })
@@ -151,7 +178,10 @@ def swap_pairs(df: pl.DataFrame, tol: float, min_gap: float) -> pl.DataFrame:
                         "sell_ktc": r["ktc_value"], "sell_gap": r["gap_model"], "sell_real": r["realized_war"], "sell_war": r["war"],
                         "buy": c["player_name"], "buy_pos": c["position"], "buy_age": c["age_band"], "buy_exp": c["exp_band"], "buy_tier": c["tier"],
                         "buy_ktc": c["ktc_value"], "buy_gap": c["gap_model"], "buy_real": c["realized_war"], "buy_war": c["war"],
-                        "gain": c["realized_war"] - r["realized_war"], "model_gain": c["war"] - r["war"]})
+                        "gain": c["realized_war"] - r["realized_war"], "model_gain": c["war"] - r["war"],
+                        "sell_pts": r.get("realized_pts"), "buy_pts": c.get("realized_pts"), "sell_par": r.get("realized_par"), "buy_par": c.get("realized_par"),
+                        "gain_pts": None if r.get("realized_pts") is None or c.get("realized_pts") is None else c["realized_pts"] - r["realized_pts"],
+                        "gain_par": None if r.get("realized_par") is None or c.get("realized_par") is None else c["realized_par"] - r["realized_par"]})
     return pl.DataFrame(out)
 
 
@@ -161,7 +191,9 @@ def swap_summary(pairs: pl.DataFrame, keys: list[str]) -> pl.DataFrame:
     return (pairs.group_by(keys, maintain_order=True)
             .agg(pl.len().alias("pairs"), pl.col("gain").mean().alias("gain_mean"), pl.col("gain").median().alias("gain_median"),
                  (pl.col("gain") > 0).mean().alias("win_rate"), pl.col("gain").sum().alias("gain_total"),
-                 pl.col("model_gain").mean().alias("model_said"), pl.col("sell_ktc").mean().alias("ktc_mean"))
+                 pl.col("model_gain").mean().alias("model_said"), pl.col("sell_ktc").mean().alias("ktc_mean"),
+                 *([pl.col("gain_pts").mean().alias("gain_pts_mean"), pl.col("gain_par").mean().alias("gain_par_mean"),
+                    (pl.col("gain_par") > 0).mean().alias("win_rate_par")] if "gain_par" in pairs.columns else []))
             .sort(keys))
 
 
@@ -256,7 +288,7 @@ def main() -> None:
             print(p.select("variant", "cohort", "sell", "sell_ktc", "sell_real", "buy", "buy_ktc", "buy_real", "gain").tail(8))
     hm = max(args.horizons)
     top = pairs.filter(pl.col("horizon") == hm).sort("gain") if pairs.height else pairs
-    cols = ["variant", "cohort", "sell", "sell_pos", "sell_ktc", "sell_real", "buy", "buy_pos", "buy_ktc", "buy_real", "gain"]
+    cols = ["variant", "cohort", "sell", "sell_pos", "sell_ktc", "sell_real", "buy", "buy_pos", "buy_ktc", "buy_real", "gain"] + [c for c in ("sell_pts", "buy_pts", "sell_par", "buy_par", "gain_pts", "gain_par") if c in pairs.columns]
     summary = {k: t.to_dicts() for k, t in tables.items()} | {
         "ledger": ledger_rows,
         "top_swaps": (top.select(cols).head(10).to_dicts() + top.select(cols).tail(10).to_dicts()) if pairs.height else [],

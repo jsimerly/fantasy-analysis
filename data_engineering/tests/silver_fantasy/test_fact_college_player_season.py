@@ -56,3 +56,45 @@ def test_crosswalk_by_pick_then_name():
     assert r["8"]["gsis_id"] == "00-2" and r["8"]["match"] == "name"          # pick 300 vs 301: the name carries it
     assert r["9"]["gsis_id"] is None and r["9"]["match"] is None
     assert x["draft_year"].to_list() and x["college"].to_list()
+
+
+def test_crosswalk_reads_the_season_facts_birth_date_column():
+    """Production passes our fact_player_season (birth_date, a date), not nflverse's ids (birthdate); looking only for the
+    latter left every crosswalk birth date empty until 2026-10-12 (and the model's breakout ages with them)."""
+    from datetime import date
+    picks = pl.DataFrame({"collegeAthleteId": [7], "year": [2024], "overall": [13], "round": [1], "name": ["Brock Bowers"], "position": ["TE"], "collegeTeam": ["Georgia"]})
+    ids = pl.DataFrame({"gsis_id": ["00-0039338"], "draft_year": [2024], "draft_pick": [13], "name": ["Brock Bowers"], "position": ["TE"], "birth_date": [date(2002, 12, 13)]})
+    r = m.build_crosswalk(picks, ids).row(0, named=True)
+    assert r["gsis_id"] == "00-0039338" and r["birth_date"] == "2002-12-13"
+
+
+def test_the_id_table_main_builds_carries_birth_dates_from_both_sources():
+    """Replay of the 2026-10-12 defect's second half: main assembled the crosswalk's id table from our season fact and
+    nflverse's ids but selected neither birth-date column, so the crosswalk had nothing to read."""
+    from datetime import date
+    season_fact = pl.DataFrame({"player_id": ["g1", "g1"], "season": [2024, 2025], "rookie_season": [2024, 2024], "draft_pick": [13, 13],
+                                "player_name": ["Brock Bowers"] * 2, "position": ["TE"] * 2, "birth_date": [date(2002, 12, 13)] * 2})
+    nfl_ids = pl.DataFrame({"gsis_id": ["g1", "g2"], "draft_year": [2024, 2023], "draft_pick": [13, 200], "name": ["Brock Bowers", "Late Guy"],
+                            "position": ["TE", "WR"], "birthdate": ["2002-12-13", "2000-05-01"], "db_season": [2026, 2026]})
+    ids = m.crosswalk_ids(season_fact, nfl_ids)
+    got = dict(zip(ids["gsis_id"].to_list(), ids["birth_date"].to_list()))
+    assert got == {"g1": "2002-12-13", "g2": "2000-05-01"}
+    picks = pl.DataFrame({"collegeAthleteId": [7, 8], "year": [2024, 2023], "overall": [13, 200], "round": [1, 7], "name": ["Brock Bowers", "Late Guy"],
+                          "position": ["TE", "WR"], "collegeTeam": ["Georgia", "Somewhere"]})
+    xw = m.build_crosswalk(picks, ids)
+    assert xw["birth_date"].null_count() == 0
+
+
+def test_nflverse_ids_join_the_college_pick_by_the_overall_pick_not_the_pick_within_the_round():
+    """fantasy_player_ids.draft_pick is the pick within the round (Puka Nacua: round 5, pick 42, overall 177); the CFBD
+    join needs the overall pick (draft_ovr). Before the fix a first-round defender at overall 42 took Nacua's id."""
+    season_fact = pl.DataFrame({"player_id": ["g-ours"], "season": [2024], "rookie_season": [2024], "draft_pick": [13], "player_name": ["Brock Bowers"],
+                                "position": ["TE"], "birth_date": [None]}).with_columns(pl.col("birth_date").cast(pl.Utf8))
+    nfl_ids = pl.DataFrame({"gsis_id": ["g-puka", "g-dl"], "draft_year": [2023, 2023], "draft_round": [5, 1], "draft_pick": [42, 10], "draft_ovr": [177, 10],
+                            "name": ["Puka Nacua", "Some Lineman"], "position": ["WR", "DL"], "birthdate": ["2001-05-29", "2000-01-01"], "db_season": [2026, 2026]})
+    ids = m.crosswalk_ids(season_fact, nfl_ids)
+    picks = pl.DataFrame({"collegeAthleteId": [1, 2], "year": [2023, 2023], "overall": [177, 42], "round": [5, 2], "name": ["Puka Nacua", "Other Guy"],
+                          "position": ["Wide Receiver", "Wide Receiver"], "collegeTeam": ["BYU", "Somewhere"]})
+    xw = {r["cfbd_id"]: r for r in m.build_crosswalk(picks, ids).to_dicts()}
+    assert xw["1"]["gsis_id"] == "g-puka" and xw["1"]["match"] == "pick" and xw["1"]["birth_date"] == "2001-05-29"
+    assert xw["2"]["gsis_id"] is None                                       # overall 42 is nobody in these ids
