@@ -207,3 +207,17 @@ class TestResolveScoringNewestLeagueWins:
         })
         cfg = fpw.resolve_league_scoring(s)
         assert cfg["league_id"] == "1180221337891495936" and cfg["scoring"].get("fum", 0.0) == 0.0
+
+
+def test_a_rookie_season_later_than_the_first_season_played_is_capped():
+    """2026-11-10: nflverse's players table said the 2012 rookies debuted in 2013; their 2012 rows got experience -1 and
+    their 2013 rows were flagged rookie years. Nobody plays before his rookie season, so the fact caps it."""
+    df = pl.DataFrame({"player_id": ["rw", "rw", "ok", "ok", "nobio"], "season": [2012, 2013, 2012, 2013, 2012]})
+    bio = pl.DataFrame({"gsis_id": ["rw", "ok"], "birth_date": ["1988-11-29", "1985-01-01"], "draft_round": [3, 1], "draft_pick": [75, 1],
+                        "rookie_season": [2013, 2008], "college_name": ["Wisconsin", "X"]})
+    out = fpw.attach_bio(df, bio).sort("player_id", "season")
+    got = {(r["player_id"], r["season"]): (r["rookie_season"], r["exp_at_season"], r["is_rookie"]) for r in out.iter_rows(named=True)}
+    assert got[("rw", 2012)] == (2012, 0, True) and got[("rw", 2013)] == (2012, 1, False)
+    assert got[("ok", 2012)] == (2008, 4, False) and got[("ok", 2013)] == (2008, 5, False)
+    assert got[("nobio", 2012)] == (None, None, None)
+    assert out["exp_at_season"].drop_nulls().min() >= 0

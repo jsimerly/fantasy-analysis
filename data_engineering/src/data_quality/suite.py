@@ -493,6 +493,55 @@ def fpw_future(ctx):
     return x.no_newer_than(ctx.table("fact_player_week")["game_date"].max(), ctx.today, "game_date")
 
 
+def _negative_experience(ctx, table: str, key: list[str]):
+    f = ctx.table(table)
+    bad = f.filter(pl.col("exp_at_season") < 0)
+    if bad.height:
+        return x.fail(f"{bad.height:,} rows of {bad['player_id'].n_unique():,} players with a season before their rookie_season "
+                      f"(seasons {sorted(bad['season'].unique().to_list())[:6]})", bad.height, _sample_rows(bad, key + ["rookie_season"]))
+    return x.ok("no season before a rookie_season", 0)
+
+
+_NEG_EXP_WHY = ("a season before the player's rookie_season: nflverse's players table of 2026-11-10 moved the 2012 class to rookie_season 2013 "
+                "(467 players), experience went to -1 on 94 player-seasons, their 2013 rows read as rookie years, and the model's "
+                "pick / (1 + exp) feature turned infinite and killed the week 9 refresh; the fact now caps rookie_season at the first season played")
+
+
+@check("fact.player_week.experience_not_negative", "fact_player_week", "error", _NEG_EXP_WHY)
+def fpw_experience(ctx):
+    return _negative_experience(ctx, "fact_player_week", ["player_id", "season", "week"])
+
+
+@check("fact.player_season.experience_not_negative", "fact_player_season", "error", _NEG_EXP_WHY)
+def fps_experience(ctx):
+    return _negative_experience(ctx, "fact_player_season", ["player_id", "season"])
+
+
+PLAYERS_BIO_MAX_CHANGED = 25      # week to week a handful of rookie seasons and draft fields are corrected; 2026-11-10 changed 467
+
+
+@check("bronze.nflverse.players_bio_stable", "bronze/nflverse/nfl_players", "warn",
+       "the weekly players snapshot feeds every bio column of the facts (rookie season, draft round and pick, birth date); on 2026-11-10 it "
+       "moved 467 rookie seasons a year or more and dropped 130 players in one release, and nothing said so until the model died on it")
+def nflverse_players_stable(ctx):
+    parts = ctx.partitions("bronze/nflverse/nfl_players/")
+    if len(parts) < 2:
+        return x.ok("fewer than two snapshots: nothing to compare", 0)
+    (d0, b0), (d1, b1) = parts[-2], parts[-1]
+    cols = ["rookie_season", "draft_round", "draft_pick", "birth_date"]
+    old, new = ctx.blob(b0), ctx.blob(b1)
+    cols = [c for c in cols if c in old.columns and c in new.columns]
+    j = old.select(["gsis_id"] + cols).drop_nulls("gsis_id").unique("gsis_id").join(
+        new.select(["gsis_id"] + cols).drop_nulls("gsis_id").unique("gsis_id"), on="gsis_id", how="left", suffix="_new", coalesce=False)
+    dropped = j.filter(pl.col("gsis_id_new").is_null()).height
+    kept = j.filter(pl.col("gsis_id_new").is_not_null())
+    changed = {c: kept.filter(pl.col(c).cast(pl.Utf8).ne_missing(pl.col(c + "_new").cast(pl.Utf8))).height for c in cols}
+    worst = max(list(changed.values()) + [dropped])
+    what = ", ".join(f"{c} changed on {n:,}" for c, n in changed.items() if n) or "no bio change"
+    msg = f"{d0} -> {d1}: {what}; {dropped:,} players dropped"
+    return x.fail(msg, worst) if worst > PLAYERS_BIO_MAX_CHANGED else x.ok(msg, worst)
+
+
 @check("fact.player_season.unique_key", "fact_player_season", "error", "one row per player-season")
 def fps_unique(ctx):
     return x.unique_key(ctx.table("fact_player_season"), ["player_id", "season"])

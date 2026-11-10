@@ -79,9 +79,11 @@ def healthy() -> tuple[dict, dict]:
     for lg, _, _ in LEAGUES:
         frames[f"bronze/sleeper/transactions/transactions/daily/league_id={lg}/data.parquet"] = pl.DataFrame({"created": [int(datetime(2026, 10, 5).timestamp() * 1000)]})
     # production facts
-    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5, "season": [2026] * 5, "week": [1, 2, 3, 4, 5], "game_date": [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)]})
+    frames["fact_player_week"] = pl.DataFrame({"player_id": ["p1"] * 5, "season": [2026] * 5, "week": [1, 2, 3, 4, 5], "game_date": [date(2026, 9, 10) + timedelta(days=7 * k) for k in range(5)],
+                                               "rookie_season": [2025] * 5, "exp_at_season": [1] * 5})
     frames["fact_player_season"] = pl.DataFrame({"player_id": ["p1", "p1"], "season": [2025, 2026], "games": [17, 5], "fpts": [170.0, 50.0], "ppg": [10.0, 10.0],
-                                                 "scored_under_league_id": ["L", "L"], "season_complete": [True, False]})
+                                                 "scored_under_league_id": ["L", "L"], "season_complete": [True, False],
+                                                 "rookie_season": [2025, 2025], "exp_at_season": [0, 1]})
     for t in ("fact_player_week_status", "fact_player_injury_week", "fact_depth_chart_week", "fact_team_week_strength"):
         frames[t] = pl.DataFrame({"season": [2026] * 18, "week": list(range(1, 19)), "played": [True] * 5 + [False] * 13, "played_this_week": [True] * 5 + [False] * 13})
     frames["fact_team_season_strength"] = pl.DataFrame({"season": [2026] * 32, "team": [f"T{i}" for i in range(32)]})
@@ -312,3 +314,36 @@ def test_the_fftoday_history_must_hold_every_season_in_full():
     del frames["bronze/fftoday/projections/season=2017/data.parquet"]
     r = failed(run(frames, parts, only="fftoday"))["bronze.fftoday.history_complete"]
     assert "2 of 8 seasons short" in r["observed"] and "2013: 1760 rows, 11 weeks" in r["detail"] and "2017: missing" in r["detail"]
+
+
+def test_the_2012_rookie_class_moved_to_2013_and_experience_went_negative():
+    """The lake as it was on 2026-11-10: nflverse's players release stamped the 2012 rookies (Russell Wilson, Doug Martin, T.Y. Hilton ...)
+    rookie_season 2013; silver derived exp_at_season -1 on their 2012 rows and the model's pick / (1 + exp) feature became infinite.
+    The facts' checks see the season before the rookie season; the bronze check sees the release that caused it."""
+    frames, parts = healthy()
+    wilson_w = pl.DataFrame({"player_id": ["rw"] * 2, "season": [2012, 2013], "week": [1, 1], "game_date": [date(2012, 9, 9), date(2013, 9, 8)],
+                             "rookie_season": [2013, 2013], "exp_at_season": [-1, 0]})
+    wilson_s = pl.DataFrame({"player_id": ["rw", "rw"], "season": [2012, 2013], "games": [16, 16], "fpts": [285.6, 300.0], "ppg": [17.85, 18.75],
+                             "scored_under_league_id": ["L", "L"], "season_complete": [True, True], "rookie_season": [2013, 2013], "exp_at_season": [-1, 0]})
+    frames["fact_player_week"] = pl.concat([frames["fact_player_week"], wilson_w], how="diagonal_relaxed")
+    frames["fact_player_season"] = pl.concat([frames["fact_player_season"], wilson_s], how="diagonal_relaxed")
+    ids = [f"00-{i:07d}" for i in range(100)]
+    before = pl.DataFrame({"gsis_id": ids, "rookie_season": [2012] * 100, "draft_round": [1] * 100, "draft_pick": list(range(1, 101)), "birth_date": ["1990-01-01"] * 100})
+    after = before.with_columns(pl.when(pl.int_range(pl.len()) < 60).then(2013).otherwise(pl.col("rookie_season")).alias("rookie_season")).head(90)   # 60 moved, 10 dropped
+    b0, b1 = "bronze/nflverse/nfl_players/load_date=2026-11-03/data.parquet", "bronze/nflverse/nfl_players/load_date=2026-11-10/data.parquet"
+    frames[b0], frames[b1] = before, after
+    parts["bronze/nflverse/nfl_players/"] = [("2026-11-03", b0), ("2026-11-10", b1)]
+    res = {r["check"]: r for r in run(frames, parts).iter_rows(named=True)}
+    w, s_, b = res["fact.player_week.experience_not_negative"], res["fact.player_season.experience_not_negative"], res["bronze.nflverse.players_bio_stable"]
+    assert not w["passed"] and w["severity"] == "error" and w["value"] == 1 and "seasons [2012]" in w["observed"]
+    assert not s_["passed"] and s_["severity"] == "error" and s_["value"] == 1
+    assert not b["passed"] and b["severity"] == "warn" and b["value"] == 60
+    assert "rookie_season changed on 60" in b["observed"] and "10 players dropped" in b["observed"]
+
+    # the fact as the fixed job writes it, and a players release with the usual handful of corrections
+    frames["fact_player_week"] = frames["fact_player_week"].with_columns(pl.when(pl.col("player_id") == "rw").then(2012).otherwise(pl.col("rookie_season")).alias("rookie_season"))                                                            .with_columns((pl.col("season") - pl.col("rookie_season")).alias("exp_at_season"))
+    frames["fact_player_season"] = frames["fact_player_season"].with_columns(pl.when(pl.col("player_id") == "rw").then(2012).otherwise(pl.col("rookie_season")).alias("rookie_season"))                                                                .with_columns((pl.col("season") - pl.col("rookie_season")).alias("exp_at_season"))
+    frames[b1] = before.with_columns(pl.when(pl.int_range(pl.len()) < 3).then(2013).otherwise(pl.col("rookie_season")).alias("rookie_season"))
+    res = {r["check"]: r for r in run(frames, parts).iter_rows(named=True)}
+    assert all(res[c]["passed"] for c in ("fact.player_week.experience_not_negative", "fact.player_season.experience_not_negative", "bronze.nflverse.players_bio_stable"))
+    assert res["bronze.nflverse.players_bio_stable"]["value"] == 3
